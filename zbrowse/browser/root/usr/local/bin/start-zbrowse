@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+start_url="${START_URL:-https://fawesome.tv/}"
+mkdir -p /config/chromium /config/downloads /config/tmp
+
+exec chromium \
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --disable-background-networking \
+  --disable-component-update \
+  --disable-default-apps \
+  --disable-features=TranslateUI,MediaRouter \
+  --disable-notifications \
+  --disable-sync \
+  --disable-extensions-except=/opt/zguard \
+  --load-extension=/opt/zguard \
+  --no-first-run \
+  --no-default-browser-check \
+  --kiosk \
+  --start-maximized \
+  --user-data-dir=/config/chromium \
+  --disk-cache-dir=/config/tmp \
+  "$start_url"
