@@ -6,7 +6,6 @@
     <meta name="theme-color" content="#09090b">
     <meta name="description" content="A clean browser experience for your TV, protected by zGuard.">
     <title>zBrowse</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236d5dfc'/%3E%3Cpath d='M17 20h30L30 44h17' fill='none' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -26,19 +25,8 @@
         <p class="subtitle">Open a website in a temporary browser session. zGuard keeps popups and clutter out of the way.</p>
 
         <form id="browserForm" class="searchbar">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"></path>
-          </svg>
-          <input
-            id="urlInput"
-            type="url"
-            inputmode="url"
-            autocomplete="url"
-            spellcheck="false"
-            list="siteSuggestions"
-            aria-label="Website address"
-            placeholder="Enter a website URL"
-          >
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="urlInput" type="url" inputmode="url" autocomplete="url" spellcheck="false" list="siteSuggestions" aria-label="Website address" placeholder="Enter a website URL">
           <datalist id="siteSuggestions"></datalist>
           <button id="startButton" type="submit">Open</button>
         </form>
