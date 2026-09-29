@@ -1,0 +1,32 @@
+services:
+  gateway:
+    build:
+      context: ./gateway
+    container_name: zbrowse-gateway
+    restart: unless-stopped
+    environment:
+      PORT: ${PORT:-8090}
+      MAX_SESSIONS: ${MAX_SESSIONS:-1}
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-15}
+      IDLE_TTL_MINUTES: ${IDLE_TTL_MINUTES:-5}
+      BROWSER_MEMORY_MB: ${BROWSER_MEMORY_MB:-2048}
+      BROWSER_CPU: ${BROWSER_CPU:-1}
+      BROWSER_IMAGE: ${BROWSER_IMAGE:-zbrowse-browser:1.0.0}
+      BROWSER_NETWORK: ${BROWSER_NETWORK:-zbrowse_net}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      START_URL: ${START_URL:-https://fawesome.tv/}
+    ports:
+      - "127.0.0.1:${PORT:-8090}:${PORT:-8090}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./gateway/config:/app/config:ro
+    group_add:
+      - "${DOCKER_GID:-998}"
+    networks:
+      - zbrowse
+
+networks:
+  zbrowse:
+    name: ${BROWSER_NETWORK:-zbrowse_net}
+    driver: bridge
+    internal: false
