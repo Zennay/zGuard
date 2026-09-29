@@ -1,64 +1,67 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <meta name="theme-color" content="#080b14">
-    <meta name="description" content="Start een tijdelijke, popupvrije browser op je televisie.">
+    <meta name="theme-color" content="#09090b">
+    <meta name="description" content="A clean browser experience for your TV, protected by zGuard.">
     <title>zBrowse</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23705cff'/%3E%3Cpath d='M17 20h30L30 44h17' fill='none' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236d5dfc'/%3E%3Cpath d='M17 20h30L30 44h17' fill='none' stroke='white' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main id="homeView" class="shell">
-      <header class="topbar">
-        <a class="brand" href="/" aria-label="zBrowse startpagina">
-          <span class="brand-mark">z</span>
-          <span>Browse</span>
-        </a>
-        <div class="capacity" aria-live="polite"><span id="capacityDot"></span><span id="capacityText">Beschikbaarheid controleren…</span></div>
-      </header>
+    <main id="homeView" class="home">
+      <a class="brand" href="/" aria-label="zBrowse home">
+        <span class="brand-mark">z</span>
+        <span>Browse</span>
+      </a>
 
-      <section class="workspace" aria-labelledby="mainTitle">
-        <div class="intro">
-          <p class="eyebrow">BROWSER VOOR JE TV</p>
-          <h1 id="mainTitle">Kies een website.<br><span>zGuard houdt de rommel buiten.</span></h1>
+      <section class="hero" aria-labelledby="mainTitle">
+        <div class="status" aria-live="polite">
+          <span id="capacityDot" class="status-dot"></span>
+          <span id="capacityText">Checking availability…</span>
         </div>
 
-        <form id="browserForm" class="urlbar">
-          <span class="lock" aria-hidden="true">●</span>
-          <input id="urlInput" type="url" inputmode="url" autocomplete="url" spellcheck="false" aria-label="Website-adres" placeholder="https://…">
-          <button id="startButton" type="submit">Start browser</button>
+        <h1 id="mainTitle">A cleaner way to browse on your TV.</h1>
+        <p class="subtitle">Open a website in a temporary browser session. zGuard keeps popups and clutter out of the way.</p>
+
+        <form id="browserForm" class="searchbar">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"></path>
+          </svg>
+          <input
+            id="urlInput"
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            spellcheck="false"
+            list="siteSuggestions"
+            aria-label="Website address"
+            placeholder="Enter a website URL"
+          >
+          <datalist id="siteSuggestions"></datalist>
+          <button id="startButton" type="submit">Open</button>
         </form>
+
         <p id="formMessage" class="message" role="status"></p>
-
-        <div class="section-row">
-          <h2>Direct kijken</h2>
-          <span id="durationText">Tijdelijke sessie</span>
-        </div>
-        <div id="siteGrid" class="site-grid" aria-live="polite"></div>
+        <p class="privacy-note">Private session · Nothing saved · Automatically removed</p>
       </section>
-
-      <footer>
-        <span>Elke sessie is tijdelijk en wordt na afloop verwijderd.</span>
-        <span>Geen downloads · Geen opgeslagen wachtwoorden</span>
-      </footer>
     </main>
 
     <section id="browserView" class="browser-view" hidden>
       <div class="browser-toolbar">
         <div class="browser-brand"><span class="brand-mark small">z</span><strong>Browse</strong></div>
         <div class="session-pill"><span class="live-dot"></span><span id="timer">15:00</span></div>
-        <button id="fullscreenButton" class="toolbar-button" type="button">Volledig scherm</button>
-        <button id="endButton" class="toolbar-button danger" type="button">Sessie stoppen</button>
+        <button id="fullscreenButton" class="toolbar-button" type="button">Fullscreen</button>
+        <button id="endButton" class="toolbar-button danger" type="button">End session</button>
       </div>
       <div id="browserStage" class="browser-stage">
         <div id="browserLoading" class="browser-loading">
           <div class="spinner"></div>
-          <strong>Browser wordt gestart</strong>
-          <span>zGuard en de videoweergave worden geladen…</span>
+          <strong>Starting your browser</strong>
+          <span>Loading zGuard and the browser stream…</span>
         </div>
-        <iframe id="browserFrame" title="zBrowse browsersessie" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+        <iframe id="browserFrame" title="zBrowse browser session" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
       </div>
     </section>
 
