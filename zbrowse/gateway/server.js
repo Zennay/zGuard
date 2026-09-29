@@ -55,7 +55,7 @@ const sessionLimiter = rateLimit({
   limit: 4,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Te veel sessiepogingen. Probeer het later opnieuw." }
+  message: { error: "Too many session attempts. Please try again later." }
 });
 
 function positiveInt(value, fallback) {
@@ -97,7 +97,7 @@ async function waitForBrowser(containerName, subfolder, attempts = 45) {
     if (ready) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("Browser startte niet op tijd.");
+  throw new Error("The browser did not start in time.");
 }
 
 async function createSession(ip, startUrl) {
@@ -198,31 +198,31 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     return res.json(publicSession(sessions.get(existingToken)));
   }
   if (sessions.size >= config.maxSessions) {
-    return res.status(503).json({ error: "Alle browsers zijn bezet. Probeer het zo opnieuw." });
+    return res.status(503).json({ error: "All browser sessions are currently in use. Please try again shortly." });
   }
   const startUrl = validStartUrl(req.body?.url);
   if (!startUrl) {
-    return res.status(400).json({ error: "Deze website staat niet op de toegestane lijst." });
+    return res.status(400).json({ error: "This website is not on the allowed list." });
   }
   try {
     const session = await createSession(ip, startUrl);
     return res.status(201).json(publicSession(session));
   } catch (error) {
     console.error("Session creation failed", error);
-    return res.status(500).json({ error: "De browser kon niet worden gestart." });
+    return res.status(500).json({ error: "The browser could not be started." });
   }
 });
 
 app.post("/api/session/:token/heartbeat", (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Sessie niet gevonden." });
+  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Session not found." });
   session.lastSeenAt = Date.now();
   return res.json({ ok: true, expiresAt: session.expiresAt });
 });
 
 app.delete("/api/session/:token", async (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Sessie niet gevonden." });
+  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Session not found." });
   await destroySession(req.params.token);
   return res.status(204).end();
 });
@@ -230,7 +230,7 @@ app.delete("/api/session/:token", async (req, res) => {
 app.use("/s/", (req, res, next) => {
   const session = findSession(req);
   if (!session || session.expiresAt < Date.now() || session.ip !== req.ip) {
-    return res.status(403).send("Deze browsersessie is niet meer geldig.");
+    return res.status(403).send("This browser session is no longer valid.");
   }
   session.lastSeenAt = Date.now();
   req.zbrowseSession = session;
@@ -254,7 +254,7 @@ const browserProxy = createProxyMiddleware({
     },
     error: (error, req, res) => {
       console.error("Browser proxy error", error.message);
-      if (res.writeHead) res.writeHead(502).end("Browserverbinding onderbroken.");
+      if (res.writeHead) res.writeHead(502).end("Browser connection interrupted.");
     }
   }
 });
