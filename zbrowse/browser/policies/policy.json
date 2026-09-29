@@ -1,0 +1,15 @@
+{
+  "URLBlocklist": ["*"],
+  "URLAllowlist": [
+    "https://fawesome.tv/*",
+    "https://*.fawesome.tv/*"
+  ],
+  "DownloadRestrictions": 3,
+  "PasswordManagerEnabled": false,
+  "BrowserGuestModeEnabled": false,
+  "BrowserAddPersonEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "DefaultPopupsSetting": 2,
+  "SafeBrowsingProtectionLevel": 2
+}
