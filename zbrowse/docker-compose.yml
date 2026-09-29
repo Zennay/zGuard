@@ -16,7 +16,7 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-1}
       START_URL: ${START_URL:-https://fawesome.tv/}
     ports:
-      - "127.0.0.1:${PORT:-8090}:${PORT:-8090}"
+      - "${PORT:-8090}:${PORT:-8090}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./gateway/config:/app/config:ro
