@@ -71,6 +71,21 @@ assert.match(
 assert.match(workflow, /persist-credentials:\s*false/, 'checkout credentials must not persist');
 assert.match(
   workflow,
+  /bash zbrowse\/scripts\/validate\.sh/,
+  'containment workflow must execute the full portable zBrowse validation suite'
+);
+assert.match(
+  workflow,
+  /- "zbrowse\/scripts\/validate\.sh"/,
+  'validate.sh changes must trigger the containment workflow'
+);
+assert.match(
+  workflow,
+  /- "tests\/zbrowse\.validation-entrypoint\.test\.mjs"/,
+  'validation entrypoint contract changes must trigger the containment workflow'
+);
+assert.match(
+  workflow,
   /node tests\/zbrowse\.gateway-containment\.test\.mjs/,
   'workflow must execute the gateway containment regression'
 );
