@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js && node --check public/app.js"
@@ -13,6 +15,6 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "helmet": "^8.1.0",
-    "http-proxy-middleware": "^3.0.5"
+    "httpxy": "^0.5.5"
   }
 }
