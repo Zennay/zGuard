@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - "fix/**"
-      - "qa/**"
   pull_request:
   workflow_dispatch:
 
