@@ -231,6 +231,41 @@ assert.equal(unexpectedBind, undefined, 'gateway must not gain unexpected host b
 const effectiveUid = docker(['exec', containerName, 'sh', '-lc', 'id -u']);
 assert.notEqual(effectiveUid, '0', 'effective gateway process user must not be root');
 
+const processStatus = docker(['exec', containerName, 'cat', '/proc/1/status']);
+const processUids = processStatus.match(/^Uid:\s+(.+)$/m)?.[1]?.trim().split(/\s+/) || [];
+assert.equal(processUids.length, 4, 'PID 1 status must expose real/effective/saved/fs UIDs');
+assert.ok(
+  processUids.every((uid) => uid !== '0'),
+  'PID 1 must remain non-root across all kernel UID slots'
+);
+const effectiveCaps = processStatus.match(/^CapEff:\s+([0-9a-f]+)$/mi)?.[1];
+assert.ok(effectiveCaps, 'PID 1 status must expose effective capabilities');
+assert.equal(
+  BigInt('0x' + effectiveCaps),
+  0n,
+  'PID 1 must have zero effective Linux capabilities'
+);
+assert.equal(
+  processStatus.match(/^NoNewPrivs:\s+(\d+)$/m)?.[1],
+  '1',
+  'PID 1 must have no_new_privs enforced by the kernel'
+);
+
+const procMounts = docker(['exec', containerName, 'cat', '/proc/mounts'])
+  .split(/\r?\n/)
+  .filter(Boolean);
+function mountOptions(destination) {
+  const line = procMounts.find((entry) => entry.split(/\s+/)[1] === destination);
+  assert.ok(line, `kernel mount table must contain ${destination}`);
+  return new Set(line.split(/\s+/)[3].split(','));
+}
+const rootMountOptions = mountOptions('/');
+assert.ok(rootMountOptions.has('ro'), 'kernel mount table must expose the root filesystem as read-only');
+const tmpMountOptions = mountOptions('/tmp');
+for (const option of ['rw', 'nosuid', 'nodev', 'noexec']) {
+  assert.ok(tmpMountOptions.has(option), `kernel /tmp mount must include ${option}`);
+}
+
 const socketGid = docker(['exec', containerName, 'sh', '-lc', "stat -c '%g' /var/run/docker.sock"]);
 const effectiveGroups = new Set(
   docker(['exec', containerName, 'sh', '-lc', 'id -G'])
@@ -270,6 +305,13 @@ const rootWrite = spawnSync(
   { encoding: 'utf8' }
 );
 assert.notEqual(rootWrite.status, 0, 'read-only root filesystem must reject a real write probe');
+
+const configWrite = spawnSync(
+  'docker',
+  ['exec', containerName, 'sh', '-lc', 'touch /app/config/runtime-config-write-probe'],
+  { encoding: 'utf8' }
+);
+assert.notEqual(configWrite.status, 0, 'read-only config mount must reject a real write probe');
 
 const tmpWrite = spawnSync(
   'docker',
