@@ -161,7 +161,7 @@ h1 {
   font-size: 1.03rem;
 }
 
-.searchbar input::placeholder { color: #707079; }
+.searchbar input::placeholder { color: #80808a; }
 
 .searchbar button,
 .toolbar-button {
@@ -188,7 +188,7 @@ h1 {
 
 .privacy-note {
   margin: .15rem 0 0;
-  color: #696973;
+  color: #7b7b85;
   font-size: .78rem;
 }
 
