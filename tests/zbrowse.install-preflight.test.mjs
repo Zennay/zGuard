@@ -44,6 +44,13 @@ function runFixture(fixture) {
   });
 }
 
+const composeAvailableShim = `#!/bin/sh
+if [ "$1" = "compose" ] && [ "$2" = "version" ]; then
+  exit 0
+fi
+exit 1
+`;
+
 {
   const fixture = prepareFixture();
   try {
@@ -79,6 +86,24 @@ function runFixture(fixture) {
 }
 
 {
+  const fixture = prepareFixture({
+    dockerShim: composeAvailableShim
+  });
+  try {
+    const result = runFixture(fixture);
+    assert.notEqual(result.status, 0, 'installer must fail without Node.js');
+    assert.match(result.stderr, /Node\.js is required for zBrowse validation\./);
+    assert.equal(
+      existsSync(path.join(fixture.project, '.env')),
+      false,
+      'missing Node.js must not materialize .env'
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+}
+
+{
   const original = 'PORT=9000\nDOCKER_GID=123\n';
   const fixture = prepareFixture({
     dockerShim: '#!/bin/sh\nexit 1\n',
@@ -90,6 +115,26 @@ function runFixture(fixture) {
       readFileSync(path.join(fixture.project, '.env'), 'utf8'),
       original,
       'failed prerequisite checks must not mutate an existing .env'
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+}
+
+{
+  const original = 'PORT=9000\nDOCKER_GID=123\n';
+  const fixture = prepareFixture({
+    dockerShim: composeAvailableShim,
+    envContent: original
+  });
+  try {
+    const result = runFixture(fixture);
+    assert.notEqual(result.status, 0, 'installer must fail without Node.js');
+    assert.match(result.stderr, /Node\.js is required for zBrowse validation\./);
+    assert.equal(
+      readFileSync(path.join(fixture.project, '.env'), 'utf8'),
+      original,
+      'missing Node.js must not mutate an existing .env'
     );
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
