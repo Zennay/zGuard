@@ -7,6 +7,7 @@ on:
       - 'firefox/**'
       - 'zbrowse/browser/zguard/**'
       - 'tests/zguard.manifest-integrity.test.js'
+      - 'tests/zguard.bundle-parity.test.mjs'
       - '.github/workflows/manifest-integrity-validation.yml'
   workflow_dispatch:
 
@@ -29,3 +30,6 @@ jobs:
 
       - name: Validate extension manifests and popup assets
         run: node tests/zguard.manifest-integrity.test.js
+
+      - name: Validate bundled Chromium zGuard parity
+        run: node tests/zguard.bundle-parity.test.mjs
