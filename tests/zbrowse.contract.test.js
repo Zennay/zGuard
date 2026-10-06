@@ -79,6 +79,11 @@ assert.match(
   'gateway image must include every local runtime module'
 );
 
+assert.match(gatewayServer, /import \{ createProxyServer \} from "httpxy";/);
+assert.doesNotMatch(gatewayServer, /http-proxy-middleware/);
+assert.match(gatewayServer, /browserProxy\.web\(req, res, browserProxyOptions\(req\)\)/);
+assert.match(gatewayServer, /browserProxy\.ws\(req, socket, browserProxyOptions\(req\), head\)/);
+
 const apiFallbackIndex = gatewayServer.indexOf('app.use("/api"');
 const staticIndex = gatewayServer.indexOf('app.use(express.static');
 assert.ok(apiFallbackIndex >= 0, 'gateway must define an API 404 fallback');
