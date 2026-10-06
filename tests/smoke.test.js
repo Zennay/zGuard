@@ -34,4 +34,5 @@ for (const browser of ['chromium', 'firefox']) {
 
 execFileSync(process.execPath, [path.join(__dirname, 'content-mode.test.js')], { stdio: 'inherit' });
 execFileSync(process.execPath, [path.join(__dirname, 'background-mode.test.js')], { stdio: 'inherit' });
+execFileSync(process.execPath, [path.join(__dirname, 'popup-runtime.test.js')], { stdio: 'inherit' });
 console.log('zGuard smoke tests passed');
