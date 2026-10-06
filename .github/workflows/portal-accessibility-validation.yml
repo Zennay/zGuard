@@ -1,0 +1,31 @@
+name: zBrowse portal accessibility validation
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/gateway/public/index.html"
+      - "zbrowse/gateway/public/styles.css"
+      - "tests/zbrowse.portal-accessibility.test.mjs"
+      - ".github/workflows/portal-accessibility-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-portal-accessibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portal-accessibility:
+    name: Portal accessibility contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate portal accessibility contract
+        run: node tests/zbrowse.portal-accessibility.test.mjs
