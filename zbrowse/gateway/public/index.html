@@ -18,7 +18,7 @@
 
       <section class="hero" aria-labelledby="mainTitle">
         <div class="status" aria-live="polite">
-          <span id="capacityDot" class="status-dot"></span>
+          <span id="capacityDot" class="status-dot" aria-hidden="true"></span>
           <span id="capacityText">Checking availability…</span>
         </div>
 
@@ -27,26 +27,26 @@
 
         <form id="browserForm" class="searchbar">
           <span class="search-icon" aria-hidden="true">⌕</span>
-          <input id="urlInput" type="url" inputmode="url" autocomplete="url" spellcheck="false" list="siteSuggestions" aria-label="Website address" placeholder="Enter a website URL">
+          <input id="urlInput" type="url" inputmode="url" autocomplete="url" spellcheck="false" list="siteSuggestions" aria-label="Website address" aria-describedby="formMessage privacyNote" placeholder="Enter a website URL">
           <datalist id="siteSuggestions"></datalist>
           <button id="startButton" type="submit">Open</button>
         </form>
 
-        <p id="formMessage" class="message" role="status"></p>
-        <p class="privacy-note">Private session · Nothing saved · Automatically removed</p>
+        <p id="formMessage" class="message" role="status" aria-live="polite"></p>
+        <p id="privacyNote" class="privacy-note">Private session · Nothing saved · Automatically removed</p>
       </section>
     </main>
 
     <section id="browserView" class="browser-view" hidden>
       <div class="browser-toolbar">
         <div class="browser-brand"><span class="brand-mark small">z</span><strong>Browse</strong></div>
-        <div class="session-pill"><span class="live-dot"></span><span id="timer">15:00</span></div>
-        <button id="fullscreenButton" class="toolbar-button" type="button">Fullscreen</button>
+        <div class="session-pill"><span class="live-dot" aria-hidden="true"></span><span class="sr-only">Session time remaining: </span><span id="timer">15:00</span></div>
+        <button id="fullscreenButton" class="toolbar-button" type="button" aria-controls="browserStage">Fullscreen</button>
         <button id="endButton" class="toolbar-button danger" type="button">End session</button>
       </div>
       <div id="browserStage" class="browser-stage">
-        <div id="browserLoading" class="browser-loading">
-          <div class="spinner"></div>
+        <div id="browserLoading" class="browser-loading" role="status" aria-live="polite" aria-atomic="true">
+          <div class="spinner" aria-hidden="true"></div>
           <strong>Starting your browser</strong>
           <span>Loading zGuard and the browser stream…</span>
         </div>
