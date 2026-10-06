@@ -65,6 +65,36 @@ assert.ok(
   'effective image healthcheck must probe /api/health'
 );
 
+const effectivePorts = container.NetworkSettings?.Ports || {};
+const published = Object.values(effectivePorts).flat().filter(Boolean);
+assert.equal(published.length, 1, 'running gateway must expose exactly one effective host binding');
+assert.equal(published[0].HostIp, '127.0.0.1', 'effective gateway binding must stay on IPv4 loopback');
+assert.match(published[0].HostPort, /^\d+$/, 'effective gateway host port must be numeric');
+
+const healthResponse = await fetch(
+  `http://127.0.0.1:${published[0].HostPort}/api/health`,
+  { signal: AbortSignal.timeout(5_000) }
+);
+assert.equal(healthResponse.status, 200, 'live /api/health must return HTTP 200');
+assert.match(
+  healthResponse.headers.get('content-type') || '',
+  /^application\/json\b/i,
+  'live /api/health must return JSON'
+);
+const health = await healthResponse.json();
+assert.equal(health.status, 'ok', 'live /api/health status must be ok');
+for (const key of ['activeSessions', 'startingSessions', 'capacity']) {
+  assert.ok(Number.isInteger(health[key]), `live /api/health ${key} must be an integer`);
+  assert.ok(health[key] >= 0, `live /api/health ${key} must not be negative`);
+}
+assert.ok(health.capacity >= 1, 'live /api/health capacity must be at least one');
+assert.ok(
+  health.activeSessions + health.startingSessions <= health.capacity,
+  'live /api/health usage must not exceed reported capacity'
+);
+assert.equal(health.activeSessions, 0, 'fresh gateway boot must not report active sessions');
+assert.equal(health.startingSessions, 0, 'fresh gateway boot must not report pending sessions');
+
 const mounts = container.Mounts || [];
 const configMount = mounts.find((mount) => mount.Destination === '/app/config');
 assert.ok(configMount, 'gateway must mount its config directory');
