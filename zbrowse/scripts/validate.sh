@@ -11,6 +11,7 @@ node ../tests/zbrowse.contract.test.js
 node ../tests/zbrowse.request-ip.test.mjs
 node ../tests/zbrowse.request-path.test.mjs
 node ../tests/zbrowse.config-values.test.mjs
+node ../tests/zbrowse.base-provenance.test.mjs
 node ../tests/zbrowse.session-admission.test.mjs
 node ../tests/zbrowse.session-lifetime.test.mjs
 node ../tests/zbrowse.frontend-session.test.js
