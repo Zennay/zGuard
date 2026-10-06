@@ -42,6 +42,7 @@ jobs:
           set -euo pipefail
           cd zbrowse
           trap 'docker compose down --remove-orphans >/dev/null 2>&1 || true' EXIT
+          export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
           docker compose up -d --build gateway
           healthy=false
           for attempt in {1..30}; do
