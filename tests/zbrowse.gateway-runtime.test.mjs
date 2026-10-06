@@ -71,8 +71,40 @@ assert.equal(published.length, 1, 'running gateway must expose exactly one effec
 assert.equal(published[0].HostIp, '127.0.0.1', 'effective gateway binding must stay on IPv4 loopback');
 assert.match(published[0].HostPort, /^\d+$/, 'effective gateway host port must be numeric');
 
+const baseUrl = `http://127.0.0.1:${published[0].HostPort}`;
+
+function assertSecurityHeaders(response, label) {
+  assert.equal(
+    response.headers.get('x-content-type-options'),
+    'nosniff',
+    `${label} must prevent MIME sniffing`
+  );
+  assert.equal(
+    response.headers.get('x-frame-options'),
+    'SAMEORIGIN',
+    `${label} must keep clickjacking protection enabled`
+  );
+  assert.equal(
+    response.headers.get('referrer-policy'),
+    'no-referrer',
+    `${label} must not leak referrer data`
+  );
+  assert.equal(response.headers.get('x-powered-by'), null, `${label} must not expose Express`);
+
+  const csp = response.headers.get('content-security-policy') || '';
+  for (const directive of [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "frame-src 'self'",
+    "connect-src 'self' wss: ws:",
+  ]) {
+    assert.ok(csp.includes(directive), `${label} CSP must include ${directive}`);
+  }
+}
+
 const healthResponse = await fetch(
-  `http://127.0.0.1:${published[0].HostPort}/api/health`,
+  `${baseUrl}/api/health`,
   { signal: AbortSignal.timeout(5_000) }
 );
 assert.equal(healthResponse.status, 200, 'live /api/health must return HTTP 200');
@@ -94,6 +126,39 @@ assert.ok(
 );
 assert.equal(health.activeSessions, 0, 'fresh gateway boot must not report active sessions');
 assert.equal(health.startingSessions, 0, 'fresh gateway boot must not report pending sessions');
+assertSecurityHeaders(healthResponse, 'live /api/health');
+
+const portalResponse = await fetch(baseUrl + '/', { signal: AbortSignal.timeout(5_000) });
+assert.equal(portalResponse.status, 200, 'live portal root must return HTTP 200');
+assert.match(
+  portalResponse.headers.get('content-type') || '',
+  /^text\/html\b/i,
+  'live portal root must return HTML'
+);
+assertSecurityHeaders(portalResponse, 'live portal root');
+const portalHtml = await portalResponse.text();
+assert.match(portalHtml, /<title>zBrowse<\/title>/, 'live portal root must serve the zBrowse shell');
+assert.match(
+  portalHtml,
+  /id="browserForm"/,
+  'live portal root must include the browser launch form'
+);
+
+const missingApiResponse = await fetch(baseUrl + '/api/definitely-missing', {
+  signal: AbortSignal.timeout(5_000),
+});
+assert.equal(missingApiResponse.status, 404, 'unknown API route must remain a JSON 404');
+assert.match(
+  missingApiResponse.headers.get('content-type') || '',
+  /^application\/json\b/i,
+  'unknown API route must not fall through to SPA HTML'
+);
+assertSecurityHeaders(missingApiResponse, 'unknown API route');
+assert.deepEqual(
+  await missingApiResponse.json(),
+  { error: 'API route not found.' },
+  'unknown API route must return only the generic API error'
+);
 
 const mounts = container.Mounts || [];
 const configMount = mounts.find((mount) => mount.Destination === '/app/config');
