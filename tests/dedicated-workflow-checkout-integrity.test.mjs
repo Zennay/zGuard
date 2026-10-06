@@ -39,14 +39,11 @@ for (const workflow of workflows) {
     /timeout-minutes:\s*[1-9][0-9]*/,
     `${workflow} must keep a bounded job timeout`
   );
-
-  if (workflow === '.github/workflows/repository-hygiene-validation.yml') {
-    assert.match(
-      source,
-      /runs-on:\s*ubuntu-latest/,
-      'portable repository hygiene validation must not depend on the generic self-hosted queue'
-    );
-  }
+  assert.match(
+    source,
+    /runs-on:\s*ubuntu-latest/,
+    `${workflow} is portable and must not depend on the generic self-hosted queue`
+  );
 }
 
 console.log('Dedicated workflow checkout integrity contract passed');
