@@ -54,6 +54,11 @@ assert.match(
   /effectieve draaiende container/,
   'README must document live effective-containment verification'
 );
+assert.match(
+  readme,
+  /Docker API-ping/,
+  'README must document the live non-root Docker socket access proof'
+);
 
 assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'containment validation must use a portable hosted runner');
 assert.match(workflow, /timeout-minutes:\s*[1-9][0-9]*/, 'containment validation must have a bounded timeout');
@@ -70,6 +75,11 @@ assert.match(
   'workflow must execute the gateway containment regression'
 );
 assert.match(workflow, /docker compose config >\/dev\/null/, 'workflow must validate Compose syntax');
+assert.match(
+  workflow,
+  /export DOCKER_GID="\$\(stat -c '%g' \/var\/run\/docker\.sock\)"/,
+  'workflow must derive the real Docker socket group before boot'
+);
 assert.match(workflow, /docker compose up -d --build gateway/, 'workflow must boot the hardened gateway');
 assert.match(workflow, /\.State\.Health\.Status/, 'workflow must wait for Docker health state');
 assert.match(
