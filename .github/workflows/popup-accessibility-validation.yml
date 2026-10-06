@@ -9,7 +9,7 @@ on:
       - "firefox/popup.css"
       - "zbrowse/browser/zguard/popup.html"
       - "zbrowse/browser/zguard/popup.css"
-      - "tests/zguard.popup-accessibility.test.mjs"
+      - "tests/zguard.popup-accessibility.test.mjs"\n      - "tests/zguard.popup-a11y-runtime.test.js"\n      - "chromium/popup-a11y.js"\n      - "firefox/popup-a11y.js"\n      - "zbrowse/browser/zguard/popup-a11y.js"
       - ".github/workflows/popup-accessibility-validation.yml"
   workflow_dispatch:
 
@@ -32,4 +32,4 @@ jobs:
           persist-credentials: false
 
       - name: Validate popup accessibility contract
-        run: node tests/zguard.popup-accessibility.test.mjs
+        run: |\n          node tests/zguard.popup-accessibility.test.mjs\n          node tests/zguard.popup-a11y-runtime.test.js
