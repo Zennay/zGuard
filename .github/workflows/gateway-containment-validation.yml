@@ -6,8 +6,10 @@ on:
       - "zbrowse/docker-compose.yml"
       - "zbrowse/gateway/**"
       - "zbrowse/README.md"
+      - "zbrowse/scripts/validate.sh"
       - "tests/zbrowse.gateway-containment.test.mjs"
       - "tests/zbrowse.gateway-runtime.test.mjs"
+      - "tests/zbrowse.validation-entrypoint.test.mjs"
       - ".github/workflows/gateway-containment-validation.yml"
   workflow_dispatch:
 
@@ -29,10 +31,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate gateway containment
+      - name: Validate portable suite and gateway containment
         shell: bash
         run: |
           set -euo pipefail
+          bash zbrowse/scripts/validate.sh
           node tests/zbrowse.gateway-containment.test.mjs
           cd zbrowse
           docker compose config >/dev/null
