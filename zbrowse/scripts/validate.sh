@@ -9,6 +9,7 @@ node --check gateway/public/app.js
 node -e "for (const f of ['gateway/package.json','gateway/config/sites.json','browser/policies/policy.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node ../tests/zbrowse.contract.test.js
 node ../tests/zbrowse.request-ip.test.mjs
+node ../tests/zbrowse.request-path.test.mjs
 bash -n scripts/install.sh
 bash -n browser/root/usr/local/bin/start-zbrowse
 if command -v docker >/dev/null 2>&1; then
