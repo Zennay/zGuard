@@ -27,7 +27,7 @@ concurrency:
 jobs:
   popup-accessibility:
     name: Popup accessibility contract
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
