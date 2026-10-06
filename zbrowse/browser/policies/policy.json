@@ -11,5 +11,9 @@
   "AutofillAddressEnabled": false,
   "AutofillCreditCardEnabled": false,
   "DefaultPopupsSetting": 2,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "DeveloperToolsAvailability": 2,
+  "PrintingEnabled": false,
   "SafeBrowsingProtectionLevel": 2
 }
