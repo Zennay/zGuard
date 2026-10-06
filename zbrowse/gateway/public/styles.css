@@ -278,6 +278,17 @@ h1 {
 
 [hidden] { display: none !important; }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
 @media (max-width: 680px) {
   .home { padding: 1.1rem; }
   .hero { padding-bottom: 8vh; }
