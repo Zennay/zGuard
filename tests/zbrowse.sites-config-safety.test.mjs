@@ -14,16 +14,40 @@ assert.ok(Array.isArray(sites) && sites.length > 0, "sites.json must contain at 
 const seenNames = new Set();
 const seenOrigins = new Set();
 
-function isPrivateIpv4(hostname) {
-  if (net.isIP(hostname) !== 4) return false;
-  const [a, b] = hostname.split(".").map(Number);
-  return (
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
-  );
+function normalizedIpHost(hostname) {
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+}
+
+function isLocalOrPrivateIp(hostname) {
+  const ip = normalizedIpHost(hostname);
+  const version = net.isIP(ip);
+
+  if (version === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+
+  if (version === 6) {
+    const lower = ip.toLowerCase();
+    return (
+      lower === "::" ||
+      lower === "::1" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      /^fe[89ab]/.test(lower)
+    );
+  }
+
+  return false;
 }
 
 for (const [index, site] of sites.entries()) {
@@ -60,8 +84,9 @@ for (const [index, site] of sites.entries()) {
 
   const hostname = url.hostname.toLowerCase();
   assert.notEqual(hostname, "localhost", `${site.name}: localhost is not a valid kiosk target`);
+  assert.ok(!hostname.endsWith(".localhost"), `${site.name}: localhost subdomains are forbidden`);
   assert.ok(!hostname.endsWith(".local"), `${site.name}: local-network hostnames are forbidden`);
-  assert.ok(!isPrivateIpv4(hostname), `${site.name}: private/link-local IPv4 targets are forbidden`);
+  assert.ok(!isLocalOrPrivateIp(hostname), `${site.name}: local/private IP targets are forbidden`);
 
   const origin = url.origin.toLowerCase();
   assert.ok(!seenOrigins.has(origin), `${site.name}: duplicate origin`);
