@@ -9,11 +9,11 @@ are stored locally in the browser.
 
 ## Features
 
-- Blocks `window.open()` pop-ups and pop-unders.
+- Applies popup-blocking decisions to extension-observable script/new-tab events.
 - Blocks known unwanted domains: `al5sm.com`, `nap5k.com` and `tmll7.com`.
-- Closes suspicious external tabs opened by a page as a fallback.
+- Uses browser-level new-tab handling as a defense-in-depth fallback when a usable target URL is available.
 - Allows normal navigation within the current website.
-- Two modes: **Gebalanceerd** blocks known hostile popup domains while allowing ordinary external opens; **Streng** additionally blocks external new-tab/pop-up opens.
+- Two modes: **Gebalanceerd** blocks known hostile popup domains while allowing ordinary external opens; **Streng** additionally blocks qualifying external new-tab/pop-up opens.
 - Site profiles for SerienStream and Fawesome.
 - Local-only blocked-event counters.
 
@@ -47,7 +47,24 @@ are directly loadable extension packages. Run the smoke tests with:
 node tests/smoke.test.js
 ```
 
-The smoke gate also executes behavior coverage for the balanced/strict blocking semantics.
+The smoke gate also executes behavior coverage for the balanced/strict decision semantics.
+
+## Quality status
+
+The Node/VM smoke suite proves decision logic and package consistency, but it is not
+browser-realistic proof that page-authored JavaScript is intercepted in the page's
+MAIN JavaScript world. That integration gap is tracked in
+[issue #3](https://github.com/Zennay/zGuard/issues/3).
+
+The browser-level new-tab fallback also still needs explicit `pendingUrl` coverage
+before it can be treated as complete for pre-commit navigations; that gate is tracked
+in [issue #9](https://github.com/Zennay/zGuard/issues/9).
+
+Until those gates are closed with real-browser evidence, zGuard should be described as
+a popup-blocking prototype with tested decision logic rather than a complete bypass-proof
+popup blocker.
+
+For zBrowse runtime validation and deployment checks, see [`zbrowse/README.md`](zbrowse/README.md).
 
 ## Privacy
 
