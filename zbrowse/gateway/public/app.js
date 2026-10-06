@@ -149,13 +149,22 @@ $("fullscreenButton").addEventListener("click", async () => {
   }
 });
 
-window.addEventListener("pagehide", () => {
-  if (state.session) {
+window.addEventListener("pagehide", (event) => {
+  if (!state.session) return;
+  const token = state.session.token;
+
+  if (event.persisted) {
     navigator.sendBeacon(
-      "/api/session/" + state.session.token + "/heartbeat",
+      "/api/session/" + token + "/heartbeat",
       new Blob(["{}"], { type: "application/json" })
     );
+    return;
   }
+
+  fetch("/api/session/" + token, {
+    method: "DELETE",
+    keepalive: true
+  }).catch(() => {});
 });
 
 document.addEventListener("keydown", (event) => {
