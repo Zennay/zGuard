@@ -44,7 +44,7 @@ async function refreshHealth() {
   const status = $("capacityText").parentElement;
   try {
     const health = await request("/api/health");
-    const available = health.activeSessions < health.capacity;
+    const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
@@ -149,13 +149,22 @@ $("fullscreenButton").addEventListener("click", async () => {
   }
 });
 
-window.addEventListener("pagehide", () => {
-  if (state.session) {
+window.addEventListener("pagehide", (event) => {
+  if (!state.session) return;
+  const token = state.session.token;
+
+  if (event.persisted) {
     navigator.sendBeacon(
-      "/api/session/" + state.session.token + "/heartbeat",
+      "/api/session/" + token + "/heartbeat",
       new Blob(["{}"], { type: "application/json" })
     );
+    return;
   }
+
+  fetch("/api/session/" + token, {
+    method: "DELETE",
+    keepalive: true
+  }).catch(() => {});
 });
 
 document.addEventListener("keydown", (event) => {

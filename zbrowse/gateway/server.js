@@ -8,6 +8,8 @@ import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js"
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
 import { createSessionAdmission } from "./session-admission.js";
+import { cleanupManagedContainers } from "./managed-containers.js";
+import { liveSessionCount } from "./session-capacity.js";
 import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
 import express from "express";
@@ -151,22 +153,23 @@ async function createSession(ip, startUrl) {
     }
   });
 
-  const now = Date.now();
-  const session = {
-    token,
-    password,
-    ip,
-    container,
-    containerName,
-    subfolder,
-    createdAt: now,
-    expiresAt: now + config.ttlMs,
-    lastSeenAt: now
-  };
-
   try {
     await container.start();
     await waitForBrowser(containerName, subfolder);
+
+    const now = Date.now();
+    const session = {
+      token,
+      password,
+      ip,
+      container,
+      containerName,
+      subfolder,
+      createdAt: now,
+      expiresAt: now + config.ttlMs,
+      lastSeenAt: now
+    };
+
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
     return session;
@@ -190,7 +193,7 @@ function findSession(req) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  res.json({ status: "ok", activeSessions: liveSessionCount(sessions, config.idleMs), startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
 app.get("/api/sites", (req, res) => {
@@ -213,7 +216,7 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     return res.status(400).json({ error: "This website is not on the allowed list." });
   }
 
-  const admission = sessionAdmission.tryReserve(ip, sessions.size);
+  const admission = sessionAdmission.tryReserve(ip, liveSessionCount(sessions, config.idleMs));
   if (!admission.ok) {
     if (admission.reason === "pending") {
       return res.status(409).json({ error: "A browser session is already starting for this client." });
@@ -332,6 +335,18 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-server.listen(config.port, "0.0.0.0", () => {
-  console.log(`zBrowse gateway listening on ${config.port}`);
-});
+async function startServer() {
+  try {
+    const removed = await cleanupManagedContainers(docker);
+    if (removed > 0) console.log(`Removed ${removed} orphaned zBrowse browser container(s).`);
+  } catch (error) {
+    console.error("Failed to reconcile orphaned browser containers", error);
+    process.exit(1);
+  }
+
+  server.listen(config.port, "0.0.0.0", () => {
+    console.log(`zBrowse gateway listening on ${config.port}`);
+  });
+}
+
+startServer();

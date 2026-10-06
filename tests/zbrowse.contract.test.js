@@ -103,7 +103,7 @@ assert.match(
 );
 assert.match(
   gatewayDockerfile,
-  /COPY server\.js config-values\.js request-ip\.js request-path\.js session-admission\.js session-lifetime\.js \.\//,
+  /COPY server\.js config-values\.js managed-containers\.js request-ip\.js request-path\.js session-admission\.js session-capacity\.js session-lifetime\.js \.\//,
   'gateway image must include every local runtime module'
 );
 
@@ -127,17 +127,46 @@ const destroySessionStart = gatewayServer.indexOf('async function destroySession
 assert.ok(createSessionStart >= 0 && destroySessionStart > createSessionStart, 'gateway must define createSession before destroySession');
 const createSessionSource = gatewayServer.slice(createSessionStart, destroySessionStart);
 const browserReadyIndex = createSessionSource.indexOf('await waitForBrowser(containerName, subfolder)');
+const sessionTimestampIndex = createSessionSource.indexOf('const now = Date.now()');
 const sessionPublishIndex = createSessionSource.indexOf('sessions.set(token, session)');
 const ipPublishIndex = createSessionSource.indexOf('sessionsByIp.set(ip, token)');
 assert.ok(browserReadyIndex >= 0, 'session creation must wait for browser readiness');
 assert.ok(
-  sessionPublishIndex > browserReadyIndex && ipPublishIndex > browserReadyIndex,
+  sessionTimestampIndex > browserReadyIndex,
+  'session TTL and idle time must start only after browser readiness'
+);
+assert.ok(
+  sessionPublishIndex > sessionTimestampIndex && ipPublishIndex > sessionTimestampIndex,
   'session tokens and IP ownership must not be published before browser readiness'
 );
 assert.match(
   createSessionSource,
   /catch \(error\) \{\s*await stopContainer\(container\);\s*throw error;/,
   'failed starts must clean up the unpublished container directly'
+);
+
+assert.match(
+  gatewayServer,
+  /activeSessions: liveSessionCount\(sessions, config\.idleMs\)/,
+  'health must not report expired sessions as active'
+);
+assert.match(
+  gatewayServer,
+  /sessionAdmission\.tryReserve\(ip, liveSessionCount\(sessions, config\.idleMs\)\)/,
+  'expired sessions must not consume admission capacity'
+);
+
+const orphanCleanupIndex = gatewayServer.indexOf('await cleanupManagedContainers(docker)');
+const serverListenIndex = gatewayServer.indexOf('server.listen(config.port');
+assert.ok(orphanCleanupIndex >= 0, 'gateway startup must reconcile managed browser containers');
+assert.ok(
+  serverListenIndex > orphanCleanupIndex,
+  'gateway must reconcile orphaned browser containers before accepting traffic'
+);
+assert.match(
+  gatewayServer,
+  /Failed to reconcile orphaned browser containers/,
+  'gateway startup must fail closed when orphan reconciliation fails'
 );
 
 assert.match(browserDockerfile, /COPY zguard \/opt\/zguard/);
