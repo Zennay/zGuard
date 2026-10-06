@@ -22,9 +22,16 @@ Voeg alleen websites toe waarvoor je dit soort toegang mag aanbieden. Maak de di
 Vereisten: Ubuntu/Debian, Docker Engine en Docker Compose v2.
 
 ```bash
-cp .env.example .env
 bash scripts/install.sh
 ```
+
+De installer maakt `.env` alleen na de Docker-preflight aan, weigert een gesymlinkte of niet-reguliere `.env` en zet de permissies op `0600`. Wil je vóór de eerste build instellingen aanpassen, initialiseer het bestand dan veilig met:
+
+```bash
+bash scripts/prepare-env.sh .env .env.example
+```
+
+Pas daarna `.env` aan en voer `bash scripts/install.sh` uit.
 
 De gateway luistert standaard alleen lokaal op `127.0.0.1:8090`. Koppel daarna je bestaande reverse proxy aan `http://127.0.0.1:8090` en laat WebSocket-upgrades door. Gebruik altijd HTTPS op de publieke domeinnaam.
 
