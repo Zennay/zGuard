@@ -5,6 +5,20 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const json = (relative) => JSON.parse(read(relative));
+const filesIn = (relative) => {
+  const base = path.join(root, relative);
+  const entries = [];
+  const walk = (dir, prefix = '') => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const full = path.join(dir, name);
+      const rel = path.join(prefix, name);
+      if (fs.statSync(full).isDirectory()) walk(full, rel);
+      else entries.push([rel, fs.readFileSync(full)]);
+    }
+  };
+  walk(base);
+  return entries;
+};
 
 const compose = read('zbrowse/docker-compose.yml');
 const gatewayDockerfile = read('zbrowse/gateway/Dockerfile');
@@ -84,5 +98,20 @@ assert.equal(chromium.content_scripts[0].run_at, 'document_start');
 assert.equal(firefox.content_scripts[0].run_at, 'document_start');
 assert.equal(chromium.content_scripts[0].all_frames, true);
 assert.equal(firefox.content_scripts[0].all_frames, true);
+
+const canonicalZguard = filesIn('chromium');
+const bundledZguard = filesIn('zbrowse/browser/zguard');
+assert.deepEqual(
+  bundledZguard.map(([name]) => name),
+  canonicalZguard.map(([name]) => name),
+  'zBrowse must bundle the complete Chromium zGuard package'
+);
+for (let index = 0; index < canonicalZguard.length; index += 1) {
+  assert.equal(
+    Buffer.compare(bundledZguard[index][1], canonicalZguard[index][1]),
+    0,
+    `zBrowse bundled zGuard file drifted: ${canonicalZguard[index][0]}`
+  );
+}
 
 console.log('zBrowse contract tests passed');
