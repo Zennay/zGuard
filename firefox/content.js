@@ -32,24 +32,46 @@
     return mode === 'strict';
   }
 
-  api.storage.local.get(DEFAULTS).then(normalizeSettings).then(({ enabled, mode }) => {
-    if (!enabled) return;
-    const originalOpen = window.open;
-    window.open = function zGuardWindowOpen(url, target, features) {
-      if (shouldBlock(url || '', mode)) {
-        send('window-open', { url: String(url || ''), mode });
-        return null;
-      }
-      return originalOpen.call(window, url, target, features);
-    };
-    document.addEventListener('click', (event) => {
-      const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
-      if (!anchor || !anchor.href) return;
-      const newTab = anchor.target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
-      if (!newTab || !shouldBlock(anchor.href, mode)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      send('external-link', { url: anchor.href, mode });
-    }, true);
+  let settings = { ...DEFAULTS };
+  let settingsReady = false;
+  let settingsRevision = 0;
+
+  api.storage.local.get(DEFAULTS).then(normalizeSettings).then((current) => {
+    if (settingsRevision === 0) settings = current;
+    settingsReady = true;
   });
+
+  api.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(changes, 'enabled')) {
+      patch.enabled = changes.enabled?.newValue;
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, 'mode')) {
+      patch.mode = changes.mode?.newValue;
+    }
+    if (Object.keys(patch).length === 0) return;
+    settingsRevision += 1;
+    settings = normalizeSettings({ ...settings, ...patch });
+    settingsReady = true;
+  });
+
+  const originalOpen = window.open;
+  window.open = function zGuardWindowOpen(url, target, features) {
+    if (settingsReady && settings.enabled && shouldBlock(url || '', settings.mode)) {
+      send('window-open', { url: String(url || ''), mode: settings.mode });
+      return null;
+    }
+    return originalOpen.call(window, url, target, features);
+  };
+
+  document.addEventListener('click', (event) => {
+    const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+    if (!anchor || !anchor.href || !settingsReady || !settings.enabled) return;
+    const newTab = anchor.target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
+    if (!newTab || !shouldBlock(anchor.href, settings.mode)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    send('external-link', { url: anchor.href, mode: settings.mode });
+  }, true);
 })();
