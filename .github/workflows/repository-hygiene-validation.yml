@@ -1,0 +1,40 @@
+name: zBrowse repository hygiene validation
+
+on:
+  pull_request:
+    paths:
+      - ".gitignore"
+      - "zbrowse/.env.example"
+      - "zbrowse/scripts/install.sh"
+      - "tests/zbrowse.repository-hygiene.test.js"
+      - ".github/workflows/repository-hygiene-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-repository-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate environment-file hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.repository-hygiene.test.js
+          git check-ignore -q zbrowse/.env
+          if git check-ignore -q zbrowse/.env.example; then
+            echo "zbrowse/.env.example must remain trackable" >&2
+            exit 1
+          fi
