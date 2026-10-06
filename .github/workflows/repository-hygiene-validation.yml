@@ -7,6 +7,7 @@ on:
       - "zbrowse/.env.example"
       - "zbrowse/scripts/install.sh"
       - "tests/zbrowse.repository-hygiene.test.js"
+      - "tests/zbrowse.install-preflight.test.mjs"
       - ".github/workflows/repository-hygiene-validation.yml"
   workflow_dispatch:
 
@@ -33,6 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           node tests/zbrowse.repository-hygiene.test.js
+          node tests/zbrowse.install-preflight.test.mjs
           git check-ignore -q zbrowse/.env
           if git check-ignore -q zbrowse/.env.example; then
             echo "zbrowse/.env.example must remain trackable" >&2
