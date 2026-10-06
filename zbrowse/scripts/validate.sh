@@ -10,6 +10,7 @@ node -e "for (const f of ['gateway/package.json','gateway/config/sites.json','br
 node ../tests/zbrowse.contract.test.js
 node ../tests/zbrowse.request-ip.test.mjs
 bash -n scripts/install.sh
+bash -n browser/root/usr/local/bin/start-zbrowse
 if command -v docker >/dev/null 2>&1; then
   docker compose config >/dev/null
 fi
