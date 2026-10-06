@@ -4,6 +4,14 @@ services:
       context: ./gateway
     container_name: zbrowse-gateway
     restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     environment:
       PORT: ${PORT:-8090}
       MAX_SESSIONS: ${MAX_SESSIONS:-1}
@@ -24,6 +32,11 @@ services:
       - "${DOCKER_GID:-998}"
     networks:
       - zbrowse
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   zbrowse:
