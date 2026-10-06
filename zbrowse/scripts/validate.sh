@@ -15,6 +15,12 @@ node ../tests/zbrowse.base-provenance.test.mjs
 node ../tests/zbrowse.session-admission.test.mjs
 node ../tests/zbrowse.session-lifetime.test.mjs
 node ../tests/zbrowse.frontend-session.test.js
+node ../tests/zbrowse.gateway-containment.test.mjs
+node ../tests/zbrowse.gateway-dependency-audit.test.mjs
+node ../tests/zbrowse.install-preflight.test.mjs
+node ../tests/zbrowse.portal-accessibility.test.mjs
+node ../tests/zbrowse.repository-hygiene.test.js
+node ../tests/zbrowse.validation-entrypoint.test.mjs
 bash -n scripts/install.sh
 bash -n browser/root/usr/local/bin/start-zbrowse
 if command -v docker >/dev/null 2>&1; then
