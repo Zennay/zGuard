@@ -33,6 +33,10 @@ jobs:
       - name: Validate zBrowse runtime contracts
         run: bash zbrowse/scripts/validate.sh
 
+      - name: Verify locked zBrowse production install
+        working-directory: zbrowse/gateway
+        run: npm ci --omit=dev --ignore-scripts --no-audit
+
       - name: Audit zBrowse production dependencies
         working-directory: zbrowse/gateway
         run: npm audit --omit=dev --audit-level=high
