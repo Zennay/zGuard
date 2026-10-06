@@ -103,7 +103,7 @@ assert.match(
 );
 assert.match(
   gatewayDockerfile,
-  /COPY server\.js config-values\.js request-ip\.js request-path\.js session-admission\.js session-lifetime\.js \.\//,
+  /COPY server\.js config-values\.js request-ip\.js request-path\.js session-admission\.js session-capacity\.js session-lifetime\.js \.\//,
   'gateway image must include every local runtime module'
 );
 
@@ -138,6 +138,17 @@ assert.match(
   createSessionSource,
   /catch \(error\) \{\s*await stopContainer\(container\);\s*throw error;/,
   'failed starts must clean up the unpublished container directly'
+);
+
+assert.match(
+  gatewayServer,
+  /activeSessions: liveSessionCount\(sessions, config\.idleMs\)/,
+  'health must not report expired sessions as active'
+);
+assert.match(
+  gatewayServer,
+  /sessionAdmission\.tryReserve\(ip, liveSessionCount\(sessions, config\.idleMs\)\)/,
+  'expired sessions must not consume admission capacity'
 );
 
 assert.match(browserDockerfile, /COPY zguard \/opt\/zguard/);
