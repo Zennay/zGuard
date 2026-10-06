@@ -5,6 +5,14 @@
   const HOSTILE_HOSTS = new Set(['al5sm.com', 'nap5k.com', 'tmll7.com']);
   const DEFAULTS = { enabled: true, mode: 'balanced' };
 
+  function normalizeSettings(value = {}) {
+    const merged = { ...DEFAULTS, ...(value && typeof value === 'object' ? value : {}) };
+    return {
+      enabled: typeof merged.enabled === 'boolean' ? merged.enabled : DEFAULTS.enabled,
+      mode: merged.mode === 'strict' || merged.mode === 'balanced' ? merged.mode : DEFAULTS.mode
+    };
+  }
+
   function send(event, detail) {
     try {
       api.runtime.sendMessage({ type: 'blocked-event', event, detail });
@@ -43,7 +51,7 @@
   function currentSettings() {
     return new Promise((resolve) => {
       try {
-        api.storage.local.get(DEFAULTS, (result) => resolve({ ...DEFAULTS, ...result }));
+        api.storage.local.get(DEFAULTS, (result) => resolve(normalizeSettings(result)));
       } catch (_) {
         resolve(DEFAULTS);
       }
