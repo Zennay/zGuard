@@ -13,6 +13,9 @@ De publieke startpagina maakt zBrowse niet tot een open proxy:
 - tijdelijke browserprofielen die na de sessie verdwijnen;
 - geen hostmappen in de browsercontainer;
 - geheugen-, CPU- en proceslimieten;
+- de gateway draait met een read-only rootfilesystem, zonder Linux capabilities en met `no-new-privileges`;
+- alleen een begrensde `/tmp`-tmpfs blijft schrijfbaar en gatewaylogs worden geroteerd;
+- een Docker-healthcheck controleert de bestaande `/api/health`-route;
 - zGuard blokkeert popups en externe pop-unders.
 
 Voeg alleen websites toe waarvoor je dit soort toegang mag aanbieden. Maak de dienst niet onbeperkt toegankelijk tot ieder willekeurig domein.
@@ -95,11 +98,14 @@ bash scripts/validate.sh
 
 Deze gate controleert onder meer JavaScript-syntax, JSON-configuratie, de loopback-only hostbinding, browser-policy/site-consistentie, trusted-proxy IP-resolutie en — wanneer Docker beschikbaar is — de Compose-configuratie.
 
+De aparte gateway-containment CI-gate bouwt en start daarnaast de echte gatewaycontainer op een portable hosted runner. Die gate accepteert de runtime pas wanneer Docker de applicatiehealthcheck op `/api/health` als `healthy` rapporteert.
+
 ## Controle
 
 ```bash
 curl http://127.0.0.1:8090/api/health
+docker compose ps gateway
 docker compose logs -f gateway
 ```
 
-Een geldige healthrespons bevat `"status":"ok"` en het aantal actieve sessies.
+Een geldige healthrespons bevat `"status":"ok"` en het aantal actieve sessies. `docker compose ps gateway` hoort de gateway als `healthy` te tonen.

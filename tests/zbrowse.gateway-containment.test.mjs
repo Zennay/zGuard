@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const compose = fs.readFileSync(path.join(root, 'zbrowse/docker-compose.yml'), 'utf8');
+const readme = fs.readFileSync(path.join(root, 'zbrowse/README.md'), 'utf8');
 const workflow = fs.readFileSync(
   path.join(root, '.github/workflows/gateway-containment-validation.yml'),
   'utf8'
@@ -43,6 +44,12 @@ assert.match(
   'gateway logs must be rotated to prevent unbounded host-disk growth'
 );
 
+assert.match(readme, /read-only rootfilesystem/, 'README must document the read-only gateway root');
+assert.match(readme, /no-new-privileges/, 'README must document privilege-escalation hardening');
+assert.match(readme, /Docker-healthcheck controleert de bestaande `\/api\/health`-route/, 'README must document the application healthcheck');
+assert.match(readme, /docker compose ps gateway/, 'README must document how to inspect gateway health');
+assert.match(readme, /portable hosted runner/, 'README must describe the executable gateway CI gate');
+
 assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'containment validation must use a portable hosted runner');
 assert.match(workflow, /timeout-minutes:\s*[1-9][0-9]*/, 'containment validation must have a bounded timeout');
 assert.match(workflow, /permissions:\s*\n\s+contents:\s*read/, 'workflow token must remain read-only');
@@ -60,5 +67,6 @@ assert.match(
 assert.match(workflow, /docker compose config >\/dev\/null/, 'workflow must validate Compose syntax');
 assert.match(workflow, /docker compose up -d --build gateway/, 'workflow must boot the hardened gateway');
 assert.match(workflow, /\.State\.Health\.Status/, 'workflow must wait for Docker health state');
+assert.match(workflow, /- "zbrowse\/README\.md"/, 'README changes must trigger the containment gate');
 
 console.log('zBrowse gateway containment contract passed');
