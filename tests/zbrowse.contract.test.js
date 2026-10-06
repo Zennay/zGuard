@@ -127,11 +127,16 @@ const destroySessionStart = gatewayServer.indexOf('async function destroySession
 assert.ok(createSessionStart >= 0 && destroySessionStart > createSessionStart, 'gateway must define createSession before destroySession');
 const createSessionSource = gatewayServer.slice(createSessionStart, destroySessionStart);
 const browserReadyIndex = createSessionSource.indexOf('await waitForBrowser(containerName, subfolder)');
+const sessionTimestampIndex = createSessionSource.indexOf('const now = Date.now()');
 const sessionPublishIndex = createSessionSource.indexOf('sessions.set(token, session)');
 const ipPublishIndex = createSessionSource.indexOf('sessionsByIp.set(ip, token)');
 assert.ok(browserReadyIndex >= 0, 'session creation must wait for browser readiness');
 assert.ok(
-  sessionPublishIndex > browserReadyIndex && ipPublishIndex > browserReadyIndex,
+  sessionTimestampIndex > browserReadyIndex,
+  'session TTL and idle time must start only after browser readiness'
+);
+assert.ok(
+  sessionPublishIndex > sessionTimestampIndex && ipPublishIndex > sessionTimestampIndex,
   'session tokens and IP ownership must not be published before browser readiness'
 );
 assert.match(
