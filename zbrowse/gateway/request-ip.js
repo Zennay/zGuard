@@ -15,6 +15,6 @@ export function requestIp(req, trustedProxyHops = 1) {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  if (chain.length === 0) return socketIp;
-  return chain[Math.max(0, chain.length - hops)];
+  if (chain.length < hops) return socketIp;
+  return chain[chain.length - hops];
 }
