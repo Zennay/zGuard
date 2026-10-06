@@ -34,6 +34,11 @@ assert.match(
 );
 assert.match(
   gateway,
+  /\n    healthcheck:\s*\n\s+test:\s*[\s\S]*?\/api\/health[\s\S]*?\n\s+interval:\s+30s\s*\n\s+timeout:\s+5s\s*\n\s+retries:\s+3\s*\n\s+start_period:\s+5s\s*$/m,
+  'gateway must expose a bounded application-level healthcheck'
+);
+assert.match(
+  gateway,
   /\n    logging:\s*\n\s+driver:\s+json-file\s*\n\s+options:\s*\n\s+max-size:\s+["']10m["']\s*\n\s+max-file:\s+["']3["']\s*$/m,
   'gateway logs must be rotated to prevent unbounded host-disk growth'
 );
@@ -53,5 +58,7 @@ assert.match(
   'workflow must execute the gateway containment regression'
 );
 assert.match(workflow, /docker compose config >\/dev\/null/, 'workflow must validate Compose syntax');
+assert.match(workflow, /docker compose up -d --build gateway/, 'workflow must boot the hardened gateway');
+assert.match(workflow, /\.State\.Health\.Status/, 'workflow must wait for Docker health state');
 
 console.log('zBrowse gateway containment contract passed');
