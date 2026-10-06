@@ -23,6 +23,8 @@ const filesIn = (relative) => {
 const compose = read('zbrowse/docker-compose.yml');
 const gatewayDockerfile = read('zbrowse/gateway/Dockerfile');
 const gatewayServer = read('zbrowse/gateway/server.js');
+const gatewayPackage = json('zbrowse/gateway/package.json');
+const gatewayLock = json('zbrowse/gateway/package-lock.json');
 const envText = read('zbrowse/.env.example');
 const sites = json('zbrowse/gateway/config/sites.json');
 const policy = json('zbrowse/browser/policies/policy.json');
@@ -41,6 +43,25 @@ assert.doesNotMatch(
 );
 assert.match(compose, /\/var\/run\/docker\.sock:\/var\/run\/docker\.sock/);
 assert.match(compose, /\.\/gateway\/config:\/app\/config:ro/);
+
+assert.deepEqual(
+  gatewayLock.packages?.['']?.dependencies,
+  gatewayPackage.dependencies,
+  'gateway package-lock root dependencies must exactly match package.json'
+);
+assert.equal(
+  gatewayPackage.dependencies?.['http-proxy-middleware'],
+  undefined,
+  'vulnerable http-proxy-middleware chain must stay removed'
+);
+assert.equal(gatewayPackage.dependencies?.httpxy, '^0.5.5');
+for (const removedPackage of ['node_modules/http-proxy-middleware', 'node_modules/micromatch', 'node_modules/braces']) {
+  assert.equal(
+    gatewayLock.packages?.[removedPackage],
+    undefined,
+    `gateway lockfile must not contain removed vulnerable chain: ${removedPackage}`
+  );
+}
 
 assert.match(
   gatewayDockerfile,
