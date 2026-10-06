@@ -14,6 +14,7 @@ node ../tests/zbrowse.config-values.test.mjs
 node ../tests/zbrowse.session-admission.test.mjs
 node ../tests/zbrowse.session-lifetime.test.mjs
 node ../tests/zbrowse.session-capacity.test.mjs
+node ../tests/zbrowse.managed-containers.test.mjs
 node ../tests/zbrowse.frontend-session.test.js
 bash -n scripts/install.sh
 bash -n browser/root/usr/local/bin/start-zbrowse
