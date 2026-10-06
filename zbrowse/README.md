@@ -98,7 +98,7 @@ bash scripts/validate.sh
 
 Deze gate controleert onder meer JavaScript-syntax, JSON-configuratie, de loopback-only hostbinding, browser-policy/site-consistentie, trusted-proxy IP-resolutie en — wanneer Docker beschikbaar is — de Compose-configuratie.
 
-De aparte gateway-containment CI-gate bouwt en start daarnaast de echte gatewaycontainer op een portable hosted runner. Die gate accepteert de runtime pas wanneer Docker de applicatiehealthcheck op `/api/health` als `healthy` rapporteert.
+De aparte gateway-containment CI-gate bouwt en start daarnaast de echte gatewaycontainer op een portable hosted runner. Die gate accepteert de runtime pas wanneer Docker de applicatiehealthcheck op `/api/health` als `healthy` rapporteert. Daarna controleert dezelfde gate de effectieve draaiende container met `docker inspect` en echte write-probes: de gateway moet non-root blijven, een read-only rootfilesystem houden, alle Linux capabilities droppen, `no-new-privileges` behouden, alleen op loopback publiceren, de configuratie read-only mounten en alleen de begrensde `/tmp` schrijfbaar houden. De CI boot de gateway bovendien met de echte GID van de runner-Docker-socket en voert vanuit de non-root gateway een Docker API-ping uit; zo faalt de gate ook wanneer health groen is maar sessiestart later geen toegang tot Docker zou hebben.
 
 ## Controle
 
