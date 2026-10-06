@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js";
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
 import Docker from "dockerode";
@@ -25,7 +26,7 @@ const config = {
   ttlMs: positiveInt(process.env.SESSION_TTL_MINUTES, 15) * 60_000,
   idleMs: positiveInt(process.env.IDLE_TTL_MINUTES, 5) * 60_000,
   memoryBytes: positiveInt(process.env.BROWSER_MEMORY_MB, 2048) * 1024 * 1024,
-  nanoCpus: Math.max(0.25, Number(process.env.BROWSER_CPU || 1)) * 1e9,
+  nanoCpus: Math.max(0.25, positiveNumber(process.env.BROWSER_CPU, 1)) * 1e9,
   image: process.env.BROWSER_IMAGE || "zbrowse-browser:1.0.0",
   network: process.env.BROWSER_NETWORK || "zbrowse_net",
   startUrl: process.env.START_URL || "https://fawesome.tv/"
@@ -60,16 +61,6 @@ const sessionLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many session attempts. Please try again later." }
 });
-
-function positiveInt(value, fallback) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function nonNegativeInt(value, fallback) {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
 
 function publicSession(session) {
   return {
