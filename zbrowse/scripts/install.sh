@@ -17,9 +17,7 @@ if [[ ! -S /var/run/docker.sock ]]; then
   exit 1
 fi
 
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-fi
+bash scripts/prepare-env.sh .env .env.example
 
 docker_gid="$(stat -c '%g' /var/run/docker.sock)"
 if grep -q '^DOCKER_GID=' .env; then
