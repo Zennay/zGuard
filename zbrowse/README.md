@@ -19,10 +19,21 @@ Voeg alleen websites toe waarvoor je dit soort toegang mag aanbieden. Maak de di
 
 ## Installeren op de VPS
 
-Vereisten: Ubuntu/Debian, Docker Engine en Docker Compose v2.
+Vereisten: Ubuntu/Debian, Docker Engine, Docker Compose v2 en Node.js.
+
+Voor de standaardinstallatie:
+
+```bash
+bash scripts/install.sh
+```
+
+Het installatiescript controleert Docker, Compose, Node.js en de Docker-socket voordat het lokale `.env`-bestand wordt aangemaakt of aangepast. Daardoor laat een ontbrekende prerequisite geen gedeeltelijke installatiestate achter.
+
+Wil je instellingen vóór de eerste build aanpassen, maak dan zelf eerst `.env` aan en pas die aan:
 
 ```bash
 cp .env.example .env
+# pas .env aan
 bash scripts/install.sh
 ```
 
