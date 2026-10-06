@@ -8,6 +8,7 @@ import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js"
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
 import { createSessionAdmission } from "./session-admission.js";
+import { cleanupManagedContainers } from "./managed-containers.js";
 import { liveSessionCount } from "./session-capacity.js";
 import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
@@ -333,6 +334,18 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-server.listen(config.port, "0.0.0.0", () => {
-  console.log(`zBrowse gateway listening on ${config.port}`);
-});
+async function startServer() {
+  try {
+    const removed = await cleanupManagedContainers(docker);
+    if (removed > 0) console.log(`Removed ${removed} orphaned zBrowse browser container(s).`);
+  } catch (error) {
+    console.error("Failed to reconcile orphaned browser containers", error);
+    process.exit(1);
+  }
+
+  server.listen(config.port, "0.0.0.0", () => {
+    console.log(`zBrowse gateway listening on ${config.port}`);
+  });
+}
+
+startServer();
