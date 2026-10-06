@@ -22,7 +22,7 @@ concurrency:
 jobs:
   repository-hygiene:
     name: Repository hygiene contract
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
