@@ -10,11 +10,12 @@ async function loadBackground(relativePath, mode, overrides = {}) {
   const settings = { enabled: true, mode, blockedCount: 0, lastBlocked: null, ...overrides };
   const removed = [];
   let onCreated;
+  let onMessage;
 
   const api = {
     runtime: {
       onInstalled: { addListener() {} },
-      onMessage: { addListener() {} }
+      onMessage: { addListener(listener) { onMessage = listener; } }
     },
     storage: {
       local: {
@@ -55,6 +56,25 @@ async function loadBackground(relativePath, mode, overrides = {}) {
 
   return {
     created: (tab) => onCreated(tab),
+    message(message) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const sendResponse = (value) => {
+          settled = true;
+          resolve(value);
+        };
+        try {
+          const result = onMessage(message, {}, sendResponse);
+          if (result && typeof result.then === 'function') {
+            result.then(resolve, reject);
+          } else if (result !== true && !settled) {
+            resolve(result);
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+    },
     removed,
     settings
   };
@@ -107,6 +127,33 @@ async function verifyBrowser(relativePath) {
     1,
     `${relativePath}: malformed blockedCount must be normalized before incrementing`
   );
+
+
+  const messageRuntime = await loadBackground(relativePath, 'balanced', {
+    blockedCount: 4,
+    lastBlocked: { event: 'existing' }
+  });
+  const rejectedPatch = await messageRuntime.message({
+    type: 'set-settings',
+    settings: {
+      enabled: 'false',
+      mode: 'unsupported',
+      blockedCount: 999,
+      lastBlocked: { event: 'forged' }
+    }
+  });
+  assert.equal(rejectedPatch.enabled, true, `${relativePath}: non-boolean enabled patch must be ignored`);
+  assert.equal(rejectedPatch.mode, 'balanced', `${relativePath}: unknown mode patch must be ignored`);
+  assert.equal(rejectedPatch.blockedCount, 4, `${relativePath}: UI settings messages must not overwrite counters`);
+  assert.equal(rejectedPatch.lastBlocked?.event, 'existing', `${relativePath}: UI settings messages must not forge telemetry`);
+
+  const acceptedPatch = await messageRuntime.message({
+    type: 'set-settings',
+    settings: { enabled: false, mode: 'strict' }
+  });
+  assert.equal(acceptedPatch.enabled, false);
+  assert.equal(acceptedPatch.mode, 'strict');
+  assert.equal(acceptedPatch.blockedCount, 4);
 }
 
 (async () => {
