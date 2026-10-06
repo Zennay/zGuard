@@ -78,6 +78,8 @@ function publicSession(session) {
 function validStartUrl(input) {
   try {
     const url = new URL(input || config.startUrl);
+    const authority = url.href.slice(url.protocol.length + 2).split(/[/?#]/, 1)[0];
+    if (authority.includes("@")) return null;
     if (url.protocol !== "https:" || !allowedOrigins.has(url.origin.toLowerCase())) return null;
     return url.href;
   } catch {
