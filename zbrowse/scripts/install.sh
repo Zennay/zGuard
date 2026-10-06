@@ -12,6 +12,10 @@ if ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose v2 is required." >&2
   exit 1
 fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js is required for zBrowse validation." >&2
+  exit 1
+fi
 if [[ ! -S /var/run/docker.sock ]]; then
   echo "Docker socket /var/run/docker.sock is unavailable." >&2
   exit 1
