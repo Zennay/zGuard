@@ -22,9 +22,13 @@ class FakeElement {
   addEventListener(type, listener) {
     this.listeners.set(type, listener);
   }
+
+  trigger(type) {
+    return this.listeners.get(type)?.();
+  }
 }
 
-async function loadPopup(relativePath, tabUrl) {
+async function loadPopup(relativePath, tabUrl, { emptySaveResponse = false } = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const enabled = new FakeElement();
   const count = new FakeElement();
@@ -55,13 +59,22 @@ async function loadPopup(relativePath, tabUrl) {
 
   if (relativePath.startsWith('firefox/')) {
     api.runtime.sendMessage = async (message) => {
-      if (message.type === 'set-settings') Object.assign(settings, message.settings);
+      if (message.type === 'set-settings') {
+        if (emptySaveResponse) return undefined;
+        Object.assign(settings, message.settings);
+      }
       return { ...settings };
     };
     api.tabs.query = async () => [{ url: tabUrl }];
   } else {
     api.runtime.sendMessage = (message, callback) => {
-      if (message.type === 'set-settings') Object.assign(settings, message.settings);
+      if (message.type === 'set-settings') {
+        if (emptySaveResponse) {
+          callback(undefined);
+          return;
+        }
+        Object.assign(settings, message.settings);
+      }
       callback({ ...settings });
     };
     api.tabs.query = (_query, callback) => callback([{ url: tabUrl }]);
@@ -88,6 +101,16 @@ async function verifyBrowser(relativePath) {
 
   const web = await loadPopup(relativePath, 'https://example.org/watch');
   assert.equal(web.site.textContent, 'example.org', `${relativePath}: web tabs must show their hostname`);
+
+
+  const failedSave = await loadPopup(relativePath, 'https://example.org/watch', { emptySaveResponse: true });
+  failedSave.enabled.checked = false;
+  await failedSave.enabled.trigger('change');
+  assert.equal(
+    failedSave.enabled.checked,
+    true,
+    `${relativePath}: an empty settings response must keep the last known UI state`
+  );
 }
 
 (async () => {
