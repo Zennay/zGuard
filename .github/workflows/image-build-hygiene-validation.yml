@@ -1,0 +1,30 @@
+name: zBrowse image build hygiene validation
+
+on:
+  pull_request:
+    paths:
+      - 'zbrowse/browser/Dockerfile'
+      - 'zbrowse/gateway/Dockerfile'
+      - 'tests/zbrowse.image-build-hygiene.test.mjs'
+      - '.github/workflows/image-build-hygiene-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-build-hygiene:
+    name: Container build hygiene contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Verify Node runtime
+        run: node --version
+
+      - name: Validate container build hygiene
+        run: node tests/zbrowse.image-build-hygiene.test.mjs
