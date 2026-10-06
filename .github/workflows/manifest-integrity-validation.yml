@@ -1,0 +1,31 @@
+name: zGuard manifest integrity validation
+
+on:
+  pull_request:
+    paths:
+      - 'chromium/**'
+      - 'firefox/**'
+      - 'zbrowse/browser/zguard/**'
+      - 'tests/zguard.manifest-integrity.test.js'
+      - '.github/workflows/manifest-integrity-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest-integrity:
+    name: Manifest and popup asset integrity
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Node runtime
+        run: node --version
+
+      - name: Validate extension manifests and popup assets
+        run: node tests/zguard.manifest-integrity.test.js
