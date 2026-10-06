@@ -26,6 +26,20 @@ function localAsset(browserDir, asset, label) {
 function htmlAssets(browserDir, popupPath) {
   const html = fs.readFileSync(path.join(root, browserDir, popupPath), 'utf8');
   const assets = [];
+  const scriptTags = [...html.matchAll(/<script\b([^>]*)>/gi)];
+
+  assert.ok(scriptTags.length > 0, `${browserDir}: popup must load at least one script`);
+  for (const tag of scriptTags) {
+    assert.match(
+      tag[1],
+      /\bsrc=["'][^"']+["']/i,
+      `${browserDir}: inline popup scripts are not allowed`
+    );
+  }
+  assert.ok(
+    !/\son[a-z]+\s*=/i.test(html),
+    `${browserDir}: inline HTML event handlers are not allowed`
+  );
 
   for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) {
     assets.push({ kind: 'script', path: match[1] });
