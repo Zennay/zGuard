@@ -103,6 +103,14 @@ async function waitForBrowser(containerName, subfolder, attempts = 45) {
   throw new Error("The browser did not start in time.");
 }
 
+async function stopContainer(container) {
+  try {
+    await container.stop({ t: 3 });
+  } catch {
+    try { await container.remove({ force: true }); } catch {}
+  }
+}
+
 async function createSession(ip, startUrl) {
   const token = crypto.randomBytes(24).toString("base64url");
   const password = crypto.randomBytes(24).toString("base64url");
@@ -156,14 +164,14 @@ async function createSession(ip, startUrl) {
     lastSeenAt: now
   };
 
-  sessions.set(token, session);
-  sessionsByIp.set(ip, token);
   try {
     await container.start();
     await waitForBrowser(containerName, subfolder);
+    sessions.set(token, session);
+    sessionsByIp.set(ip, token);
     return session;
   } catch (error) {
-    await destroySession(token);
+    await stopContainer(container);
     throw error;
   }
 }
@@ -173,11 +181,7 @@ async function destroySession(token) {
   if (!session) return;
   sessions.delete(token);
   if (sessionsByIp.get(session.ip) === token) sessionsByIp.delete(session.ip);
-  try {
-    await session.container.stop({ t: 3 });
-  } catch {
-    try { await session.container.remove({ force: true }); } catch {}
-  }
+  await stopContainer(session.container);
 }
 
 function findSession(req) {
