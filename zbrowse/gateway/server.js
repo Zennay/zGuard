@@ -11,7 +11,7 @@ import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
-import { createProxyMiddleware } from "http-proxy-middleware";
+import { createProxyServer } from "httpxy";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -235,28 +235,34 @@ app.use("/s/", (req, res, next) => {
   next();
 });
 
-const browserProxy = createProxyMiddleware({
-  ws: true,
-  secure: false,
-  changeOrigin: true,
-  router: (req) => `https://${req.zbrowseSession.containerName}:3001`,
-  pathRewrite: (pathValue, req) => requestPath(req, pathValue),
-  on: {
-    proxyReq: (proxyReq, req) => {
-      const value = Buffer.from(`viewer:${req.zbrowseSession.password}`).toString("base64");
-      proxyReq.setHeader("authorization", `Basic ${value}`);
-    },
-    proxyReqWs: (proxyReq, req) => {
-      const value = Buffer.from(`viewer:${req.zbrowseSession.password}`).toString("base64");
-      proxyReq.setHeader("authorization", `Basic ${value}`);
-    },
-    error: (error, req, res) => {
-      console.error("Browser proxy error", error.message);
-      if (res.writeHead) res.writeHead(502).end("Browser connection interrupted.");
-    }
+const browserProxy = createProxyServer();
+
+function browserProxyOptions(req) {
+  return {
+    target: `https://${req.zbrowseSession.containerName}:3001`,
+    secure: false,
+    changeOrigin: true,
+    auth: `viewer:${req.zbrowseSession.password}`
+  };
+}
+
+function browserProxyError(error, response) {
+  console.error("Browser proxy error", error.message);
+  if (response?.writeHead && !response.headersSent) {
+    response.writeHead(502).end("Browser connection interrupted.");
+    return;
+  }
+  response?.destroy?.();
+}
+
+app.use("/s/", async (req, res) => {
+  req.url = requestPath(req, req.url);
+  try {
+    await browserProxy.web(req, res, browserProxyOptions(req));
+  } catch (error) {
+    browserProxyError(error, res);
   }
 });
-app.use("/s/", browserProxy);
 
 app.use("/api", (req, res) => res.status(404).json({ error: "API route not found." }));
 
@@ -300,7 +306,9 @@ server.on("upgrade", (req, socket, head) => {
   }
   session.lastSeenAt = Date.now();
   req.zbrowseSession = session;
-  browserProxy.upgrade(req, socket, head);
+  browserProxy.ws(req, socket, browserProxyOptions(req), head).catch((error) => {
+    browserProxyError(error, socket);
+  });
 });
 
 server.listen(config.port, "0.0.0.0", () => {
