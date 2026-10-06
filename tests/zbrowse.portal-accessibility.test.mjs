@@ -103,5 +103,17 @@ assert.ok(
   contrast(privacy, "#09090b") >= 4.5,
   "privacy note must retain at least 4.5:1 contrast against the page background"
 );
+const accent = css.match(/--accent:\s*(#[0-9a-f]{6});/i)?.[1];
+const accentHover = css.match(/--accent-hover:\s*(#[0-9a-f]{6});/i)?.[1];
+assert.ok(accent, "primary accent color must remain explicit");
+assert.ok(accentHover, "hover accent color must remain explicit");
+assert.ok(
+  contrast("#ffffff", accent) >= 4.5,
+  "white button text must retain at least 4.5:1 contrast on the primary accent"
+);
+assert.ok(
+  contrast("#ffffff", accentHover) >= 4.5,
+  "white button text must retain at least 4.5:1 contrast on the hover accent"
+);
 
 console.log("zBrowse portal accessibility contract passed");
