@@ -5,6 +5,7 @@ import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requestIp } from "./request-ip.js";
+import { requestPath } from "./request-path.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
@@ -33,7 +34,7 @@ const config = {
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
 const allowedHosts = new Set(sites.map((site) => new URL(site.url).hostname.toLowerCase()));
 
-const trustProxyHops = positiveInt(process.env.TRUST_PROXY, 1);
+const trustProxyHops = nonNegativeInt(process.env.TRUST_PROXY, 1);
 app.set("trust proxy", trustProxyHops);
 app.disable("x-powered-by");
 app.use(helmet({
@@ -63,6 +64,11 @@ const sessionLimiter = rateLimit({
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function publicSession(session) {
@@ -180,8 +186,7 @@ async function destroySession(token) {
 }
 
 function findSession(req) {
-  const requestUrl = req.originalUrl || req.url || "";
-  const match = requestUrl.match(/^\/s\/([A-Za-z0-9_-]{32,})\//);
+  const match = requestPath(req).match(/^\/s\/([A-Za-z0-9_-]{32,})\//);
   return match ? sessions.get(match[1]) : null;
 }
 
@@ -244,7 +249,7 @@ const browserProxy = createProxyMiddleware({
   secure: false,
   changeOrigin: true,
   router: (req) => `https://${req.zbrowseSession.containerName}:3001`,
-  pathRewrite: (pathValue, req) => req.originalUrl,
+  pathRewrite: (pathValue, req) => requestPath(req, pathValue),
   on: {
     proxyReq: (proxyReq, req) => {
       const value = Buffer.from(`viewer:${req.zbrowseSession.password}`).toString("base64");
