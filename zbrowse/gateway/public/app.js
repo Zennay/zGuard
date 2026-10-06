@@ -44,7 +44,7 @@ async function refreshHealth() {
   const status = $("capacityText").parentElement;
   try {
     const health = await request("/api/health");
-    const available = health.activeSessions < health.capacity;
+    const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
