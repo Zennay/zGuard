@@ -5,7 +5,10 @@ on:
     paths:
       - "zbrowse/gateway/public/index.html"
       - "zbrowse/gateway/public/styles.css"
+      - "zbrowse/gateway/public/app.js"
       - "tests/zbrowse.portal-accessibility.test.mjs"
+      - "tests/zbrowse.frontend-session.test.js"
+      - "tests/zbrowse.portal-workflow-coverage.test.mjs"
       - ".github/workflows/portal-accessibility-validation.yml"
   workflow_dispatch:
 
@@ -27,5 +30,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate portal accessibility contract
-        run: node tests/zbrowse.portal-accessibility.test.mjs
+      - name: Validate portal accessibility and session contracts
+        run: |
+          node tests/zbrowse.portal-accessibility.test.mjs
+          node tests/zbrowse.frontend-session.test.js
+          node tests/zbrowse.portal-workflow-coverage.test.mjs
