@@ -37,7 +37,7 @@
     const host = hostOf(value);
     if (isHostile(host)) return true;
     if (!isExternal(value)) return false;
-    return mode === 'strict' || mode === 'balanced';
+    return mode === 'strict';
   }
 
   function currentSettings() {
