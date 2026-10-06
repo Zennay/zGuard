@@ -4,10 +4,6 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker Engine is required." >&2
   exit 1
@@ -19,6 +15,10 @@ fi
 if [[ ! -S /var/run/docker.sock ]]; then
   echo "Docker socket /var/run/docker.sock is unavailable." >&2
   exit 1
+fi
+
+if [[ ! -f .env ]]; then
+  cp .env.example .env
 fi
 
 docker_gid="$(stat -c '%g' /var/run/docker.sock)"
