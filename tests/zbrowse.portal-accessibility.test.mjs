@@ -33,6 +33,16 @@ assert.match(
 );
 assert.match(
   html,
+  /class="sr-only">Session time remaining: <\/span><span id="timer">15:00<\/span>/,
+  "session timer must expose its label without masking the changing time value"
+);
+assert.match(
+  css,
+  /\.sr-only\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*1px;[\s\S]*?height:\s*1px;/,
+  "screen-reader-only text must stay visually hidden without display:none"
+);
+assert.match(
+  html,
   /id="browserLoading"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/,
   "browser startup state must be announced as one polite status"
 );
