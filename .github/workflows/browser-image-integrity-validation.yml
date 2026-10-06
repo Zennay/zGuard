@@ -1,0 +1,39 @@
+name: zBrowse browser image integrity validation
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/browser/Dockerfile"
+      - "zbrowse/browser/root/**"
+      - "tests/zbrowse.base-provenance.test.mjs"
+      - "tests/zbrowse.contract.test.js"
+      - "tests/zbrowse.browser-image-workflow.test.mjs"
+      - ".github/workflows/browser-image-integrity-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-browser-image-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-image-integrity:
+    name: Browser image and startup contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate browser image and startup contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.base-provenance.test.mjs
+          node tests/zbrowse.contract.test.js
+          bash -n zbrowse/browser/root/usr/local/bin/start-zbrowse
+          node tests/zbrowse.browser-image-workflow.test.mjs
