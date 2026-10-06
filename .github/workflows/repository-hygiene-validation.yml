@@ -8,6 +8,7 @@ on:
       - "zbrowse/scripts/install.sh"
       - "tests/zbrowse.repository-hygiene.test.js"
       - "tests/zbrowse.install-preflight.test.mjs"
+      - "tests/dedicated-workflow-checkout-integrity.test.mjs"
       - ".github/workflows/repository-hygiene-validation.yml"
   workflow_dispatch:
 
@@ -25,7 +26,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -35,6 +36,7 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.repository-hygiene.test.js
           node tests/zbrowse.install-preflight.test.mjs
+          node tests/dedicated-workflow-checkout-integrity.test.mjs
           git check-ignore -q zbrowse/.env
           if git check-ignore -q zbrowse/.env.example; then
             echo "zbrowse/.env.example must remain trackable" >&2
