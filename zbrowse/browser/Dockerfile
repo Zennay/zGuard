@@ -3,7 +3,7 @@ FROM ghcr.io/linuxserver/baseimage-selkies:debiantrixie@sha256:1439cfdbc0db4e2b6
 RUN apt-get update \
   && apt-get install -y --no-install-recommends chromium ca-certificates fonts-noto-color-emoji \
   && mkdir -p /opt/zbrowse-build-metadata \
-  && dpkg-query -W -f='\${Package}\t\${Version}\n' | sort > /opt/zbrowse-build-metadata/apt-packages.tsv \
+  && dpkg-query -W -f='${Package}\t${Version}\n' | sort > /opt/zbrowse-build-metadata/apt-packages.tsv \
   && rm -rf /var/lib/apt/lists/*
 
 COPY zguard /opt/zguard
