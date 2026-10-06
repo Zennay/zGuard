@@ -74,6 +74,16 @@ Het installatiescript vult `DOCKER_GID` automatisch in zodat de gateway alleen v
 
 Op een VPS die ook HaxLab, FTMO en andere taken draait is één sessie met één CPU de veilige start. Verhoog dit pas na het bekijken van het echte resourcegebruik.
 
+## Kwaliteitscontrole
+
+Voer vóór installatie of deploy de lokale contractchecks uit:
+
+```bash
+bash scripts/validate.sh
+```
+
+Deze gate controleert onder meer JavaScript-syntax, JSON-configuratie, de loopback-only hostbinding, browser-policy/site-consistentie, trusted-proxy IP-resolutie en — wanneer Docker beschikbaar is — de Compose-configuratie.
+
 ## Controle
 
 ```bash
