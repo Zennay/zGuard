@@ -9,6 +9,7 @@ async function loadContentScript(relativePath, mode, overrides = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const events = [];
   let allowedOpenCount = 0;
+  let onStorageChanged;
 
   const api = {
     runtime: {
@@ -25,6 +26,11 @@ async function loadContentScript(relativePath, mode, overrides = {}) {
             return undefined;
           }
           return Promise.resolve(settings);
+        }
+      },
+      onChanged: {
+        addListener(listener) {
+          onStorageChanged = listener;
         }
       }
     }
@@ -56,6 +62,12 @@ async function loadContentScript(relativePath, mode, overrides = {}) {
 
   return {
     open: (url) => context.window.open(url),
+    change(patch) {
+      const changes = Object.fromEntries(
+        Object.entries(patch).map(([key, newValue]) => [key, { newValue }])
+      );
+      onStorageChanged?.(changes, 'local');
+    },
     events,
     allowedOpenCount: () => allowedOpenCount
   };
@@ -100,6 +112,27 @@ async function verifyBrowser(relativePath) {
     `${relativePath}: malformed persisted settings must fall back to enabled balanced mode`
   );
   assert.equal(malformed.events.at(-1)?.event, 'window-open');
+
+
+  const live = await loadContentScript(relativePath, 'balanced');
+  live.change({ mode: 'strict' });
+  assert.equal(
+    live.open('https://example.org/after-mode-change'),
+    null,
+    `${relativePath}: changing to strict must affect an already loaded page`
+  );
+  live.change({ enabled: false });
+  assert.notEqual(
+    live.open('https://ads.al5sm.com/after-disable'),
+    null,
+    `${relativePath}: disabling zGuard must stop blocking without a page reload`
+  );
+  live.change({ enabled: true, mode: 'balanced' });
+  assert.equal(
+    live.open('https://ads.al5sm.com/after-enable'),
+    null,
+    `${relativePath}: re-enabling zGuard must resume blocking without a page reload`
+  );
 }
 
 (async () => {
