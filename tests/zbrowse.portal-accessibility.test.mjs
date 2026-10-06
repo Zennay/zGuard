@@ -71,6 +71,16 @@ assert.match(
   /:focus-visible/,
   "keyboard focus must retain a visible focus treatment"
 );
+assert.doesNotMatch(
+  css,
+  /button,\s*a,\s*input\s*\{\s*outline:\s*none;/,
+  "portal must not globally suppress the browser focus outline"
+);
+assert.match(
+  css,
+  /:focus-visible[\s\S]*?outline:\s*3px solid var\(--focus\);[\s\S]*?outline-offset:\s*2px;/,
+  "keyboard focus must use an explicit high-contrast outline"
+);
 
 function relativeLuminance(hex) {
   const channels = hex
@@ -102,6 +112,16 @@ assert.ok(
 assert.ok(
   contrast(privacy, "#09090b") >= 4.5,
   "privacy note must retain at least 4.5:1 contrast against the page background"
+);
+const focus = css.match(/--focus:\s*(#[0-9a-f]{6});/i)?.[1];
+assert.ok(focus, "focus color must remain explicit");
+assert.ok(
+  contrast(focus, "#09090b") >= 3,
+  "focus indicator must retain at least 3:1 contrast against the page background"
+);
+assert.ok(
+  contrast(focus, "#151518") >= 3,
+  "focus indicator must retain at least 3:1 contrast against the search surface"
 );
 const accent = css.match(/--accent:\s*(#[0-9a-f]{6});/i)?.[1];
 const accentHover = css.match(/--accent-hover:\s*(#[0-9a-f]{6});/i)?.[1];
