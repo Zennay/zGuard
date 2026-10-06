@@ -77,7 +77,7 @@ assert.match(
 );
 assert.match(
   gatewayDockerfile,
-  /COPY server\.js config-values\.js request-ip\.js request-path\.js \.\//,
+  /COPY server\.js config-values\.js request-ip\.js request-path\.js session-admission\.js \.\//,
   'gateway image must include every local runtime module'
 );
 
