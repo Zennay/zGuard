@@ -5,9 +5,9 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadBackground(relativePath, mode) {
+async function loadBackground(relativePath, mode, overrides = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
-  const settings = { enabled: true, mode, blockedCount: 0, lastBlocked: null };
+  const settings = { enabled: true, mode, blockedCount: 0, lastBlocked: null, ...overrides };
   const removed = [];
   let onCreated;
 
@@ -90,6 +90,22 @@ async function verifyBrowser(relativePath) {
     strict.removed,
     [20],
     `${relativePath}: strict fallback must preserve same-origin tabs`
+  );
+
+  const malformed = await loadBackground(relativePath, 'invalid-mode', {
+    enabled: 0,
+    blockedCount: '9'
+  });
+  await malformed.created({ id: 30, openerTabId: 1, url: 'https://ads.al5sm.com/popup' });
+  assert.deepEqual(
+    malformed.removed,
+    [30],
+    `${relativePath}: malformed persisted settings must fall back to safe defaults`
+  );
+  assert.equal(
+    malformed.settings.blockedCount,
+    1,
+    `${relativePath}: malformed blockedCount must be normalized before incrementing`
   );
 }
 
