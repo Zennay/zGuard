@@ -38,6 +38,24 @@ assert.equal(
   requestIp({
     socket: { remoteAddress: '10.0.0.3' },
     headers: { 'x-forwarded-for': '198.51.100.20' }
+  }, 2),
+  '10.0.0.3',
+  'an incomplete forwarded chain must fail closed to the socket address'
+);
+
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '10.0.0.4' },
+    headers: { 'x-forwarded-for': '198.51.100.20, 10.0.0.1, 10.0.0.2' }
+  }, 2),
+  '10.0.0.1',
+  'extra untrusted entries to the left must not move the trusted-hop boundary'
+);
+
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { 'x-forwarded-for': '198.51.100.20' }
   }, 0),
   '10.0.0.3',
   'zero trusted hops must ignore forwarding headers'
