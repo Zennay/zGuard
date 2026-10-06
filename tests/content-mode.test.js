@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadContentScript(relativePath, mode) {
+async function loadContentScript(relativePath, mode, overrides = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const events = [];
   let allowedOpenCount = 0;
@@ -19,7 +19,7 @@ async function loadContentScript(relativePath, mode) {
     storage: {
       local: {
         get(defaults, callback) {
-          const settings = { ...defaults, enabled: true, mode };
+          const settings = { ...defaults, enabled: true, mode, ...overrides };
           if (typeof callback === 'function') {
             callback(settings);
             return undefined;
@@ -92,6 +92,14 @@ async function verifyBrowser(relativePath) {
     `${relativePath}: strict mode must allow same-origin opens`
   );
   assert.equal(strict.allowedOpenCount(), 1);
+
+  const malformed = await loadContentScript(relativePath, 'invalid-mode', { enabled: 0 });
+  assert.equal(
+    malformed.open('https://ads.al5sm.com/popup'),
+    null,
+    `${relativePath}: malformed persisted settings must fall back to enabled balanced mode`
+  );
+  assert.equal(malformed.events.at(-1)?.event, 'window-open');
 }
 
 (async () => {
