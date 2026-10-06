@@ -153,22 +153,23 @@ async function createSession(ip, startUrl) {
     }
   });
 
-  const now = Date.now();
-  const session = {
-    token,
-    password,
-    ip,
-    container,
-    containerName,
-    subfolder,
-    createdAt: now,
-    expiresAt: now + config.ttlMs,
-    lastSeenAt: now
-  };
-
   try {
     await container.start();
     await waitForBrowser(containerName, subfolder);
+
+    const now = Date.now();
+    const session = {
+      token,
+      password,
+      ip,
+      container,
+      containerName,
+      subfolder,
+      createdAt: now,
+      expiresAt: now + config.ttlMs,
+      lastSeenAt: now
+    };
+
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
     return session;
