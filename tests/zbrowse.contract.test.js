@@ -112,6 +112,24 @@ assert.doesNotMatch(gatewayServer, /http-proxy-middleware/);
 assert.match(gatewayServer, /browserProxy\.web\(req, res, browserProxyOptions\(req\)\)/);
 assert.match(gatewayServer, /browserProxy\.ws\(req, socket, browserProxyOptions\(req\), head\)/);
 
+const createSessionStart = gatewayServer.indexOf('async function createSession');
+const destroySessionStart = gatewayServer.indexOf('async function destroySession');
+assert.ok(createSessionStart >= 0 && destroySessionStart > createSessionStart, 'gateway must define createSession before destroySession');
+const createSessionSource = gatewayServer.slice(createSessionStart, destroySessionStart);
+const browserReadyIndex = createSessionSource.indexOf('await waitForBrowser(containerName, subfolder)');
+const sessionPublishIndex = createSessionSource.indexOf('sessions.set(token, session)');
+const ipPublishIndex = createSessionSource.indexOf('sessionsByIp.set(ip, token)');
+assert.ok(browserReadyIndex >= 0, 'session creation must wait for browser readiness');
+assert.ok(
+  sessionPublishIndex > browserReadyIndex && ipPublishIndex > browserReadyIndex,
+  'session tokens and IP ownership must not be published before browser readiness'
+);
+assert.match(
+  createSessionSource,
+  /catch \(error\) \{\s*await stopContainer\(container\);\s*throw error;/,
+  'failed starts must clean up the unpublished container directly'
+);
+
 assert.match(browserDockerfile, /COPY zguard \/opt\/zguard/);
 assert.match(browserDockerfile, /COPY policies\/policy\.json \/etc\/chromium\/policies\/managed\/zbrowse-policy\.json/);
 assert.match(browserDockerfile, /COPY root \/$/m);
