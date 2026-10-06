@@ -62,4 +62,36 @@ assert.match(
   "keyboard focus must retain a visible focus treatment"
 );
 
+function relativeLuminance(hex) {
+  const channels = hex
+    .slice(1)
+    .match(/.{2}/g)
+    .map((part) => Number.parseInt(part, 16) / 255)
+    .map((channel) =>
+      channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4)
+    );
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrast(foreground, background) {
+  const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const darker = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+const placeholder = css.match(/\.searchbar input::placeholder \{ color: (#[0-9a-f]{6}); \}/i)?.[1];
+const privacy = css.match(/\.privacy-note \{[\s\S]*?color: (#[0-9a-f]{6});/i)?.[1];
+assert.ok(placeholder, "placeholder color must remain explicit");
+assert.ok(privacy, "privacy note color must remain explicit");
+assert.ok(
+  contrast(placeholder, "#151518") >= 4.5,
+  "URL placeholder must retain at least 4.5:1 contrast against the search surface"
+);
+assert.ok(
+  contrast(privacy, "#09090b") >= 4.5,
+  "privacy note must retain at least 4.5:1 contrast against the page background"
+);
+
 console.log("zBrowse portal accessibility contract passed");
