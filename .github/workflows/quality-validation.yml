@@ -32,3 +32,7 @@ jobs:
 
       - name: Validate zBrowse runtime contracts
         run: bash zbrowse/scripts/validate.sh
+
+      - name: Audit zBrowse production dependencies
+        working-directory: zbrowse/gateway
+        run: npm audit --omit=dev --audit-level=high
