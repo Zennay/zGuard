@@ -16,7 +16,13 @@
     status.classList.toggle('off', !settings.enabled);
     modeButtons.forEach((button) => button.classList.toggle('active', button.dataset.mode === settings.mode));
   }
-  api.tabs.query({ active: true, currentWindow: true }, (tabs) => { site.textContent = tabs?.[0]?.url ? new URL(tabs[0].url).hostname : 'Deze site'; });
+  api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    try {
+      site.textContent = new URL(tabs?.[0]?.url || '').hostname || 'Deze site';
+    } catch (_) {
+      site.textContent = 'Deze site';
+    }
+  });
   get().then((result) => { if (result) settings = result; render(); });
   enabled.addEventListener('change', () => save({ enabled: enabled.checked }).then((result) => { settings = result; render(); }));
   modeButtons.forEach((button) => button.addEventListener('click', () => save({ mode: button.dataset.mode }).then((result) => { settings = result; render(); })));
