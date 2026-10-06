@@ -8,6 +8,7 @@ import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js"
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
 import { createSessionAdmission } from "./session-admission.js";
+import { liveSessionCount } from "./session-capacity.js";
 import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
 import express from "express";
@@ -190,7 +191,7 @@ function findSession(req) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  res.json({ status: "ok", activeSessions: liveSessionCount(sessions, config.idleMs), startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
 app.get("/api/sites", (req, res) => {
@@ -213,7 +214,7 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     return res.status(400).json({ error: "This website is not on the allowed list." });
   }
 
-  const admission = sessionAdmission.tryReserve(ip, sessions.size);
+  const admission = sessionAdmission.tryReserve(ip, liveSessionCount(sessions, config.idleMs));
   if (!admission.ok) {
     if (admission.reason === "pending") {
       return res.status(409).json({ error: "A browser session is already starting for this client." });
