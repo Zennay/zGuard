@@ -42,9 +42,26 @@ assert.deepEqual(
   ".env.example keys must exactly match the reviewed zBrowse install surface"
 );
 
+function composeDefaultsFor(key) {
+  const marker = "${" + key + ":-";
+  const values = [];
+  let offset = 0;
+
+  while (true) {
+    const start = compose.indexOf(marker, offset);
+    if (start < 0) break;
+    const valueStart = start + marker.length;
+    const end = compose.indexOf("}", valueStart);
+    assert.ok(end > valueStart, `${key}: malformed Compose default expression`);
+    values.push(compose.slice(valueStart, end));
+    offset = end + 1;
+  }
+
+  return values;
+}
+
 for (const key of requiredKeys) {
-  const pattern = new RegExp("\\\$\\\\{" + key + ":-([^}]+)\\\\}", "g");
-  const defaults = [...compose.matchAll(pattern)].map((match) => match[1]);
+  const defaults = composeDefaultsFor(key);
   assert.ok(defaults.length > 0, `${key}: docker-compose.yml must declare a default`);
   assert.ok(
     defaults.every((value) => value === defaults[0]),
