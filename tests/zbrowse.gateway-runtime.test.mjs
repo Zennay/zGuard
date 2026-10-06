@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 const containerName = process.argv[2] || 'zbrowse-gateway';
@@ -158,6 +159,57 @@ assert.deepEqual(
   await missingApiResponse.json(),
   { error: 'API route not found.' },
   'unknown API route must return only the generic API error'
+);
+
+const repositorySites = JSON.parse(
+  fs.readFileSync(new URL('../zbrowse/gateway/config/sites.json', import.meta.url), 'utf8')
+);
+const mountedSites = JSON.parse(
+  docker(['exec', containerName, 'cat', '/app/config/sites.json'])
+);
+assert.deepEqual(
+  mountedSites,
+  repositorySites,
+  'running gateway must see the exact reviewed sites.json through its config mount'
+);
+
+const sitesResponse = await fetch(baseUrl + '/api/sites', {
+  signal: AbortSignal.timeout(5_000),
+});
+assert.equal(sitesResponse.status, 200, 'live /api/sites must return HTTP 200');
+assert.match(
+  sitesResponse.headers.get('content-type') || '',
+  /^application\/json\b/i,
+  'live /api/sites must return JSON'
+);
+assertSecurityHeaders(sitesResponse, 'live /api/sites');
+const sitesPayload = await sitesResponse.json();
+assert.deepEqual(
+  Object.keys(sitesPayload).sort(),
+  ['maxSessionMinutes', 'sites'],
+  'public sites response must not expose unrelated gateway configuration'
+);
+assert.deepEqual(
+  sitesPayload.sites,
+  repositorySites,
+  'live /api/sites must expose exactly the reviewed site configuration'
+);
+
+const effectiveEnv = Object.fromEntries(
+  (config.Env || []).map((entry) => {
+    const split = entry.indexOf('=');
+    return split < 0 ? [entry, ''] : [entry.slice(0, split), entry.slice(split + 1)];
+  })
+);
+const expectedSessionMinutes = Number(effectiveEnv.SESSION_TTL_MINUTES || 15);
+assert.ok(
+  Number.isInteger(expectedSessionMinutes) && expectedSessionMinutes > 0,
+  'effective SESSION_TTL_MINUTES must be a positive integer'
+);
+assert.equal(
+  sitesPayload.maxSessionMinutes,
+  expectedSessionMinutes,
+  'live /api/sites must reflect the effective session TTL'
 );
 
 const mounts = container.Mounts || [];
