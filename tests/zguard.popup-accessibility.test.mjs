@@ -48,6 +48,11 @@ for (const browser of ["chromium", "firefox"]) {
     /id="status" class="status" role="status" aria-live="polite"/,
     browser + ": protection status changes must be announced"
   );
+  assert.match(
+    html,
+    /<script src="popup\.js"><\/script><script src="popup-a11y\.js"><\/script>/,
+    browser + ": popup ARIA sync must load after the settings runtime"
+  );
 }
 
 assert.equal(
