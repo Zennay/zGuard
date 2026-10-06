@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "zbrowse/docker-compose.yml"
+      - "zbrowse/README.md"
       - "tests/zbrowse.gateway-containment.test.mjs"
       - ".github/workflows/gateway-containment-validation.yml"
   workflow_dispatch:
