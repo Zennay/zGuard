@@ -111,6 +111,16 @@ assert.match(gatewayServer, /import \{ createProxyServer \} from "httpxy";/);
 assert.doesNotMatch(gatewayServer, /http-proxy-middleware/);
 assert.match(gatewayServer, /browserProxy\.web\(req, res, browserProxyOptions\(req\)\)/);
 assert.match(gatewayServer, /browserProxy\.ws\(req, socket, browserProxyOptions\(req\), head\)/);
+assert.match(
+  gatewayServer,
+  /const allowedOrigins = new Set\(sites\.map\(\(site\) => new URL\(site\.url\)\.origin\.toLowerCase\(\)\)\);/,
+  'gateway allowlist must be keyed by exact origins'
+);
+assert.match(
+  gatewayServer,
+  /!allowedOrigins\.has\(url\.origin\.toLowerCase\(\)\)/,
+  'start URLs must reject alternate ports on an otherwise allowed hostname'
+);
 
 const createSessionStart = gatewayServer.indexOf('async function createSession');
 const destroySessionStart = gatewayServer.indexOf('async function destroySession');
@@ -145,13 +155,13 @@ assert.ok(staticIndex > apiFallbackIndex, 'API 404 fallback must run before SPA 
 assert.match(gatewayServer, /status\(404\)\.json\(\{ error: "API route not found\." \}\)/);
 
 assert.ok(Array.isArray(sites) && sites.length > 0, 'at least one site must be configured');
-const seenHosts = new Set();
+const seenOrigins = new Set();
 for (const site of sites) {
   assert.equal(typeof site.name, 'string');
   const url = new URL(site.url);
   assert.equal(url.protocol, 'https:', `${site.name}: only HTTPS sites are allowed`);
-  assert.ok(!seenHosts.has(url.hostname), `${site.name}: duplicate hostname`);
-  seenHosts.add(url.hostname);
+  assert.ok(!seenOrigins.has(url.origin), `${site.name}: duplicate origin`);
+  seenOrigins.add(url.origin);
   const exact = `https://${url.hostname}/*`;
   const wildcard = `https://*.${url.hostname}/*`;
   assert.ok(
@@ -173,7 +183,7 @@ assert.ok(policy.SafeBrowsingProtectionLevel >= 1, 'Safe Browsing must remain en
 const envStart = envText.match(/^START_URL=(.+)$/m)?.[1];
 assert.ok(envStart, '.env.example must declare START_URL');
 assert.ok(
-  sites.some((site) => new URL(site.url).hostname === new URL(envStart).hostname),
+  sites.some((site) => new URL(site.url).origin === new URL(envStart).origin),
   'default START_URL must be represented in gateway sites.json'
 );
 
