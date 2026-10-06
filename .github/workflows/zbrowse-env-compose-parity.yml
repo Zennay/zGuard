@@ -1,0 +1,38 @@
+name: zBrowse env Compose parity
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/.env.example"
+      - "zbrowse/docker-compose.yml"
+      - "tests/zbrowse.env-compose-parity.test.mjs"
+      - ".github/workflows/zbrowse-env-compose-parity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/.env.example"
+      - "zbrowse/docker-compose.yml"
+      - "tests/zbrowse.env-compose-parity.test.mjs"
+      - ".github/workflows/zbrowse-env-compose-parity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-env-compose-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Environment and Compose parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Validate defaults parity
+        run: node tests/zbrowse.env-compose-parity.test.mjs
