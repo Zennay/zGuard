@@ -1,0 +1,44 @@
+name: zBrowse gateway dependency audit
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/gateway/package.json"
+      - "zbrowse/gateway/package-lock.json"
+      - "zbrowse/gateway/Dockerfile"
+      - "tests/zbrowse.gateway-dependency-audit.test.mjs"
+      - ".github/workflows/gateway-dependency-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-gateway-dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Gateway production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate audit contract
+        run: node tests/zbrowse.gateway-dependency-audit.test.mjs
+
+      - name: Install locked production dependencies
+        working-directory: zbrowse/gateway
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Validate installed dependency graph
+        working-directory: zbrowse/gateway
+        run: npm ls --omit=dev --all
+
+      - name: Fail on high-severity production vulnerabilities
+        working-directory: zbrowse/gateway
+        run: npm audit --omit=dev --audit-level=high
