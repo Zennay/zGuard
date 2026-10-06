@@ -8,6 +8,7 @@ import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js"
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
 import { createSessionAdmission } from "./session-admission.js";
+import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
@@ -196,7 +197,11 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
   const ip = requestIp(req, trustProxyHops);
   const existingToken = sessionsByIp.get(ip);
   if (existingToken && sessions.has(existingToken)) {
-    return res.json(publicSession(sessions.get(existingToken)));
+    const existingSession = sessions.get(existingToken);
+    if (!isSessionExpired(existingSession, config.idleMs)) {
+      return res.json(publicSession(existingSession));
+    }
+    await destroySession(existingToken);
   }
 
   const startUrl = validStartUrl(req.body?.url);
@@ -225,21 +230,21 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
 
 app.post("/api/session/:token/heartbeat", (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
+  if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   session.lastSeenAt = Date.now();
   return res.json({ ok: true, expiresAt: session.expiresAt });
 });
 
 app.delete("/api/session/:token", async (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
+  if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   await destroySession(req.params.token);
   return res.status(204).end();
 });
 
 app.use("/s/", (req, res, next) => {
   const session = findSession(req);
-  if (!session || session.expiresAt < Date.now() || session.ip !== requestIp(req, trustProxyHops)) {
+  if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) {
     return res.status(403).send("This browser session is no longer valid.");
   }
   session.lastSeenAt = Date.now();
@@ -290,7 +295,7 @@ app.use((req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
-    if (session.expiresAt <= now || session.lastSeenAt + config.idleMs <= now) {
+    if (isSessionExpired(session, config.idleMs, now)) {
       destroySession(session.token).catch((error) => console.error("Cleanup failed", error));
     }
   }
@@ -311,7 +316,7 @@ server.on("upgrade", (req, socket, head) => {
   const session = findSession(req);
   if (
     !session ||
-    session.expiresAt < Date.now() ||
+    isSessionExpired(session, config.idleMs) ||
     session.ip !== requestIp(req, trustProxyHops)
   ) {
     return socket.destroy();
