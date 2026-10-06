@@ -8,14 +8,19 @@ const ignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8')
   .map((line) => line.trim())
   .filter(Boolean);
 const installer = fs.readFileSync(path.join(root, 'zbrowse/scripts/install.sh'), 'utf8');
+const envHelperPath = path.join(root, 'zbrowse/scripts/prepare-env.sh');
 
 assert.ok(ignore.includes('.env'), 'local .env files must remain ignored');
 assert.ok(ignore.includes('.env.local'), 'local .env.local files must remain ignored');
 assert.ok(ignore.includes('.env.*.local'), 'named local env overrides must remain ignored');
+assert.ok(
+  fs.existsSync(envHelperPath),
+  'zBrowse environment integrity helper must remain present'
+);
 assert.match(
   installer,
-  /cp \.env\.example \.env/,
-  'zBrowse installer is expected to materialize a local .env from the tracked example'
+  /bash scripts\/prepare-env\.sh \.env \.env\.example/,
+  'zBrowse installer must prepare .env through the integrity helper'
 );
 assert.ok(
   fs.existsSync(path.join(root, 'zbrowse/.env.example')),
