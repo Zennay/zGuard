@@ -30,6 +30,9 @@ jobs:
       - name: Validate zGuard extension packages
         run: node tests/smoke.test.js
 
+      - name: Validate zGuard permission boundary
+        run: node tests/zguard.permission-boundary.test.mjs
+
       - name: Validate zBrowse runtime containment
         run: node tests/zbrowse.runtime-containment.test.mjs
 
