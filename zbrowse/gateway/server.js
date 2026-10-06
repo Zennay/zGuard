@@ -37,7 +37,7 @@ const config = {
 const sessionAdmission = createSessionAdmission(config.maxSessions);
 
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
-const allowedHosts = new Set(sites.map((site) => new URL(site.url).hostname.toLowerCase()));
+const allowedOrigins = new Set(sites.map((site) => new URL(site.url).origin.toLowerCase()));
 
 const trustProxyHops = nonNegativeInt(process.env.TRUST_PROXY, 1);
 app.set("trust proxy", trustProxyHops);
@@ -78,7 +78,7 @@ function publicSession(session) {
 function validStartUrl(input) {
   try {
     const url = new URL(input || config.startUrl);
-    if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())) return null;
+    if (url.protocol !== "https:" || !allowedOrigins.has(url.origin.toLowerCase())) return null;
     return url.href;
   } catch {
     return null;
