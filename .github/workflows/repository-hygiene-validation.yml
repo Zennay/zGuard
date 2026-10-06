@@ -5,6 +5,7 @@ on:
     paths:
       - ".gitignore"
       - "zbrowse/.env.example"
+      - "zbrowse/README.md"
       - "zbrowse/scripts/install.sh"
       - "tests/zbrowse.repository-hygiene.test.js"
       - "tests/zbrowse.install-preflight.test.mjs"
