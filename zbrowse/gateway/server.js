@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requestIp } from "./request-ip.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
@@ -32,7 +33,8 @@ const config = {
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
 const allowedHosts = new Set(sites.map((site) => new URL(site.url).hostname.toLowerCase()));
 
-app.set("trust proxy", positiveInt(process.env.TRUST_PROXY, 1));
+const trustProxyHops = positiveInt(process.env.TRUST_PROXY, 1);
+app.set("trust proxy", trustProxyHops);
 app.disable("x-powered-by");
 app.use(helmet({
   contentSecurityPolicy: {
@@ -192,7 +194,7 @@ app.get("/api/sites", (req, res) => {
 });
 
 app.post("/api/session", sessionLimiter, async (req, res) => {
-  const ip = req.ip;
+  const ip = requestIp(req, trustProxyHops);
   const existingToken = sessionsByIp.get(ip);
   if (existingToken && sessions.has(existingToken)) {
     return res.json(publicSession(sessions.get(existingToken)));
@@ -215,21 +217,21 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
 
 app.post("/api/session/:token/heartbeat", (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Session not found." });
+  if (!session || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   session.lastSeenAt = Date.now();
   return res.json({ ok: true, expiresAt: session.expiresAt });
 });
 
 app.delete("/api/session/:token", async (req, res) => {
   const session = sessions.get(req.params.token);
-  if (!session || session.ip !== req.ip) return res.status(404).json({ error: "Session not found." });
+  if (!session || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   await destroySession(req.params.token);
   return res.status(204).end();
 });
 
 app.use("/s/", (req, res, next) => {
   const session = findSession(req);
-  if (!session || session.expiresAt < Date.now() || session.ip !== req.ip) {
+  if (!session || session.expiresAt < Date.now() || session.ip !== requestIp(req, trustProxyHops)) {
     return res.status(403).send("This browser session is no longer valid.");
   }
   session.lastSeenAt = Date.now();
@@ -291,7 +293,14 @@ process.on("SIGINT", shutdown);
 
 server.on("upgrade", (req, socket, head) => {
   const session = findSession(req);
-  if (!session || session.expiresAt < Date.now()) return socket.destroy();
+  if (
+    !session ||
+    session.expiresAt < Date.now() ||
+    session.ip !== requestIp(req, trustProxyHops)
+  ) {
+    return socket.destroy();
+  }
+  session.lastSeenAt = Date.now();
   req.zbrowseSession = session;
   browserProxy.upgrade(req, socket, head);
 });
