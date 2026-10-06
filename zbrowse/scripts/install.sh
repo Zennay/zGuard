@@ -8,6 +8,19 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker Engine is required." >&2
+  exit 1
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Docker Compose v2 is required." >&2
+  exit 1
+fi
+if [[ ! -S /var/run/docker.sock ]]; then
+  echo "Docker socket /var/run/docker.sock is unavailable." >&2
+  exit 1
+fi
+
 docker_gid="$(stat -c '%g' /var/run/docker.sock)"
 if grep -q '^DOCKER_GID=' .env; then
   sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${docker_gid}/" .env

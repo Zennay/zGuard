@@ -74,21 +74,26 @@ async function startSession(url) {
 }
 
 function showBrowser() {
+  const session = state.session;
   homeView.hidden = true;
   browserView.hidden = false;
   $("browserLoading").hidden = false;
 
   const frame = $("browserFrame");
-  frame.src = state.session.viewerUrl;
+  frame.src = session.viewerUrl;
   frame.addEventListener("load", () => {
-    $("browserLoading").hidden = true;
+    if (state.session?.token === session.token) {
+      $("browserLoading").hidden = true;
+    }
   }, { once: true });
 
   state.heartbeat = window.setInterval(() => {
-    request("/api/session/" + state.session.token + "/heartbeat", {
+    request("/api/session/" + session.token + "/heartbeat", {
       method: "POST",
       body: "{}"
-    }).catch(endSession);
+    }).catch(() => {
+      if (state.session?.token === session.token) endSession();
+    });
   }, 30000);
 
   state.countdown = window.setInterval(updateTimer, 1000);

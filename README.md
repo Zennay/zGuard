@@ -13,7 +13,7 @@ are stored locally in the browser.
 - Blocks known unwanted domains: `al5sm.com`, `nap5k.com` and `tmll7.com`.
 - Closes suspicious external tabs opened by a page as a fallback.
 - Allows normal navigation within the current website.
-- Two modes: **Gebalanceerd** and **Streng**.
+- Two modes: **Gebalanceerd** blocks known hostile popup domains while allowing ordinary external opens; **Streng** additionally blocks external new-tab/pop-up opens.
 - Site profiles for SerienStream and Fawesome.
 - Local-only blocked-event counters.
 
@@ -46,6 +46,8 @@ are directly loadable extension packages. Run the smoke tests with:
 ```bash
 node tests/smoke.test.js
 ```
+
+The smoke gate also executes behavior coverage for the balanced/strict blocking semantics.
 
 ## Privacy
 

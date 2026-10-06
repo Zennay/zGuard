@@ -1,0 +1,42 @@
+name: zGuard quality validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: zguard-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: zGuard + zBrowse contracts
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify runtime tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          bash --version | head -n 1
+
+      - name: Validate zGuard extension packages
+        run: node tests/smoke.test.js
+
+      - name: Validate zBrowse runtime contracts
+        run: bash zbrowse/scripts/validate.sh
+
+      - name: Verify locked zBrowse production install
+        working-directory: zbrowse/gateway
+        run: npm ci --omit=dev --ignore-scripts --no-audit
+
+      - name: Audit zBrowse production dependencies
+        working-directory: zbrowse/gateway
+        run: npm audit --omit=dev --audit-level=high
