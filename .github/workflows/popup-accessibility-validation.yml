@@ -1,0 +1,35 @@
+name: zGuard popup accessibility validation
+
+on:
+  pull_request:
+    paths:
+      - "chromium/popup.html"
+      - "chromium/popup.css"
+      - "firefox/popup.html"
+      - "firefox/popup.css"
+      - "zbrowse/browser/zguard/popup.html"
+      - "zbrowse/browser/zguard/popup.css"
+      - "tests/zguard.popup-accessibility.test.mjs"
+      - ".github/workflows/popup-accessibility-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-popup-accessibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  popup-accessibility:
+    name: Popup accessibility contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate popup accessibility contract
+        run: node tests/zguard.popup-accessibility.test.mjs
