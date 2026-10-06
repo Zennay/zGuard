@@ -258,6 +258,8 @@ const browserProxy = createProxyMiddleware({
 });
 app.use("/s/", browserProxy);
 
+app.use("/api", (req, res) => res.status(404).json({ error: "API route not found." }));
+
 app.use(express.static(path.join(__dirname, "public"), {
   etag: true,
   maxAge: "1h",
