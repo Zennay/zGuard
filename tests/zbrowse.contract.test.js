@@ -22,6 +22,8 @@ const filesIn = (relative) => {
 
 const compose = read('zbrowse/docker-compose.yml');
 const gatewayDockerfile = read('zbrowse/gateway/Dockerfile');
+const browserDockerfile = read('zbrowse/browser/Dockerfile');
+const browserStartup = read('zbrowse/browser/root/usr/local/bin/start-zbrowse');
 const gatewayServer = read('zbrowse/gateway/server.js');
 const gatewayPackage = json('zbrowse/gateway/package.json');
 const gatewayLock = json('zbrowse/gateway/package-lock.json');
@@ -83,6 +85,14 @@ assert.match(gatewayServer, /import \{ createProxyServer \} from "httpxy";/);
 assert.doesNotMatch(gatewayServer, /http-proxy-middleware/);
 assert.match(gatewayServer, /browserProxy\.web\(req, res, browserProxyOptions\(req\)\)/);
 assert.match(gatewayServer, /browserProxy\.ws\(req, socket, browserProxyOptions\(req\), head\)/);
+
+assert.match(browserDockerfile, /COPY zguard \/opt\/zguard/);
+assert.match(browserDockerfile, /COPY policies\/policy\.json \/etc\/chromium\/policies\/managed\/zbrowse-policy\.json/);
+assert.match(browserDockerfile, /COPY root \/$/m);
+assert.match(browserStartup, /--disable-extensions-except=\/opt\/zguard/);
+assert.match(browserStartup, /--load-extension=\/opt\/zguard/);
+assert.match(browserStartup, /--user-data-dir=\/config\/chromium/);
+assert.match(browserStartup, /--disk-cache-dir=\/config\/tmp/);
 
 const apiFallbackIndex = gatewayServer.indexOf('app.use("/api"');
 const staticIndex = gatewayServer.indexOf('app.use(express.static');
