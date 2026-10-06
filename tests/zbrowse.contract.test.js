@@ -57,11 +57,37 @@ assert.equal(
   'vulnerable http-proxy-middleware chain must stay removed'
 );
 assert.equal(gatewayPackage.dependencies?.httpxy, '^0.5.5');
-for (const removedPackage of ['node_modules/http-proxy-middleware', 'node_modules/micromatch', 'node_modules/braces']) {
+assert.equal(
+  gatewayLock.packages?.['node_modules/httpxy']?.version,
+  '0.5.5',
+  'gateway lockfile must pin the expected httpxy release'
+);
+assert.equal(
+  gatewayLock.packages?.['node_modules/httpxy']?.integrity,
+  'sha512-uDjmnPyp1q4Sgzf3w+J/Fc6UqcCEj0x4Wjp7OqK5dGhNeDgpyrAmnS6ey8QWrX3SWDon2DMKf9sBa5X9+CVyMA==',
+  'gateway lockfile must preserve the verified httpxy artifact integrity'
+);
+for (const removedPackage of [
+  'node_modules/http-proxy-middleware',
+  'node_modules/@types/http-proxy',
+  'node_modules/http-proxy',
+  'node_modules/eventemitter3',
+  'node_modules/follow-redirects',
+  'node_modules/requires-port',
+  'node_modules/is-glob',
+  'node_modules/is-extglob',
+  'node_modules/is-plain-object',
+  'node_modules/micromatch',
+  'node_modules/braces',
+  'node_modules/picomatch',
+  'node_modules/fill-range',
+  'node_modules/to-regex-range',
+  'node_modules/is-number'
+]) {
   assert.equal(
     gatewayLock.packages?.[removedPackage],
     undefined,
-    `gateway lockfile must not contain removed vulnerable chain: ${removedPackage}`
+    `gateway lockfile must not contain removed proxy-chain package: ${removedPackage}`
   );
 }
 
