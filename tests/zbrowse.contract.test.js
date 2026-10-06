@@ -7,6 +7,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const json = (relative) => JSON.parse(read(relative));
 
 const compose = read('zbrowse/docker-compose.yml');
+const gatewayDockerfile = read('zbrowse/gateway/Dockerfile');
 const envText = read('zbrowse/.env.example');
 const sites = json('zbrowse/gateway/config/sites.json');
 const policy = json('zbrowse/browser/policies/policy.json');
@@ -25,6 +26,22 @@ assert.doesNotMatch(
 );
 assert.match(compose, /\/var\/run\/docker\.sock:\/var\/run\/docker\.sock/);
 assert.match(compose, /\.\/gateway\/config:\/app\/config:ro/);
+
+assert.match(
+  gatewayDockerfile,
+  /COPY package\.json package-lock\.json \.\//,
+  'gateway image must include the lockfile'
+);
+assert.match(
+  gatewayDockerfile,
+  /RUN npm ci --omit=dev/,
+  'gateway image must install the locked production dependency graph'
+);
+assert.match(
+  gatewayDockerfile,
+  /COPY server\.js request-ip\.js \.\//,
+  'gateway image must include every local runtime module'
+);
 
 assert.ok(Array.isArray(sites) && sites.length > 0, 'at least one site must be configured');
 const seenHosts = new Set();
