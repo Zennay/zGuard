@@ -65,11 +65,16 @@ assert.ok(
   'effective image healthcheck must probe /api/health'
 );
 
-const configMount = (container.Mounts || []).find((mount) => mount.Destination === '/app/config');
+const mounts = container.Mounts || [];
+const configMount = mounts.find((mount) => mount.Destination === '/app/config');
 assert.ok(configMount, 'gateway must mount its config directory');
 assert.equal(configMount.RW, false, 'gateway config mount must be read-only');
 
-const unexpectedBind = (container.Mounts || []).find(
+const socketMount = mounts.find((mount) => mount.Destination === '/var/run/docker.sock');
+assert.ok(socketMount, 'gateway must mount the Docker socket');
+assert.equal(socketMount.Type, 'bind', 'Docker socket must be an explicit bind mount');
+
+const unexpectedBind = mounts.find(
   (mount) =>
     mount.Type === 'bind' &&
     !['/app/config', '/var/run/docker.sock'].includes(mount.Destination)
@@ -78,6 +83,39 @@ assert.equal(unexpectedBind, undefined, 'gateway must not gain unexpected host b
 
 const effectiveUid = docker(['exec', containerName, 'sh', '-lc', 'id -u']);
 assert.notEqual(effectiveUid, '0', 'effective gateway process user must not be root');
+
+const socketGid = docker(['exec', containerName, 'sh', '-lc', "stat -c '%g' /var/run/docker.sock"]);
+const effectiveGroups = new Set(
+  docker(['exec', containerName, 'sh', '-lc', 'id -G'])
+    .split(/\s+/)
+    .filter(Boolean)
+);
+assert.ok(
+  effectiveGroups.has(socketGid),
+  `gateway user must inherit the Docker socket group ${socketGid}`
+);
+assert.ok(
+  new Set(host.GroupAdd || []).has(socketGid),
+  `Compose must add the effective Docker socket group ${socketGid}`
+);
+
+const dockerPing = spawnSync(
+  'docker',
+  [
+    'exec',
+    containerName,
+    'node',
+    '--input-type=module',
+    '-e',
+    "import Docker from 'dockerode'; const docker = new Docker({socketPath:'/var/run/docker.sock'}); await docker.ping();",
+  ],
+  { encoding: 'utf8' }
+);
+assert.equal(
+  dockerPing.status,
+  0,
+  `non-root gateway must be able to reach the Docker API: ${dockerPing.stderr || dockerPing.stdout}`
+);
 
 const rootWrite = spawnSync(
   'docker',
