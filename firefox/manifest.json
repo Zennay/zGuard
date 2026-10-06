@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "zGuard – Popup Blocker",
   "version": "1.0.0",
-  "description": "Blocks unwanted script pop-ups, pop-unders and suspicious external tabs.",
+  "description": "Applies local rules for known hostile popup domains and suspicious external tabs, with stricter filtering in Strict mode.",
   "permissions": ["storage", "tabs", "<all_urls>"],
   "background": {
     "scripts": ["background.js"]
