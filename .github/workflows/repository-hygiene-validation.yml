@@ -7,8 +7,10 @@ on:
       - "zbrowse/.env.example"
       - "zbrowse/README.md"
       - "zbrowse/scripts/install.sh"
+      - "zbrowse/scripts/validate.sh"
       - "tests/zbrowse.repository-hygiene.test.js"
       - "tests/zbrowse.install-preflight.test.mjs"
+      - "tests/zbrowse.validation-entrypoint.test.mjs"
       - "tests/dedicated-workflow-checkout-integrity.test.mjs"
       - ".github/workflows/repository-hygiene-validation.yml"
   workflow_dispatch:
@@ -31,12 +33,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate environment-file hygiene
+      - name: Validate portable zBrowse quality entrypoint
         shell: bash
         run: |
           set -euo pipefail
-          node tests/zbrowse.repository-hygiene.test.js
-          node tests/zbrowse.install-preflight.test.mjs
+          bash zbrowse/scripts/validate.sh
           node tests/dedicated-workflow-checkout-integrity.test.mjs
           git check-ignore -q zbrowse/.env
           if git check-ignore -q zbrowse/.env.example; then
