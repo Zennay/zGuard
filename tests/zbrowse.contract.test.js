@@ -22,6 +22,7 @@ const filesIn = (relative) => {
 
 const compose = read('zbrowse/docker-compose.yml');
 const gatewayDockerfile = read('zbrowse/gateway/Dockerfile');
+const gatewayServer = read('zbrowse/gateway/server.js');
 const envText = read('zbrowse/.env.example');
 const sites = json('zbrowse/gateway/config/sites.json');
 const policy = json('zbrowse/browser/policies/policy.json');
@@ -56,6 +57,12 @@ assert.match(
   /COPY server\.js config-values\.js request-ip\.js request-path\.js \.\//,
   'gateway image must include every local runtime module'
 );
+
+const apiFallbackIndex = gatewayServer.indexOf('app.use("/api"');
+const staticIndex = gatewayServer.indexOf('app.use(express.static');
+assert.ok(apiFallbackIndex >= 0, 'gateway must define an API 404 fallback');
+assert.ok(staticIndex > apiFallbackIndex, 'API 404 fallback must run before SPA static fallback');
+assert.match(gatewayServer, /status\(404\)\.json\(\{ error: "API route not found\." \}\)/);
 
 assert.ok(Array.isArray(sites) && sites.length > 0, 'at least one site must be configured');
 const seenHosts = new Set();
