@@ -92,6 +92,11 @@ assert.match(
   /- "tests\/zbrowse\.gateway-runtime\.test\.mjs"/,
   'live runtime-test changes must trigger the containment gate'
 );
+assert.match(
+  workflow,
+  /- "zbrowse\/gateway\/\*\*"/,
+  'all gateway runtime input changes must trigger the live containment gate'
+);
 assert.match(workflow, /- "zbrowse\/README\.md"/, 'README changes must trigger the containment gate');
 
 console.log('zBrowse gateway containment contract passed');
