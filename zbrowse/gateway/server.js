@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { nonNegativeInt, positiveInt, positiveNumber } from "./config-values.js";
 import { requestIp } from "./request-ip.js";
 import { requestPath } from "./request-path.js";
+import { createSessionAdmission } from "./session-admission.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
@@ -31,6 +32,8 @@ const config = {
   network: process.env.BROWSER_NETWORK || "zbrowse_net",
   startUrl: process.env.START_URL || "https://fawesome.tv/"
 };
+
+const sessionAdmission = createSessionAdmission(config.maxSessions);
 
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
 const allowedHosts = new Set(sites.map((site) => new URL(site.url).hostname.toLowerCase()));
@@ -182,7 +185,7 @@ function findSession(req) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", activeSessions: sessions.size, capacity: config.maxSessions });
+  res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
 app.get("/api/sites", (req, res) => {
@@ -195,19 +198,28 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
   if (existingToken && sessions.has(existingToken)) {
     return res.json(publicSession(sessions.get(existingToken)));
   }
-  if (sessions.size >= config.maxSessions) {
-    return res.status(503).json({ error: "All browser sessions are currently in use. Please try again shortly." });
-  }
+
   const startUrl = validStartUrl(req.body?.url);
   if (!startUrl) {
     return res.status(400).json({ error: "This website is not on the allowed list." });
   }
+
+  const admission = sessionAdmission.tryReserve(ip, sessions.size);
+  if (!admission.ok) {
+    if (admission.reason === "pending") {
+      return res.status(409).json({ error: "A browser session is already starting for this client." });
+    }
+    return res.status(503).json({ error: "All browser sessions are currently in use. Please try again shortly." });
+  }
+
   try {
     const session = await createSession(ip, startUrl);
     return res.status(201).json(publicSession(session));
   } catch (error) {
     console.error("Session creation failed", error);
     return res.status(500).json({ error: "The browser could not be started." });
+  } finally {
+    sessionAdmission.release(ip);
   }
 });
 
