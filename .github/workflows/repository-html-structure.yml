@@ -1,0 +1,37 @@
+name: HTML structure integrity
+
+on:
+  pull_request:
+    paths:
+      - "**/*.html"
+      - "tests/repository-html-structure.test.mjs"
+      - ".github/workflows/repository-html-structure.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.html"
+      - "tests/repository-html-structure.test.mjs"
+      - ".github/workflows/repository-html-structure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: html-structure-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tracked HTML structure integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate tracked HTML structure
+        run: node tests/repository-html-structure.test.mjs
