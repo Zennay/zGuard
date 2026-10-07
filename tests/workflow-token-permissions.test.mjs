@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, '.github', 'workflows');
-const secretReference = /\$\{\{[^}]*\bsecrets\s*(?:\.|\[)/i;
+const secretReference = /\$\{\{[^}]*\bsecrets\b[^}]*\}\}/i;
 
 assert.match('${{ secrets.API_KEY }}', secretReference);
-assert.match("${{ secrets['API_KEY'] }}", secretReference);
+assert.match("${{ secrets['API_KEY'] }}", secretReference);\nassert.match('${{ toJSON(secrets) }}', secretReference);
 assert.doesNotMatch('${{ github.ref }}', secretReference);
 
 const workflows = fs.readdirSync(workflowDir)
