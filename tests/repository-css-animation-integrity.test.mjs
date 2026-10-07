@@ -146,8 +146,8 @@ function blockBody(source, openingBrace) {
 
 function validateReducedMotionCoverage(source, label) {
   const clean = stripComments(source);
-  const hasAnimation = /(?:^|[;{])\s*animation\s*:/m.test(clean);
-  const hasTransition = /(?:^|[;{])\s*transition\s*:/m.test(clean);
+  const hasAnimation = /(?:^|[;{])\s*animation(?:-[a-z-]+)?\s*:/m.test(clean);
+  const hasTransition = /(?:^|[;{])\s*transition(?:-[a-z-]+)?\s*:/m.test(clean);
 
   if (!hasAnimation && !hasTransition) return;
 
@@ -226,6 +226,32 @@ assert.throws(
   () => validateReducedMotionCoverage('.toggle { transition: transform .2s; }', 'self-test missing reduced motion'),
   /must include @media/,
   'reduced-motion contract must reject motion without an explicit user-preference override'
+);
+
+assert.throws(
+  () => validateReducedMotionCoverage(
+    '.toggle { transition-property: transform; transition-duration: .2s; }',
+    'self-test transition longhand'
+  ),
+  /must include @media/,
+  'reduced-motion contract must detect transition longhands'
+);
+
+assert.throws(
+  () => validateReducedMotionCoverage(
+    '.spinner { animation-name: spin; animation-duration: .8s; } @keyframes spin { to { opacity: 0; } }',
+    'self-test animation longhand'
+  ),
+  /must include @media/,
+  'reduced-motion contract must detect animation longhands'
+);
+
+assert.doesNotThrow(
+  () => validateReducedMotionCoverage(
+    '.toggle { transition-property: transform; transition-duration: .2s; } @media (prefers-reduced-motion: reduce) { .toggle { transition-duration: 0s; } }',
+    'self-test reduced transition longhand'
+  ),
+  'reduced-motion contract must accept longhand transition suppression'
 );
 
 assert.throws(
