@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 
-function filesIn(relativeDir) {
-  const base = path.join(root, relativeDir);
+function filesAt(base, label) {
   const files = [];
 
   function walk(dir, prefix = '') {
     for (const name of fs.readdirSync(dir).sort()) {
       const full = path.join(dir, name);
       const relative = path.join(prefix, name);
-      const stat = fs.statSync(full);
+      const stat = fs.lstatSync(full);
+
+      assert.ok(
+        !stat.isSymbolicLink(),
+        `${label} must not contain symlinked bundle entries: ${relative}`
+      );
+
       if (stat.isDirectory()) {
         walk(full, relative);
       } else if (stat.isFile()) {
@@ -28,6 +34,24 @@ function filesIn(relativeDir) {
 
   walk(base);
   return files;
+}
+
+function filesIn(relativeDir) {
+  return filesAt(path.join(root, relativeDir), relativeDir);
+}
+
+const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'zguard-bundle-parity-'));
+try {
+  const target = path.join(fixtureRoot, 'target.js');
+  const alias = path.join(fixtureRoot, 'alias.js');
+  fs.writeFileSync(target, 'export {};\n');
+  fs.symlinkSync('target.js', alias);
+  assert.throws(
+    () => filesAt(fixtureRoot, 'fixture'),
+    /must not contain symlinked bundle entries/
+  );
+} finally {
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
 }
 
 const canonical = filesIn('chromium');
