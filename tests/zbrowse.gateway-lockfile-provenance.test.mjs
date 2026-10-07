@@ -59,4 +59,24 @@ for (const [name, entry] of packages) {
   );
 }
 
-console.log(`Gateway lockfile provenance passed for ${packages.length} resolved packages`);
+const approvedInstallScripts = [
+  'node_modules/cpu-features@0.0.10',
+  'node_modules/protobufjs@7.6.6',
+  'node_modules/ssh2@1.17.0'
+];
+
+const installScriptPackages = packages
+  .filter(([, entry]) => entry.hasInstallScript === true)
+  .map(([name, entry]) => `${name}@${entry.version}`)
+  .sort();
+
+assert.deepEqual(
+  installScriptPackages,
+  approvedInstallScripts,
+  'gateway dependency lifecycle scripts changed; review the production install-script policy before accepting drift'
+);
+
+console.log(
+  `Gateway lockfile provenance passed for ${packages.length} resolved packages; ` +
+  `${installScriptPackages.length} reviewed install-script packages`
+);
