@@ -17,8 +17,16 @@ assert.match("lpt²", windowsReserved, "Windows superscript LPT device names mus
 assert.match("COM³", windowsReserved, "all documented superscript COM device digits must be rejected");
 assert.match("LPT³.log", windowsReserved, "superscript LPT device names stay reserved with extensions");
 assert.doesNotMatch("component¹.txt", windowsReserved, "ordinary superscript filenames must remain allowed");
+assert.notEqual("cafe\u0301.txt", "cafe\u0301.txt".normalize("NFC"), "NFD self-test fixture must not already be NFC");
+assert.equal("café.txt", "café.txt".normalize("NFC"), "NFC self-test fixture must remain stable");
 
 for (const file of tracked) {
+  assert.equal(
+    file,
+    file.normalize("NFC"),
+    `tracked path must use NFC Unicode normalization for cross-filesystem portability: ${JSON.stringify(file)}`
+  );
+
   const segments = file.split("/");
 
   for (const segment of segments) {
