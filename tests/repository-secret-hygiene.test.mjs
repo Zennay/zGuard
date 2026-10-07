@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scanRoots = [".github", "chromium", "firefox", "zbrowse"];
-const ignoredDirectories = new Set(["node_modules", ".git"]);
-const textExtensions = new Set([
-  ".js", ".mjs", ".cjs", ".json", ".yml", ".yaml", ".md", ".txt",
-  ".html", ".css", ".sh", ".env", ".example", ".conf", ".ini"
-]);
 
 const signatures = [
-  { name: "PEM private key", pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
+  {
+    name: "PEM private key",
+    pattern: new RegExp("-----BEGIN " + "(?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
+  },
   { name: "GitHub classic token", pattern: new RegExp("gh" + "[opusr]_[A-Za-z0-9]{20,}") },
   { name: "GitHub fine-grained token", pattern: new RegExp("github" + "_pat_[A-Za-z0-9_]{20,}") },
   { name: "OpenAI-style secret", pattern: new RegExp("sk" + "-[A-Za-z0-9_-]{20,}") },
@@ -20,47 +18,34 @@ const signatures = [
   { name: "Slack bot token", pattern: new RegExp("xox" + "b-[0-9A-Za-z-]{20,}") }
 ];
 
+const tracked = execFileSync("git", ["ls-files", "-z"], {
+  cwd: root,
+  encoding: "utf8"
+}).split("\0").filter(Boolean);
+
+assert.ok(tracked.length > 0, "at least one tracked file must be discovered");
+
 const findings = [];
 
-function shouldRead(filePath) {
-  const base = path.basename(filePath);
-  if (base === ".env.example") return true;
-  return textExtensions.has(path.extname(filePath));
-}
+for (const relative of tracked) {
+  const buffer = fs.readFileSync(path.join(root, relative));
 
-function walk(dir) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (ignoredDirectories.has(entry.name)) continue;
-    const full = path.join(dir, entry.name);
+  // Git may track binary assets; NUL is a conservative binary signal for this
+  // high-confidence text signature scan.
+  if (buffer.includes(0)) continue;
 
-    if (entry.isDirectory()) {
-      walk(full);
-      continue;
-    }
-
-    if (!entry.isFile() || !shouldRead(full)) continue;
-
-    const content = fs.readFileSync(full, "utf8");
-    for (const signature of signatures) {
-      if (signature.pattern.test(content)) {
-        findings.push({
-          file: path.relative(root, full),
-          signature: signature.name
-        });
-      }
+  const content = buffer.toString("utf8");
+  for (const signature of signatures) {
+    if (signature.pattern.test(content)) {
+      findings.push({ file: relative, signature: signature.name });
     }
   }
-}
-
-for (const relative of scanRoots) {
-  const absolute = path.join(root, relative);
-  if (fs.existsSync(absolute)) walk(absolute);
 }
 
 assert.deepEqual(
   findings,
   [],
-  "repository source/config contains high-confidence secret material: " +
+  "tracked repository content contains high-confidence secret material: " +
     findings.map(({ file, signature }) => `${file} (${signature})`).join(", ")
 );
 
@@ -77,4 +62,4 @@ for (const line of envExample.split(/\r?\n/)) {
   );
 }
 
-console.log("repository secret hygiene contract passed");
+console.log(`repository secret hygiene contract passed for ${tracked.length} tracked files`);
