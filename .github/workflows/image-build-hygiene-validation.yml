@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zguard-image-build-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   image-build-hygiene:
     name: Container build hygiene contract
