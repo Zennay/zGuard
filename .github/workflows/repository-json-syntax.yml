@@ -5,6 +5,7 @@ on:
     paths:
       - "**/*.json"
       - "tests/repository-json-syntax.test.mjs"
+      - "tests/repository-json-duplicate-keys.test.py"
       - ".github/workflows/repository-json-syntax.yml"
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - "**/*.json"
       - "tests/repository-json-syntax.test.mjs"
+      - "tests/repository-json-duplicate-keys.test.py"
       - ".github/workflows/repository-json-syntax.yml"
   workflow_dispatch:
 
@@ -35,3 +37,6 @@ jobs:
 
       - name: Validate tracked JSON syntax
         run: node tests/repository-json-syntax.test.mjs
+
+      - name: Reject duplicate JSON object keys
+        run: python3 tests/repository-json-duplicate-keys.test.py
