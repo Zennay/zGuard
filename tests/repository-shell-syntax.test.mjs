@@ -24,8 +24,16 @@ function firstLine(file) {
   }
 }
 
+function isShellExtension(file) {
+  return path.extname(file).toLowerCase() === '.sh';
+}
+
+assert.ok(isShellExtension('fixture.sh'), 'lowercase shell extension self-test must pass');
+assert.ok(isShellExtension('fixture.SH'), 'casefold shell extension self-test must pass');
+assert.ok(!isShellExtension('fixture.sh.txt'), 'non-shell extension self-test must stay excluded');
+
 const shellFiles = tracked.filter((file) => {
-  if (file.endsWith('.sh')) return true;
+  if (isShellExtension(file)) return true;
   return /^#!.*\bbash(?:\s|$)/.test(firstLine(file));
 }).sort();
 
