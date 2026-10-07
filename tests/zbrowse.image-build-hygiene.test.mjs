@@ -5,20 +5,36 @@ const read = (relative) => fs.readFileSync(new URL(`../${relative}`, import.meta
 const browser = read('zbrowse/browser/Dockerfile');
 const gateway = read('zbrowse/gateway/Dockerfile');
 
+function dockerInstructions(source) {
+  return source
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+}
+
 function assertNoBroadCopy(source, label) {
+  const instructions = dockerInstructions(source);
+
   assert.doesNotMatch(
-    source,
-    /^\s*(?:COPY|ADD)\s+(?:--[^\n]+\s+)*\.\s+\.?\/?\s*$/m,
+    instructions,
+    /^\s*COPY\s+(?:--\S+\s+)*\.\/?\s+\S+/m,
     `${label} must not copy the entire repository/build context into the image`
+  );
+  assert.doesNotMatch(
+    instructions,
+    /^\s*COPY\s*\[\s*["']\.\/?["']\s*,/m,
+    `${label} must not use JSON-form broad build-context copies`
   );
 }
 
 for (const [label, source] of [['browser image', browser], ['gateway image', gateway]]) {
-  assert.doesNotMatch(source, /^\s*ADD\s+/m, `${label} must not use Docker ADD`);
+  const instructions = dockerInstructions(source);
+
+  assert.doesNotMatch(instructions, /^\s*ADD\s+/m, `${label} must not use Docker ADD`);
   assert.doesNotMatch(
-    source,
-    /\b(?:curl|wget)\b[^\n]*https?:\/\//,
-    `${label} must not fetch unverified remote build artifacts`
+    instructions,
+    /\b(?:curl|wget)\b|\bgit\s+clone\b/,
+    `${label} must not use ad-hoc network download commands during the image build`
   );
   assertNoBroadCopy(source, label);
 }
