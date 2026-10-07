@@ -48,6 +48,10 @@ rescue Psych::SyntaxError => error
   abort "#{label}: invalid YAML at line #{error.line}, column #{error.column}: #{error.problem}"
 end
 
+def yaml_path?(path)
+  [".yml", ".yaml"].include?(File.extname(path).downcase)
+end
+
 valid_self_test = <<~YAML
   services:
     gateway:
@@ -78,9 +82,20 @@ rescue SystemExit => error
   raise unless error.status == 1
 end
 
+{
+  "config.yml" => true,
+  "CONFIG.YML" => true,
+  "workflow.YaMl" => true,
+  "config.yaml.txt" => false,
+  "yaml" => false
+}.each do |path, expected|
+  actual = yaml_path?(path)
+  abort "YAML path discovery self-test failed for #{path}: expected #{expected}, got #{actual}" unless actual == expected
+end
+
 root = Pathname.new(__dir__).parent
 tracked = IO.popen(["git", "ls-files", "-z"], chdir: root.to_s, &:read).split("\0").reject(&:empty?)
-yaml_files = tracked.select { |file| file.end_with?(".yml", ".yaml") }.sort
+yaml_files = tracked.select { |file| yaml_path?(file) }.sort
 
 abort "No tracked YAML files found" if yaml_files.empty?
 abort "zbrowse/docker-compose.yml must remain covered by repository YAML validation" unless yaml_files.include?("zbrowse/docker-compose.yml")
