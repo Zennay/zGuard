@@ -13,54 +13,100 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
 
 assert.ok(tracked.length > 0, 'repository must contain tracked files');
 
+const prefixSignatures = [
+  [Buffer.from([0x7f, 0x45, 0x4c, 0x46]), 'ELF executable/object'],
+  [Buffer.from([0x4d, 0x5a]), 'PE/DOS executable'],
+  [Buffer.from([0xfe, 0xed, 0xfa, 0xce]), 'Mach-O executable/object'],
+  [Buffer.from([0xce, 0xfa, 0xed, 0xfe]), 'Mach-O executable/object'],
+  [Buffer.from([0xfe, 0xed, 0xfa, 0xcf]), 'Mach-O executable/object'],
+  [Buffer.from([0xcf, 0xfa, 0xed, 0xfe]), 'Mach-O executable/object'],
+  [Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'Java class/fat Mach-O binary'],
+  [Buffer.from([0x00, 0x61, 0x73, 0x6d]), 'WebAssembly binary'],
+  [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'ZIP archive'],
+  [Buffer.from([0x50, 0x4b, 0x05, 0x06]), 'ZIP archive'],
+  [Buffer.from([0x50, 0x4b, 0x07, 0x08]), 'ZIP archive'],
+  [Buffer.from([0x1f, 0x8b]), 'gzip archive'],
+  [Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]), 'XZ archive'],
+  [Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]), '7z archive'],
+  [Buffer.from([0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a]), 'ar archive'],
+  [Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]), 'RAR archive'],
+  [Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00]), 'RAR archive']
+];
+
+const tarMagicOffset = 257;
+const tarMagic = Buffer.from('ustar');
+const scanBytes = Math.max(
+  ...prefixSignatures.map(([signature]) => signature.length),
+  tarMagicOffset + tarMagic.length
+);
+
+function hasPrefix(bytes, signature) {
+  return bytes.length >= signature.length &&
+    bytes.subarray(0, signature.length).equals(signature);
+}
+
 function binaryKind(bytes) {
-  if (bytes.length >= 4 && bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
-    return 'ELF executable/object';
-  }
-
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
-    return 'PE/DOS executable';
-  }
-
-  if (bytes.length >= 4) {
-    const magic = bytes.readUInt32BE(0);
-    const machO = new Set([0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe]);
-    if (machO.has(magic)) return 'Mach-O executable/object';
-    if (magic === 0xcafebabe) return 'Java class/fat Mach-O binary';
-    if (magic === 0x0061736d) return 'WebAssembly binary';
-    if (magic === 0x504b0304 || magic === 0x504b0506 || magic === 0x504b0708) return 'ZIP archive';
-    if (magic === 0x377abcaf) return '7z archive';
-  }
-
-  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    return 'gzip archive';
+  for (const [signature, kind] of prefixSignatures) {
+    if (hasPrefix(bytes, signature)) return kind;
   }
 
   if (
-    bytes.length >= 7 &&
-    bytes.subarray(0, 7).equals(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]))
+    bytes.length >= 4 &&
+    bytes.subarray(0, 3).equals(Buffer.from('BZh')) &&
+    bytes[3] >= 0x31 &&
+    bytes[3] <= 0x39
   ) {
-    return 'RAR archive';
+    return 'bzip2 archive';
+  }
+
+  if (
+    bytes.length >= tarMagicOffset + tarMagic.length &&
+    bytes.subarray(tarMagicOffset, tarMagicOffset + tarMagic.length).equals(tarMagic)
+  ) {
+    return 'TAR archive';
   }
 
   return null;
 }
 
-const fixtures = [
-  [Buffer.from([0x7f, 0x45, 0x4c, 0x46]), 'ELF executable/object'],
-  [Buffer.from([0x4d, 0x5a, 0x90, 0x00]), 'PE/DOS executable'],
-  [Buffer.from([0xfe, 0xed, 0xfa, 0xcf]), 'Mach-O executable/object'],
-  [Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'Java class/fat Mach-O binary'],
-  [Buffer.from([0x00, 0x61, 0x73, 0x6d]), 'WebAssembly binary'],
-  [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'ZIP archive'],
-  [Buffer.from([0x1f, 0x8b, 0x08, 0x00]), 'gzip archive'],
-  [Buffer.from([0x37, 0x7a, 0xbc, 0xaf]), '7z archive'],
-  [Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]), 'RAR archive']
-];
-
-for (const [bytes, expected] of fixtures) {
+for (const [bytes, expected] of prefixSignatures) {
   assert.equal(binaryKind(bytes), expected, `binary magic self-test must detect ${expected}`);
 }
+
+assert.equal(
+  binaryKind(Buffer.from('BZh9compressed')),
+  'bzip2 archive',
+  'binary magic self-test must detect bzip2 archives'
+);
+assert.equal(
+  binaryKind(Buffer.from('BZh0not-bzip2')),
+  null,
+  'bzip2 detection must require a valid block-size digit'
+);
+
+const tarFixture = Buffer.alloc(tarMagicOffset + tarMagic.length);
+tarMagic.copy(tarFixture, tarMagicOffset);
+assert.equal(binaryKind(tarFixture), 'TAR archive', 'binary magic self-test must detect POSIX tar headers');
+
+const truncatedTarFixture = Buffer.alloc(tarMagicOffset + tarMagic.length - 1);
+tarMagic.subarray(0, tarMagic.length - 1).copy(truncatedTarFixture, tarMagicOffset);
+assert.equal(binaryKind(truncatedTarFixture), null, 'TAR detection must require the complete ustar magic');
+
+assert.equal(
+  binaryKind(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x00, 0x00])),
+  null,
+  '7z detection must require the complete six-byte signature'
+);
+assert.equal(
+  binaryKind(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])),
+  null,
+  'RAR detection must reject truncated signature prefixes'
+);
+assert.equal(
+  scanBytes,
+  262,
+  'repository scan must read through the longest supported offset signature'
+);
 
 for (const bytes of [
   Buffer.from('#!/usr/bin/env node\n'),
@@ -79,7 +125,7 @@ for (const relative of tracked) {
 
   const fd = fs.openSync(absolute, 'r');
   try {
-    const prefix = Buffer.alloc(4);
+    const prefix = Buffer.alloc(scanBytes);
     const bytesRead = fs.readSync(fd, prefix, 0, prefix.length, 0);
     const kind = binaryKind(prefix.subarray(0, bytesRead));
     if (kind) findings.push(`${relative}: tracked ${kind}`);
