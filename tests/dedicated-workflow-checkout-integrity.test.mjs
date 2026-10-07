@@ -49,6 +49,20 @@ for (const workflow of workflows) {
     /runs-on:\s*ubuntu-latest/,
     `${workflow} is portable and must not depend on the generic self-hosted queue`
   );
+  assert.match(
+    source,
+    /workflow_dispatch:\s*(?:\n|$)/,
+    `${workflow} must remain manually dispatchable for deterministic re-validation`
+  );
+  assert.match(
+    source,
+    /concurrency:\s*\n[\s\S]*?cancel-in-progress:\s*true/,
+    `${workflow} must cancel superseded duplicate runs`
+  );
+  assert.ok(
+    source.includes(workflow),
+    `${workflow} must trigger when its own workflow definition changes`
+  );
 }
 
 console.log('Dedicated workflow checkout integrity contract passed');
