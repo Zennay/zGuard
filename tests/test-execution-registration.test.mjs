@@ -34,13 +34,14 @@ function workflowRunBlocks(source) {
   const blocks = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^(\s*)run:\s*(.*)$/);
+    const match = lines[index].match(/^(\s*)(?:-\s*)?run:\s*(.*)$/);
     if (!match) continue;
 
     const indent = match[1].length;
-    const inline = match[2].trim();
+    const inline = match[2].replace(/\s+#.*$/, '').trim();
+    const blockScalar = /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(inline);
 
-    if (inline && inline !== '|' && inline !== '>') {
+    if (inline && !blockScalar) {
       blocks.push(inline);
       continue;
     }
@@ -62,6 +63,20 @@ function workflowRunBlocks(source) {
 
   return blocks.join('\n');
 }
+
+const runBlockFixture = [
+  'steps:',
+  '  - run: node tests/inline.MJS',
+  '  - run: |-',
+  '      python tests/block.PY',
+  '  - name: Named step',
+  '    run: >+ # folded command',
+  '      ruby tests/folded.RB',
+].join('\n');
+const extractedRunBlocks = workflowRunBlocks(runBlockFixture);
+assert.match(extractedRunBlocks, /node tests\/inline\.MJS/, 'inline list-item run steps must be discovered');
+assert.match(extractedRunBlocks, /python tests\/block\.PY/, 'literal block run steps with chomping indicators must be discovered');
+assert.match(extractedRunBlocks, /ruby tests\/folded\.RB/, 'folded block run steps with comments must be discovered');
 
 const workflowCorpus = tracked
   .filter((file) => /^\.github\/workflows\/.*\.ya?ml$/.test(file))
