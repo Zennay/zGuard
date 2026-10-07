@@ -109,6 +109,22 @@ workflows.each do |workflow|
   jobs.each do |job_name, job|
     abort "#{relative}: job #{job_name.inspect} must be a mapping" unless job.is_a?(Hash)
 
+    if job.key?("continue-on-error")
+      abort "#{relative}: job #{job_name.inspect} must not use continue-on-error; validation failures must remain terminal"
+    end
+
+    steps = job["steps"]
+    if steps
+      abort "#{relative}: job #{job_name.inspect} steps must be a list" unless steps.is_a?(Array)
+
+      steps.each_with_index do |step, index|
+        abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must be a mapping" unless step.is_a?(Hash)
+        if step.key?("continue-on-error")
+          abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must not use continue-on-error; validation failures must remain terminal"
+        end
+      end
+    end
+
     display_name = job["name"]
     unless display_name.is_a?(String) && !display_name.strip.empty?
       abort "#{relative}: job #{job_name.inspect} must define a non-empty display name"
@@ -122,4 +138,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML, duplicate-key, check-identity, and concurrency-isolation contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, and terminal-failure contract passed for #{workflows.length} workflows"
