@@ -43,8 +43,17 @@ for (const file of tracked.filter(isTextContractPath)) {
     `tracked text file must not contain a UTF-8 BOM: ${file}`
   );
   assert.ok(!text.includes("\u0000"), `tracked text file contains a NUL byte: ${file}`);
+  assert.ok(!text.includes("\r"), `tracked text file must use LF line endings: ${file}`);
   checked += 1;
 }
 
 assert.ok(checked > 0, "at least one tracked text file must be validated");
-console.log(`repository text encoding contract passed for ${checked} tracked text files`);
+
+const attributes = readFileSync(".gitattributes", "utf8");
+assert.match(
+  attributes,
+  /^\*\s+text=auto\s+eol=lf\s*$/m,
+  ".gitattributes must normalize automatically detected text files to LF"
+);
+
+console.log(`repository text encoding and line-ending contract passed for ${checked} tracked text files`);
