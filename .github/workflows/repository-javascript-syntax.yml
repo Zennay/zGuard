@@ -2,21 +2,9 @@ name: Repository JavaScript syntax validation
 
 on:
   pull_request:
-    paths:
-      - "**/*.js"
-      - "**/*.mjs"
-      - "**/*.cjs"
-      - "tests/repository-javascript-syntax.test.mjs"
-      - ".github/workflows/repository-javascript-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.js"
-      - "**/*.mjs"
-      - "**/*.cjs"
-      - "tests/repository-javascript-syntax.test.mjs"
-      - ".github/workflows/repository-javascript-syntax.yml"
   workflow_dispatch:
 
 permissions:
