@@ -15,6 +15,7 @@ const files = [
 ];
 
 const remoteUrl = /(?:https?:)?\/\//i;
+const embeddedUrl = /^(?:data|blob):/i;
 const cssImport = /@import\s+/i;
 const remoteCssUrl = /url\(\s*['"]?(?:https?:)?\/\//i;
 function attributes(tagSource) {
@@ -72,17 +73,23 @@ assert.match(
 );
 
 function assertNoExternalHtmlAssets(relative, content) {
-  for (const match of content.matchAll(/<(?:script|link|img|iframe|source|video|audio|embed|object)\b[^>]*>/gi)) {
+  for (const match of content.matchAll(/<(?:script|link|img|iframe|source|video|audio|track|embed|object|input|image|use)\b[^>]*>/gi)) {
     const attrs = attributes(match[0]);
 
     for (const attribute of ["src", "href", "poster", "data"]) {
       const value = attrs.get(attribute);
       if (value === undefined) continue;
 
+      const normalized = normalizeHtmlUrl(value);
       assert.doesNotMatch(
-        normalizeHtmlUrl(value),
+        normalized,
         /^(?:https?:)?\/\//i,
         `${relative}: UI must not load third-party script/style/media assets`
+      );
+      assert.doesNotMatch(
+        normalized,
+        embeddedUrl,
+        `${relative}: UI resources must come from tracked/local URLs, not data: or blob: schemes`
       );
     }
 
@@ -94,12 +101,24 @@ function assertNoExternalHtmlAssets(relative, content) {
         .filter(Boolean);
 
       for (const candidate of candidates) {
+        const normalized = normalizeHtmlUrl(candidate);
         assert.doesNotMatch(
-          normalizeHtmlUrl(candidate),
+          normalized,
           /^(?:https?:)?\/\//i,
           `${relative}: UI srcset must not load third-party media assets`
         );
+        assert.doesNotMatch(
+          normalized,
+          embeddedUrl,
+          `${relative}: UI srcset must not embed data: or blob: media`
+        );
       }
+    }
+
+    if (attrs.has("srcdoc")) {
+      assert.fail(
+        `${relative}: iframe srcdoc is forbidden; active embedded markup must remain in tracked files`
+      );
     }
   }
 }
@@ -129,6 +148,22 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<object data="https://cdn.example/widget"></object>'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="data:image/svg+xml;base64,PHN2Zz4=">'),
+  /must come from tracked\/local URLs/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<object data="blob:https://example.test/id"></object>'),
+  /must come from tracked\/local URLs/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<iframe srcdoc="<p>inline</p>"></iframe>'),
+  /iframe srcdoc is forbidden/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<track src="//cdn.example/captions.vtt">'),
   /must not load third-party/
 );
 
