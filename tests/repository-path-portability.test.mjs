@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+
+const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
+  .split("\0")
+  .filter(Boolean);
+
+assert.ok(tracked.length > 0, "at least one tracked path must be discovered");
+
+const windowsReserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const windowsForbidden = /[<>:"\\|?*]/;
+const portableKeys = new Map();
+
+for (const file of tracked) {
+  const segments = file.split("/");
+
+  for (const segment of segments) {
+    assert.ok(segment.length > 0, `tracked path has an empty segment: ${file}`);
+    assert.notEqual(segment, ".", `tracked path contains '.' segment: ${file}`);
+    assert.notEqual(segment, "..", `tracked path contains '..' segment: ${file}`);
+    assert.doesNotMatch(
+      segment,
+      /[. ]$/,
+      `tracked path segment ends in a dot or space and is not Windows-portable: ${file}`
+    );
+    assert.doesNotMatch(
+      segment,
+      windowsForbidden,
+      `tracked path contains a Windows-forbidden character: ${file}`
+    );
+    assert.doesNotMatch(
+      segment,
+      windowsReserved,
+      `tracked path uses a Windows-reserved device name: ${file}`
+    );
+  }
+
+  const portableKey = file.normalize("NFC").toLowerCase();
+  const previous = portableKeys.get(portableKey);
+  assert.equal(
+    previous,
+    undefined,
+    `tracked paths collide on case-insensitive/normalized filesystems: ${previous} <-> ${file}`
+  );
+  portableKeys.set(portableKey, file);
+}
+
+console.log(`repository path portability contract passed for ${tracked.length} tracked paths`);
