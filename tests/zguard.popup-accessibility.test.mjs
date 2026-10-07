@@ -4,6 +4,26 @@ import fs from "node:fs";
 const read = (relative) =>
   fs.readFileSync(new URL("../" + relative, import.meta.url), "utf8");
 
+function relativeLuminance(hex) {
+  const channels = hex
+    .slice(1)
+    .match(/.{2}/g)
+    .map((part) => Number.parseInt(part, 16) / 255)
+    .map((channel) =>
+      channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4)
+    );
+
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrast(foreground, background) {
+  const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const darker = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 for (const browser of ["chromium", "firefox"]) {
   const html = read(browser + "/popup.html");
   const css = read(browser + "/popup.css");
@@ -57,6 +77,47 @@ for (const browser of ["chromium", "firefox"]) {
     html,
     /<script src="popup\.js"><\/script><script src="popup-a11y\.js"><\/script>/,
     browser + ": popup ARIA sync must load after the settings runtime"
+  );
+
+  const background = css.match(/body\s*\{[^}]*background:\s*(#[0-9a-f]{6})/i)?.[1];
+  const mutedText = css.match(/\bp\s*\{[^}]*color:\s*(#[0-9a-f]{6})/i)?.[1];
+  const buttonColors = css.match(
+    /\bbutton\s*\{[^}]*background:\s*(#[0-9a-f]{6});[^}]*color:\s*(#[0-9a-f]{6})/i
+  );
+  const focus = css.match(/outline:\s*2px solid (#[0-9a-f]{6})/i)?.[1];
+  const status = css.match(/\.status\s*\{[^}]*color:\s*(#[0-9a-f]{6})/i)?.[1];
+  const statusOff = css.match(/\.status\.off\s*\{[^}]*color:\s*(#[0-9a-f]{6})/i)?.[1];
+
+  assert.ok(background, browser + ": body background color must remain explicit");
+  assert.ok(mutedText, browser + ": muted paragraph color must remain explicit");
+  assert.ok(buttonColors, browser + ": button foreground/background colors must remain explicit");
+  assert.ok(focus, browser + ": focus outline color must remain explicit");
+  assert.ok(status, browser + ": active status color must remain explicit");
+  assert.ok(statusOff, browser + ": inactive status color must remain explicit");
+
+  assert.ok(
+    contrast(mutedText, background) >= 4.5,
+    browser + ": muted popup copy must retain at least 4.5:1 contrast"
+  );
+  assert.ok(
+    contrast(buttonColors[2], buttonColors[1]) >= 4.5,
+    browser + ": mode button text must retain at least 4.5:1 contrast"
+  );
+  assert.ok(
+    contrast(status, background) >= 4.5,
+    browser + ": active protection status must retain at least 4.5:1 contrast"
+  );
+  assert.ok(
+    contrast(statusOff, background) >= 4.5,
+    browser + ": inactive protection status must retain at least 4.5:1 contrast"
+  );
+  assert.ok(
+    contrast(focus, background) >= 3,
+    browser + ": focus indicator must retain at least 3:1 contrast on the popup background"
+  );
+  assert.ok(
+    contrast(focus, buttonColors[1]) >= 3,
+    browser + ": focus indicator must retain at least 3:1 contrast on mode buttons"
   );
 }
 
