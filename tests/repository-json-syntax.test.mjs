@@ -32,4 +32,14 @@ for (const file of trackedJson) {
   }
 }
 
+const workflow = fs.readFileSync(
+  path.join(root, '.github/workflows/repository-json-syntax.yml'),
+  'utf8'
+);
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  'JSON syntax workflow must run on every PR/push so extension casing cannot bypass validation'
+);
+
 console.log(`Repository JSON syntax contract passed for ${trackedJson.length} tracked JSON files`);
