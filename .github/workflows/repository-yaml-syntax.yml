@@ -2,19 +2,9 @@ name: Repository YAML syntax integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.yml"
-      - "**/*.yaml"
-      - "tests/repository-yaml-syntax.test.rb"
-      - ".github/workflows/repository-yaml-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.yml"
-      - "**/*.yaml"
-      - "tests/repository-yaml-syntax.test.rb"
-      - ".github/workflows/repository-yaml-syntax.yml"
   workflow_dispatch:
 
 permissions:
