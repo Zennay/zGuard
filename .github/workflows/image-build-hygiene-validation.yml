@@ -7,6 +7,14 @@ on:
       - 'zbrowse/gateway/Dockerfile'
       - 'tests/zbrowse.image-build-hygiene.test.mjs'
       - '.github/workflows/image-build-hygiene-validation.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'zbrowse/browser/Dockerfile'
+      - 'zbrowse/gateway/Dockerfile'
+      - 'tests/zbrowse.image-build-hygiene.test.mjs'
+      - '.github/workflows/image-build-hygiene-validation.yml'
   workflow_dispatch:
 
 permissions:
