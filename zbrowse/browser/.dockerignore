@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!zguard/
+!zguard/**
+!policies/
+!policies/**
+!root/
+!root/**
