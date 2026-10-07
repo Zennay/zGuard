@@ -45,6 +45,7 @@ function normalizeHtmlUrl(value) {
       return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
     })
     .replace(/&colon;/gi, ":")
+    .replace(/&sol;/gi, "/")
     .replace(/&tab;/gi, "\t")
     .replace(/&newline;/gi, "\n");
 
@@ -132,6 +133,14 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<iframe src="https&#58;//example.test/embed">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="https&colon;&sol;&sol;cdn.example/logo.svg">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<source src=&sol;&sol;cdn.example/video.mp4>'),
   /must not load third-party/
 );
 assert.throws(
