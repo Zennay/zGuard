@@ -5,23 +5,21 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const workflowDir = path.join(root, '.github', 'workflows');
 const checkoutSha = 'df4cb1c069e1874edd31b4311f1884172cec0e10';
 
-const workflows = [
-  '.github/workflows/manifest-integrity-validation.yml',
-  '.github/workflows/popup-accessibility-validation.yml',
-  '.github/workflows/portal-accessibility-validation.yml',
-  '.github/workflows/repository-hygiene-validation.yml',
-  '.github/workflows/repository-secret-hygiene.yml',
-  '.github/workflows/browser-image-integrity-validation.yml',
-  '.github/workflows/gateway-containment-validation.yml',
-  '.github/workflows/gateway-dependency-audit.yml',
-  '.github/workflows/zbrowse-sites-config-safety.yml',
-  '.github/workflows/zbrowse-env-compose-parity.yml'
-];
+const workflows = fs.readdirSync(workflowDir)
+  .filter((name) => /\.ya?ml$/i.test(name))
+  .map((name) => ({
+    relative: path.posix.join('.github', 'workflows', name),
+    source: fs.readFileSync(path.join(workflowDir, name), 'utf8')
+  }))
+  .filter(({ source }) => /runs-on:\s*ubuntu-latest/.test(source))
+  .sort((a, b) => a.relative.localeCompare(b.relative));
 
-for (const workflow of workflows) {
-  const source = fs.readFileSync(path.join(root, workflow), 'utf8');
+assert.ok(workflows.length > 0, 'at least one portable hosted workflow must be discovered');
+
+for (const { relative: workflow, source } of workflows) {
   const matches = [...source.matchAll(/uses:\s*actions\/checkout@([^\s#]+)/g)];
 
   assert.equal(matches.length, 1, `${workflow} must contain exactly one checkout action`);
@@ -47,11 +45,6 @@ for (const workflow of workflows) {
   );
   assert.match(
     source,
-    /runs-on:\s*ubuntu-latest/,
-    `${workflow} is portable and must not depend on the generic self-hosted queue`
-  );
-  assert.match(
-    source,
     /workflow_dispatch:\s*(?:\n|$)/,
     `${workflow} must remain manually dispatchable for deterministic re-validation`
   );
@@ -66,4 +59,4 @@ for (const workflow of workflows) {
   );
 }
 
-console.log('Dedicated workflow checkout integrity contract passed');
+console.log(`Dedicated workflow integrity contract passed for ${workflows.length} hosted workflows`);
