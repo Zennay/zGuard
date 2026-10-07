@@ -66,7 +66,7 @@ assert.match(
   "escaped CSS @import must normalize before privacy checks"
 );
 assert.match(
-  decodeCssEscapes("body{background:url(https:\\2f\\2fcdn.example/x.png)}"),
+  decodeCssEscapes("body{background:url(https:\\00002f\\00002fcdn.example/x.png)}"),
   remoteCssUrl,
   "escaped remote CSS url() must normalize before privacy checks"
 );
