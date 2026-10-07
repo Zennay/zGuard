@@ -126,8 +126,10 @@ assert.throws(
   () => validateDockerfile("FRO node:22-alpine\n", "self-test unknown"),
   /unknown Dockerfile instruction/
 );
+const danglingContinuation =
+  "FROM node:22-alpine " + String.fromCharCode(92) + "\n";
 assert.throws(
-  () => validateDockerfile("FROM node:22-alpine \\\n", "self-test continuation"),
+  () => validateDockerfile(danglingContinuation, "self-test continuation"),
   /unterminated line continuation/
 );
 assert.throws(
