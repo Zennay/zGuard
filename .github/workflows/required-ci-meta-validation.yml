@@ -1,0 +1,40 @@
+name: Required CI meta-policy validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: required-ci-meta-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  meta-policy:
+    name: CI meta-policy bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate repository CI policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/dedicated-workflow-checkout-integrity.test.mjs
+          node tests/workflow-action-pinning.test.mjs
+          node tests/workflow-expression-safety.test.mjs
+          node tests/workflow-runner-availability.test.mjs
+          node tests/workflow-token-permissions.test.mjs
+          node tests/workflow-job-timeout.test.mjs
+          ruby tests/workflow-yaml-syntax.test.rb
+          node tests/test-execution-registration.test.mjs
+          node tests/required-check-catalog.test.mjs
