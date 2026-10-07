@@ -1,0 +1,46 @@
+name: UI local asset privacy
+
+on:
+  pull_request:
+    paths:
+      - "chromium/popup.html"
+      - "chromium/popup.css"
+      - "firefox/popup.html"
+      - "firefox/popup.css"
+      - "zbrowse/gateway/public/index.html"
+      - "zbrowse/gateway/public/styles.css"
+      - "tests/ui.local-asset-privacy.test.mjs"
+      - ".github/workflows/ui-local-asset-privacy.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "chromium/popup.html"
+      - "chromium/popup.css"
+      - "firefox/popup.html"
+      - "firefox/popup.css"
+      - "zbrowse/gateway/public/index.html"
+      - "zbrowse/gateway/public/styles.css"
+      - "tests/ui.local-asset-privacy.test.mjs"
+      - ".github/workflows/ui-local-asset-privacy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-local-asset-privacy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Local UI asset privacy contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Validate local-only UI assets
+        run: node tests/ui.local-asset-privacy.test.mjs
