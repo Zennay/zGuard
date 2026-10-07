@@ -1,0 +1,39 @@
+name: Repository YAML syntax integrity
+
+on:
+  pull_request:
+    paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "tests/repository-yaml-syntax.test.rb"
+      - ".github/workflows/repository-yaml-syntax.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "tests/repository-yaml-syntax.test.rb"
+      - ".github/workflows/repository-yaml-syntax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-yaml-syntax-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tracked YAML syntax integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate tracked YAML
+        run: ruby tests/repository-yaml-syntax.test.rb
