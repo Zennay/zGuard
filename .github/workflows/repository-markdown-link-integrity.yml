@@ -1,0 +1,37 @@
+name: Markdown link integrity
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "tests/repository-markdown-link-integrity.test.mjs"
+      - ".github/workflows/repository-markdown-link-integrity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+      - "tests/repository-markdown-link-integrity.test.mjs"
+      - ".github/workflows/repository-markdown-link-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markdown-link-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tracked Markdown link integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate tracked Markdown links
+        run: node tests/repository-markdown-link-integrity.test.mjs
