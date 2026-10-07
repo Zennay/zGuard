@@ -29,6 +29,7 @@ const multiIdRefAttributes = new Set([
   "aria-owns",
   "headers"
 ]);
+const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
 
 function attributes(source) {
   const body = source
@@ -91,6 +92,7 @@ function normalizeUrlForSchemeCheck(value) {
     })
     .replace(/&colon;/gi, ":")
     .replace(/&sol;/gi, "/")
+    .replace(/&bsol;/gi, "\\")
     .replace(/&tab;/gi, "\t")
     .replace(/&newline;/gi, "\n");
 
@@ -99,23 +101,38 @@ function normalizeUrlForSchemeCheck(value) {
 
 assert.match(
   normalizeUrlForSchemeCheck("https&#58;//example.test/app.js"),
-  /^(?:https?:)?\/\//i,
+  remoteHtmlUrl,
   "encoded https scheme must normalize before remote-resource checks"
 );
 assert.match(
   normalizeUrlForSchemeCheck("&#x2f;&#x2f;example.test/app.css"),
-  /^(?:https?:)?\/\//i,
+  remoteHtmlUrl,
   "encoded protocol-relative URL must normalize before remote-resource checks"
 );
 assert.match(
   normalizeUrlForSchemeCheck("https&colon;&sol;&sol;example.test/app.js"),
-  /^(?:https?:)?\/\//i,
+  remoteHtmlUrl,
   "named slash entities must normalize before remote-resource checks"
 );
 assert.match(
   normalizeUrlForSchemeCheck("&sol;&sol;example.test/app.css"),
-  /^(?:https?:)?\/\//i,
+  remoteHtmlUrl,
   "named slash entities must normalize protocol-relative URLs"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("https:cdn.example/app.js"),
+  remoteHtmlUrl,
+  "explicit special schemes must be treated as non-local even without //"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("&bsol;&sol;cdn.example/app.css"),
+  remoteHtmlUrl,
+  "named backslash separators must normalize before remote-resource checks"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("/&bsol;cdn.example/app.css"),
+  remoteHtmlUrl,
+  "mixed slash separators must normalize before remote-resource checks"
 );
 
 function assertSafeInlineAttributes(file, tagSource) {
@@ -540,7 +557,7 @@ for (const file of htmlFiles) {
     assert.equal(match[2].trim(), "", `${file}: script tags with src must not contain inline code`);
     assert.doesNotMatch(
       normalizeUrlForSchemeCheck(src),
-      /^(?:https?:)?\/\//i,
+      remoteHtmlUrl,
       `${file}: remote scripts are forbidden`
     );
     const resolved = resolveLocalAsset(file, src);
@@ -556,7 +573,7 @@ for (const file of htmlFiles) {
     assert.ok(href, `${file}: stylesheet links must include href`);
     assert.doesNotMatch(
       normalizeUrlForSchemeCheck(href),
-      /^(?:https?:)?\/\//i,
+      remoteHtmlUrl,
       `${file}: remote stylesheets are forbidden`
     );
     const resolved = resolveLocalAsset(file, href);
