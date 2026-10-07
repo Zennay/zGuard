@@ -46,8 +46,9 @@ function attributes(source) {
 }
 
 const attributeParserSelfTest = attributes(
-  '<input aria-describedby=hint disabled data-label="quoted" title=\'single\'>'
+  '<input id=sample aria-describedby=hint disabled data-label="quoted" title=\'single\'>'
 );
+assert.equal(attributeParserSelfTest.get("id"), "sample");
 assert.equal(attributeParserSelfTest.get("aria-describedby"), "hint");
 assert.equal(attributeParserSelfTest.get("disabled"), "");
 assert.equal(attributeParserSelfTest.get("data-label"), "quoted");
@@ -125,8 +126,9 @@ for (const file of htmlFiles) {
   );
 
   const ids = [];
-  for (const match of source.matchAll(/\bid\s*=\s*(["'])(.*?)\1/gi)) {
-    ids.push(match[2]);
+  for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+    if (attrs.has("id")) ids.push(attrs.get("id"));
   }
   const seenIds = new Set();
   for (const id of ids) {
