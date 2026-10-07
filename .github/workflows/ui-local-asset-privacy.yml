@@ -3,24 +3,20 @@ name: UI local asset privacy
 on:
   pull_request:
     paths:
-      - "chromium/popup.html"
-      - "chromium/popup.css"
-      - "firefox/popup.html"
-      - "firefox/popup.css"
-      - "zbrowse/gateway/public/index.html"
-      - "zbrowse/gateway/public/styles.css"
+      - "chromium/**"
+      - "firefox/**"
+      - "zbrowse/gateway/public/**"
+      - "zbrowse/browser/zguard/**"
       - "tests/ui.local-asset-privacy.test.mjs"
       - ".github/workflows/ui-local-asset-privacy.yml"
   push:
     branches:
       - main
     paths:
-      - "chromium/popup.html"
-      - "chromium/popup.css"
-      - "firefox/popup.html"
-      - "firefox/popup.css"
-      - "zbrowse/gateway/public/index.html"
-      - "zbrowse/gateway/public/styles.css"
+      - "chromium/**"
+      - "firefox/**"
+      - "zbrowse/gateway/public/**"
+      - "zbrowse/browser/zguard/**"
       - "tests/ui.local-asset-privacy.test.mjs"
       - ".github/workflows/ui-local-asset-privacy.yml"
   workflow_dispatch:
