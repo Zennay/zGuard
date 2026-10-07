@@ -1,0 +1,39 @@
+name: Repository Markdown shell syntax validation
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "tests/repository-markdown-shell-syntax.test.mjs"
+      - ".github/workflows/repository-markdown-shell-syntax.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+      - "tests/repository-markdown-shell-syntax.test.mjs"
+      - ".github/workflows/repository-markdown-shell-syntax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-markdown-shell-syntax-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Parse Markdown shell snippets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Validate fenced shell snippets
+        run: node tests/repository-markdown-shell-syntax.test.mjs
