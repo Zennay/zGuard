@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 export function requestIp(req, trustedProxyHops = 1) {
   const socketIp = req?.socket?.remoteAddress || '';
   const hops = Number.isInteger(trustedProxyHops) && trustedProxyHops > 0
@@ -12,9 +14,10 @@ export function requestIp(req, trustedProxyHops = 1) {
 
   const chain = forwarded
     .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
+    .map((value) => value.trim());
 
-  if (chain.length < hops) return socketIp;
-  return chain[chain.length - hops];
+  if (chain.some((value) => !value) || chain.length < hops) return socketIp;
+
+  const candidate = chain[chain.length - hops];
+  return isIP(candidate) ? candidate : socketIp;
 }
