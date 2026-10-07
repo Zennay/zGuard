@@ -58,6 +58,78 @@ function assertBalancedCodeFences(file, source) {
   );
 }
 
+function markdownHeadingAnchors(source) {
+  const anchors = new Set();
+  const counts = new Map();
+  let openFence = null;
+
+  for (const line of source.split("\n")) {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      const marker = fence[1];
+      const markerChar = marker[0];
+      if (!openFence) {
+        openFence = { markerChar, length: marker.length };
+      } else if (
+        markerChar === openFence.markerChar &&
+        marker.length >= openFence.length &&
+        fence[2].trim() === ""
+      ) {
+        openFence = null;
+      }
+      continue;
+    }
+    if (openFence) continue;
+
+    const heading = line.match(/^ {0,3}#{1,6}(?:[ \t]+|$)(.*)$/);
+    if (!heading) continue;
+
+    const title = heading[1]
+      .replace(/[ \t]+#+[ \t]*$/, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/[`*_~]/g, "")
+      .trim()
+      .toLowerCase();
+    const base = title
+      .replace(/[^\p{L}\p{N}\s-]/gu, "")
+      .replace(/\s+/g, "-");
+    if (!base) continue;
+
+    const duplicateIndex = counts.get(base) ?? 0;
+    const anchor = duplicateIndex === 0 ? base : `${base}-${duplicateIndex}`;
+    counts.set(base, duplicateIndex + 1);
+    anchors.add(anchor);
+  }
+
+  return anchors;
+}
+
+function assertMarkdownFragment(file, source, fragment, reference) {
+  let decoded;
+  assert.doesNotThrow(
+    () => {
+      decoded = decodeURIComponent(fragment);
+    },
+    `${file}: Markdown fragment must be valid percent-encoding: ${reference}`
+  );
+  assert.ok(
+    decoded && markdownHeadingAnchors(source).has(decoded),
+    `${file}: Markdown fragment target does not exist: ${reference}`
+  );
+}
+
+const selfTestAnchors = markdownHeadingAnchors(
+  "# Intro\n\n## Details\n\n## Details\n\n```md\n## Ignored\n```\n"
+);
+assert.deepEqual([...selfTestAnchors], ["intro", "details", "details-1"]);
+assert.doesNotThrow(() =>
+  assertMarkdownFragment("self-test.md", "# Intro\n", "intro", "#intro")
+);
+assert.throws(
+  () => assertMarkdownFragment("self-test.md", "# Intro\n", "missing", "#missing"),
+  /fragment target does not exist/
+);
+
 for (const file of markdownFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
   assertBalancedCodeFences(file, source);
@@ -67,11 +139,12 @@ for (const file of markdownFiles) {
   for (const reference of references) {
     assert.doesNotMatch(reference, unsafeScheme, `${file}: unsafe Markdown link scheme: ${reference}`);
 
-    if (
-      externalScheme.test(reference) ||
-      reference.startsWith("#") ||
-      reference === ""
-    ) {
+    if (externalScheme.test(reference) || reference === "") {
+      continue;
+    }
+
+    if (reference.startsWith("#")) {
+      assertMarkdownFragment(file, source, reference.slice(1), reference);
       continue;
     }
 
@@ -86,8 +159,8 @@ for (const file of markdownFiles) {
       `${file}: root-relative Markdown links are not portable: ${reference}`
     );
 
-    const withoutFragment = reference.split("#", 1)[0];
-    const withoutQuery = withoutFragment.split("?", 1)[0];
+    const [targetWithQuery, fragment] = reference.split("#", 2);
+    const withoutQuery = targetWithQuery.split("?", 1)[0];
     const decoded = decodeURIComponent(withoutQuery);
     const resolved = path.resolve(root, path.dirname(file), decoded);
 
@@ -99,6 +172,15 @@ for (const file of markdownFiles) {
       fs.existsSync(resolved),
       `${file}: local Markdown link target does not exist: ${reference}`
     );
+
+    if (fragment && path.extname(resolved).toLowerCase() === ".md") {
+      assertMarkdownFragment(
+        file,
+        fs.readFileSync(resolved, "utf8"),
+        fragment,
+        reference
+      );
+    }
   }
 }
 
