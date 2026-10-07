@@ -29,6 +29,7 @@ function shellBlocks(source, label) {
         if (shellLanguages.has(fence.language)) {
           blocks.push({
             code: fence.body.join("\n") + "\n",
+            language: fence.language,
             line: fence.line
           });
         }
@@ -56,8 +57,13 @@ function shellBlocks(source, label) {
   return blocks;
 }
 
-function assertBashSyntax(code, label) {
-  const result = spawnSync("bash", ["-n"], {
+function shellCommandForLanguage(language) {
+  return language === "sh" ? "sh" : "bash";
+}
+
+function assertShellSyntax(code, language, label) {
+  const command = shellCommandForLanguage(language);
+  const result = spawnSync(command, ["-n"], {
     input: code,
     encoding: "utf8"
   });
@@ -65,9 +71,13 @@ function assertBashSyntax(code, label) {
   assert.equal(
     result.status,
     0,
-    `${label}: shell snippet failed bash -n: ${(result.stderr || result.stdout).trim()}`
+    `${label}: ${language} snippet failed ${command} -n: ${(result.stderr || result.stdout).trim()}`
   );
 }
+
+assert.equal(shellCommandForLanguage("sh"), "sh");
+assert.equal(shellCommandForLanguage("bash"), "bash");
+assert.equal(shellCommandForLanguage("shell"), "bash");
 
 const selfTest = shellBlocks(
   [
@@ -78,22 +88,34 @@ const selfTest = shellBlocks(
     "  echo ok",
     "fi",
     "```",
+    "",
+    "```sh",
+    "case x in",
+    "  x) echo ok ;;",
+    "esac",
+    "```",
     ""
   ].join("\n"),
   "self-test"
 );
-assert.equal(selfTest.length, 1);
-assert.doesNotThrow(() => assertBashSyntax(selfTest[0].code, "self-test valid"));
+assert.equal(selfTest.length, 2);
+for (const block of selfTest) {
+  assert.doesNotThrow(() => assertShellSyntax(block.code, block.language, "self-test valid"));
+}
 assert.throws(
-  () => assertBashSyntax("if true; then\n  echo broken\n", "self-test invalid"),
+  () => assertShellSyntax("if true; then\n  echo broken\n", "bash", "self-test invalid"),
   /failed bash -n/
+);
+assert.throws(
+  () => assertShellSyntax("if true; then\n  echo broken\n", "sh", "self-test invalid"),
+  /failed sh -n/
 );
 
 let checked = 0;
 for (const file of markdownFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
   for (const block of shellBlocks(source, file)) {
-    assertBashSyntax(block.code, `${file}:${block.line}`);
+    assertShellSyntax(block.code, block.language, `${file}:${block.line}`);
     checked += 1;
   }
 }
