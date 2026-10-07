@@ -1,0 +1,37 @@
+name: CSS structure integrity
+
+on:
+  pull_request:
+    paths:
+      - "**/*.css"
+      - "tests/repository-css-structure-integrity.test.mjs"
+      - ".github/workflows/repository-css-structure-integrity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.css"
+      - "tests/repository-css-structure-integrity.test.mjs"
+      - ".github/workflows/repository-css-structure-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: css-structure-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tracked CSS structure integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate tracked CSS structure
+        run: node tests/repository-css-structure-integrity.test.mjs
