@@ -99,7 +99,7 @@ assert.doesNotThrow(() => validateCssStructure(
   '@media screen and (min-width: 1px) { .x[data-label="]"] { content: "}"; width: calc(100% - 1px); } }',
   "self-test valid"
 ));
-assert.doesNotThrow(() => validateCssStructure(".x { content: \"first\\\\\nsecond\"; }", "self-test escaped newline"));
+assert.doesNotThrow(() => validateCssStructure(".x { content: \"first" + "\\" + "\n" + "second\"; }", "self-test escaped newline"));
 assert.throws(() => validateCssStructure(".x { color: red; ", "self-test brace"), /unclosed/);
 assert.throws(() => validateCssStructure(".x { color: \"red; }", "self-test string"), /unterminated/);
 assert.throws(() => validateCssStructure(".x { content: \"first\nsecond\"; }", "self-test raw newline"), /unescaped newline/);
