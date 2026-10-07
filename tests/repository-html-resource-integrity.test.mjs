@@ -79,6 +79,34 @@ assert.throws(
   /duplicate HTML attribute "id"/
 );
 
+function normalizeUrlForSchemeCheck(value) {
+  const decoded = value
+    .replace(/&#x([0-9a-f]+);?/gi, (match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&#([0-9]+);?/g, (match, decimal) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&colon;/gi, ":")
+    .replace(/&tab;/gi, "\t")
+    .replace(/&newline;/gi, "\n");
+
+  return decoded.replace(/[\t\n\r]/g, "").trimStart();
+}
+
+assert.match(
+  normalizeUrlForSchemeCheck("https&#58;//example.test/app.js"),
+  /^(?:https?:)?\/\//i,
+  "encoded https scheme must normalize before remote-resource checks"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("&#x2f;&#x2f;example.test/app.css"),
+  /^(?:https?:)?\/\//i,
+  "encoded protocol-relative URL must normalize before remote-resource checks"
+);
+
 function assertSafeInlineAttributes(file, tagSource) {
   const attrs = attributes(tagSource);
 
@@ -100,7 +128,7 @@ function assertSafeInlineAttributes(file, tagSource) {
     const value = attrs.get(attribute);
     if (value === undefined) continue;
     assert.doesNotMatch(
-      value.trim(),
+      normalizeUrlForSchemeCheck(value),
       /^javascript:/i,
       `${file}: javascript: URLs are forbidden in ${attribute}`
     );
@@ -120,6 +148,19 @@ assert.throws(
 );
 assert.throws(
   () => assertSafeInlineAttributes("self-test", "<a href=javascript:alert(1)>"),
+  /javascript: URLs are forbidden/
+);
+
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", "<a href=jav&#x61;script:alert(1)>"),
+  /javascript: URLs are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<a href="java&#10;script:alert(1)">'),
+  /javascript: URLs are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<form action="javascript&#58;alert(1)">'),
   /javascript: URLs are forbidden/
 );
 
@@ -385,7 +426,11 @@ for (const file of htmlFiles) {
     const src = attrs.get("src");
     assert.ok(src, `${file}: inline script blocks are forbidden; use a local src`);
     assert.equal(match[2].trim(), "", `${file}: script tags with src must not contain inline code`);
-    assert.doesNotMatch(src, /^(?:https?:)?\/\//i, `${file}: remote scripts are forbidden`);
+    assert.doesNotMatch(
+      normalizeUrlForSchemeCheck(src),
+      /^(?:https?:)?\/\//i,
+      `${file}: remote scripts are forbidden`
+    );
     const resolved = resolveLocalAsset(file, src);
     assert.ok(tracked.includes(resolved), `${file}: referenced script is not tracked: ${src}`);
   }
@@ -397,7 +442,11 @@ for (const file of htmlFiles) {
 
     const href = attrs.get("href");
     assert.ok(href, `${file}: stylesheet links must include href`);
-    assert.doesNotMatch(href, /^(?:https?:)?\/\//i, `${file}: remote stylesheets are forbidden`);
+    assert.doesNotMatch(
+      normalizeUrlForSchemeCheck(href),
+      /^(?:https?:)?\/\//i,
+      `${file}: remote stylesheets are forbidden`
+    );
     const resolved = resolveLocalAsset(file, href);
     assert.ok(tracked.includes(resolved), `${file}: referenced stylesheet is not tracked: ${href}`);
   }
