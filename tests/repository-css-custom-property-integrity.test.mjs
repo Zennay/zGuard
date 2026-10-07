@@ -10,8 +10,12 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
   encoding: 'utf8',
 }).split('\0').filter(Boolean);
 
-const cssFiles = tracked.filter((file) => file.endsWith('.css')).sort();
+const isCssPath = (file) => path.extname(file).toLowerCase() === '.css';
+const cssFiles = tracked.filter(isCssPath).sort();
 assert.ok(cssFiles.length > 0, 'repository must contain tracked CSS files');
+assert.equal(isCssPath('styles.CSS'), true, 'CSS discovery must be case-insensitive');
+assert.equal(isCssPath('styles.CsS'), true, 'CSS discovery must accept mixed-case extensions');
+assert.equal(isCssPath('styles.css.txt'), false, 'CSS discovery must reject non-CSS suffixes');
 
 function stripComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -170,18 +174,10 @@ assert.match(
   /node tests\/repository-css-custom-property-integrity\.test\.mjs/,
   'workflow must execute the CSS custom-property integrity contract'
 );
-assert.ok(
-  workflow.includes('- "**/*.css"'),
-  'CSS custom-property workflow must trigger for every tracked CSS path'
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  'CSS custom-property workflow must run on every PR/push so extension casing cannot bypass validation'
 );
-for (const relativePath of [
-  'tests/repository-css-custom-property-integrity.test.mjs',
-  '.github/workflows/repository-css-custom-property-integrity.yml',
-]) {
-  assert.ok(
-    workflow.includes(`- "${relativePath}"`),
-    `CSS custom-property workflow must trigger when ${relativePath} changes`
-  );
-}
 
 console.log(`CSS custom-property integrity passed for ${cssFiles.length} tracked files`);
