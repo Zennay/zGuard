@@ -38,6 +38,9 @@ function validateCssStructure(source, label) {
         index += 1;
         continue;
       }
+      if (char === "\n" || char === "\r" || char === "\f") {
+        throw new Error(`${label}: unescaped newline in CSS string at offset ${index}`);
+      }
       if (char === quote) {
         quote = null;
       }
@@ -96,8 +99,10 @@ assert.doesNotThrow(() => validateCssStructure(
   '@media screen and (min-width: 1px) { .x[data-label="]"] { content: "}"; width: calc(100% - 1px); } }',
   "self-test valid"
 ));
+assert.doesNotThrow(() => validateCssStructure(".x { content: \"first\\\\\nsecond\"; }", "self-test escaped newline"));
 assert.throws(() => validateCssStructure(".x { color: red; ", "self-test brace"), /unclosed/);
 assert.throws(() => validateCssStructure(".x { color: \"red; }", "self-test string"), /unterminated/);
+assert.throws(() => validateCssStructure(".x { content: \"first\nsecond\"; }", "self-test raw newline"), /unescaped newline/);
 assert.throws(() => validateCssStructure(".x { /* open", "self-test comment"), /unterminated/);
 assert.throws(() => validateCssStructure(".x { color: red; }}", "self-test close"), /unmatched/);
 
