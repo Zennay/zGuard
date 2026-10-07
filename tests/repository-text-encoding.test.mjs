@@ -44,6 +44,24 @@ for (const file of tracked.filter(isTextContractPath)) {
   );
   assert.ok(!text.includes("\u0000"), `tracked text file contains a NUL byte: ${file}`);
   assert.ok(!text.includes("\r"), `tracked text file must use LF line endings: ${file}`);
+  if (bytes.length > 0) {
+    assert.equal(
+      bytes[bytes.length - 1],
+      0x0a,
+      `tracked text file must end with a final LF newline: ${file}`
+    );
+  }
+
+  if (path.extname(file).toLowerCase() !== ".md") {
+    const lines = text.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      assert.doesNotMatch(
+        lines[index],
+        /[ \t]+$/u,
+        `tracked text file contains trailing horizontal whitespace: ${file}:${index + 1}`
+      );
+    }
+  }
 
   const unsafeControl = text.match(/[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f]/u);
   assert.equal(
@@ -63,4 +81,4 @@ assert.match(
   ".gitattributes must normalize automatically detected text files to LF"
 );
 
-console.log(`repository text encoding and line-ending contract passed for ${checked} tracked text files`);
+console.log(`repository text encoding, line-ending, and whitespace contract passed for ${checked} tracked text files`);
