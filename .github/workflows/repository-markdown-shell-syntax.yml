@@ -2,17 +2,9 @@ name: Repository Markdown shell syntax validation
 
 on:
   pull_request:
-    paths:
-      - "**/*.md"
-      - "tests/repository-markdown-shell-syntax.test.mjs"
-      - ".github/workflows/repository-markdown-shell-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.md"
-      - "tests/repository-markdown-shell-syntax.test.mjs"
-      - ".github/workflows/repository-markdown-shell-syntax.yml"
   workflow_dispatch:
 
 permissions:

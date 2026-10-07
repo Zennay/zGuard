@@ -10,8 +10,12 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
   encoding: "utf8"
 }).split("\0").filter(Boolean);
 
-const markdownFiles = tracked.filter((file) => file.endsWith(".md")).sort();
+const isMarkdownPath = (file) => path.extname(file).toLowerCase() === ".md";
+const markdownFiles = tracked.filter(isMarkdownPath).sort();
 assert.ok(markdownFiles.length > 0, "repository must contain tracked Markdown files");
+assert.equal(isMarkdownPath("README.md"), true, "Markdown discovery must accept lowercase extensions");
+assert.equal(isMarkdownPath("README.MD"), true, "Markdown discovery must be case-insensitive");
+assert.equal(isMarkdownPath("README.md.txt"), false, "Markdown discovery must reject non-Markdown suffixes");
 
 const shellLanguages = new Set(["bash", "sh", "shell"]);
 
@@ -121,4 +125,14 @@ for (const file of markdownFiles) {
 }
 
 assert.ok(checked > 0, "repository must contain at least one fenced shell snippet");
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-markdown-shell-syntax.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  "Markdown shell syntax workflow must run on every PR/push so extension casing cannot bypass validation"
+);
+
 console.log(`Markdown shell syntax contract passed for ${checked} snippets across ${markdownFiles.length} files`);
