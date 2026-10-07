@@ -32,6 +32,26 @@ const shellFiles = tracked.filter((file) => {
 assert.ok(shellFiles.length > 0, 'at least one tracked Bash script must be discovered');
 
 for (const file of shellFiles) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  const lines = source.split(/\r?\n/);
+
+  assert.equal(
+    lines[0],
+    '#!/usr/bin/env bash',
+    `${file} must use the portable #!/usr/bin/env bash shebang`
+  );
+
+  const firstStatement = lines
+    .slice(1)
+    .map((line) => line.trim())
+    .find((line) => line !== '' && !line.startsWith('#'));
+
+  assert.equal(
+    firstStatement,
+    'set -euo pipefail',
+    `${file} must enable set -euo pipefail before executing commands`
+  );
+
   const result = spawnSync('bash', ['-n', file], {
     cwd: root,
     encoding: 'utf8'
@@ -44,4 +64,6 @@ for (const file of shellFiles) {
   );
 }
 
-console.log(`Repository shell syntax contract passed for ${shellFiles.length} tracked Bash scripts`);
+console.log(
+  `Repository shell safety contract passed for ${shellFiles.length} tracked Bash scripts`
+);
