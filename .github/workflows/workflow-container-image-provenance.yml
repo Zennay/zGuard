@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - ".github/workflows/workflow-container-image-provenance.yml"
       - "tests/workflow-container-image-provenance.test.rb"
   push:
     branches:
       - main
     paths:
       - ".github/workflows/**"
+      - ".github/workflows/workflow-container-image-provenance.yml"
       - "tests/workflow-container-image-provenance.test.rb"
   workflow_dispatch:
 
