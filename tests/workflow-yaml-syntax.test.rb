@@ -49,6 +49,7 @@ abort "No GitHub Actions workflows found" if workflows.empty?
 
 workflow_names = {}
 job_display_names = {}
+concurrency_groups = {}
 
 workflows.each do |workflow|
   relative = Pathname.new(workflow).relative_path_from(root).to_s
@@ -80,6 +81,28 @@ workflows.each do |workflow|
   end
   workflow_names[workflow_name] = relative
 
+  concurrency = parsed["concurrency"]
+  abort "#{relative}: workflow must define a top-level concurrency mapping" unless concurrency.is_a?(Hash)
+
+  group = concurrency["group"]
+  unless group.is_a?(String) && !group.strip.empty?
+    abort "#{relative}: concurrency.group must be a non-empty string"
+  end
+  unless group.include?("${{ github.ref }}")
+    abort "#{relative}: concurrency.group must include ${{ github.ref }} so separate refs cannot cancel each other"
+  end
+  unless concurrency["cancel-in-progress"] == true
+    abort "#{relative}: concurrency.cancel-in-progress must be true"
+  end
+
+  collision_key = group.downcase
+  unless group.include?("${{ github.workflow }}")
+    if concurrency_groups.key?(collision_key)
+      abort "#{relative}: concurrency.group #{group.inspect} collides with #{concurrency_groups[collision_key]}"
+    end
+    concurrency_groups[collision_key] = relative
+  end
+
   jobs = parsed["jobs"]
   abort "#{relative}: workflow must define a non-empty jobs mapping" unless jobs.is_a?(Hash) && !jobs.empty?
 
@@ -99,4 +122,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML, duplicate-key, and check-identity contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, check-identity, and concurrency-isolation contract passed for #{workflows.length} workflows"
