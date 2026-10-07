@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const envText = fs.readFileSync(path.join(root, "zbrowse/.env.example"), "utf8");
 const compose = fs.readFileSync(path.join(root, "zbrowse/docker-compose.yml"), "utf8");
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/zbrowse-env-compose-parity.yml"),
+  "utf8"
+);
 
 const env = new Map();
 for (const [index, rawLine] of envText.split(/\r?\n/).entries()) {
@@ -80,5 +84,21 @@ assert.doesNotMatch(
   "BROWSER_IMAGE must not use a mutable latest tag"
 );
 assert.equal(new URL(env.get("START_URL")).protocol, "https:", "START_URL must use HTTPS");
+
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `env/Compose workflow must retain exact-head checkout proof: ${expected}`
+  );
+}
+assert.ok(
+  workflow.includes("persist-credentials: false"),
+  "env/Compose checkout must not persist credentials"
+);
 
 console.log("zBrowse env/Compose default parity contract passed");
