@@ -29,6 +29,11 @@ for (const browser of ["chromium", "firefox"]) {
     browser + ": toggle and mode buttons must expose visible keyboard focus"
   );
   assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.switch \.track::after\s*\{[^}]*transition:\s*none;/i,
+    browser + ": toggle animation must stop when reduced motion is requested"
+  );
+  assert.match(
     html,
     /<button type="button" data-mode="balanced">Gebalanceerd<\/button>/,
     browser + ": balanced control must be an explicit button"
