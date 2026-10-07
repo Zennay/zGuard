@@ -2,17 +2,9 @@ name: Repository CSS custom-property integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.css"
-      - "tests/repository-css-custom-property-integrity.test.mjs"
-      - ".github/workflows/repository-css-custom-property-integrity.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.css"
-      - "tests/repository-css-custom-property-integrity.test.mjs"
-      - ".github/workflows/repository-css-custom-property-integrity.yml"
   workflow_dispatch:
 
 permissions:
