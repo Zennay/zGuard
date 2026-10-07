@@ -9,6 +9,16 @@ on:
       - 'tests/zguard.manifest-integrity.test.js'
       - 'tests/zguard.bundle-parity.test.mjs'
       - '.github/workflows/manifest-integrity-validation.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'chromium/**'
+      - 'firefox/**'
+      - 'zbrowse/browser/zguard/**'
+      - 'tests/zguard.manifest-integrity.test.js'
+      - 'tests/zguard.bundle-parity.test.mjs'
+      - '.github/workflows/manifest-integrity-validation.yml'
   workflow_dispatch:
 
 permissions:
