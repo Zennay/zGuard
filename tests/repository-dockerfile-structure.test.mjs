@@ -10,11 +10,18 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
   encoding: "utf8"
 }).split("\0").filter(Boolean);
 
-const dockerfiles = tracked
-  .filter((file) => /(^|\/)Dockerfile(?:\.[^/]+)?$/.test(file))
-  .sort();
+const isDockerfilePath = (file) => {
+  const base = path.basename(file).toLowerCase();
+  return base === "dockerfile" || base.startsWith("dockerfile.");
+};
+
+const dockerfiles = tracked.filter(isDockerfilePath).sort();
 
 assert.ok(dockerfiles.length > 0, "repository must contain tracked Dockerfiles");
+assert.equal(isDockerfilePath("Dockerfile"), true, "Dockerfile discovery must accept the canonical name");
+assert.equal(isDockerfilePath("dockerfile"), true, "Dockerfile discovery must be case-insensitive");
+assert.equal(isDockerfilePath("images/DOCKERFILE.prod"), true, "Dockerfile discovery must accept case-variant suffixes");
+assert.equal(isDockerfilePath("images/MyDockerfile"), false, "Dockerfile discovery must reject unrelated basenames");
 
 const instructions = new Set([
   "ADD", "ARG", "CMD", "COPY", "ENTRYPOINT", "ENV", "EXPOSE", "FROM",
@@ -178,5 +185,15 @@ assert.throws(
 for (const file of dockerfiles) {
   validateDockerfile(fs.readFileSync(path.join(root, file), "utf8"), file);
 }
+
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-dockerfile-structure.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  "Dockerfile structure workflow must run on every PR/push so filename casing cannot bypass validation"
+);
 
 console.log(`Dockerfile structure integrity passed for ${dockerfiles.length} tracked files`);
