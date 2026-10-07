@@ -37,6 +37,21 @@ assert.match(
   "session timer must expose its label without masking the changing time value"
 );
 assert.match(
+  html,
+  /<main id="homeView" class="home">/,
+  "landing view must remain the primary main landmark"
+);
+assert.match(
+  html,
+  /<main id="browserView" class="browser-view" hidden aria-labelledby="browserViewTitle">/,
+  "browser view must become a labelled main landmark when activated"
+);
+assert.match(
+  html,
+  /<h1 id="browserViewTitle" class="sr-only">zBrowse browser session<\/h1>/,
+  "browser-session main landmark must keep an accessible heading"
+);
+assert.match(
   css,
   /\.sr-only\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*1px;[\s\S]*?height:\s*1px;/,
   "screen-reader-only text must stay visually hidden without display:none"
