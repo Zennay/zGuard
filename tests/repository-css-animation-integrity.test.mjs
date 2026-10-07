@@ -112,6 +112,72 @@ function validateAnimationReferences(source, label) {
   assert.deepEqual(unused, [], `${label}: @keyframes definitions must be referenced`);
 }
 
+function blockBody(source, openingBrace) {
+  let depth = 1;
+  let quote = null;
+
+  for (let index = openingBrace + 1; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (quote !== null) {
+      if (char === '\\') {
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+
+    if (depth === 0) {
+      return source.slice(openingBrace + 1, index);
+    }
+  }
+
+  assert.fail('unterminated CSS block while checking reduced-motion coverage');
+}
+
+function validateReducedMotionCoverage(source, label) {
+  const clean = stripComments(source);
+  const hasAnimation = /(?:^|[;{])\s*animation\s*:/m.test(clean);
+  const hasTransition = /(?:^|[;{])\s*transition\s*:/m.test(clean);
+
+  if (!hasAnimation && !hasTransition) return;
+
+  const media = /@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{/i.exec(clean);
+  assert.ok(
+    media,
+    `${label}: styles with motion must include @media (prefers-reduced-motion: reduce)`
+  );
+
+  const openingBrace = media.index + media[0].lastIndexOf('{');
+  const reduced = blockBody(clean, openingBrace);
+  const nearZero = '(?:none|0(?:\\.0+)?(?:ms|s)?|\\.0*1ms|0\\.01ms)';
+
+  if (hasAnimation) {
+    assert.match(
+      reduced,
+      new RegExp(`animation(?:-duration)?\\s*:\\s*${nearZero}\\b`, 'i'),
+      `${label}: reduced-motion mode must disable or effectively eliminate animation duration`
+    );
+  }
+
+  if (hasTransition) {
+    assert.match(
+      reduced,
+      new RegExp(`transition(?:-duration)?\\s*:\\s*${nearZero}\\b`, 'i'),
+      `${label}: reduced-motion mode must disable or effectively eliminate transition duration`
+    );
+  }
+}
+
 assert.doesNotThrow(
   () => validateAnimationReferences(
     '.spinner { animation: spin .8s linear infinite; } @keyframes spin { to { opacity: 0; } }',
@@ -140,8 +206,41 @@ assert.throws(
   'animation integrity self-test must reject dead keyframe definitions'
 );
 
+assert.doesNotThrow(
+  () => validateReducedMotionCoverage(
+    '.spinner { animation: spin .8s linear infinite; } @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: .01ms !important; } }',
+    'self-test reduced animation'
+  ),
+  'reduced-motion contract must accept effectively disabled animation duration'
+);
+
+assert.doesNotThrow(
+  () => validateReducedMotionCoverage(
+    '.toggle { transition: transform .2s; } @media (prefers-reduced-motion: reduce) { .toggle { transition: none; } }',
+    'self-test reduced transition'
+  ),
+  'reduced-motion contract must accept disabled transitions'
+);
+
+assert.throws(
+  () => validateReducedMotionCoverage('.toggle { transition: transform .2s; }', 'self-test missing reduced motion'),
+  /must include @media/,
+  'reduced-motion contract must reject motion without an explicit user-preference override'
+);
+
+assert.throws(
+  () => validateReducedMotionCoverage(
+    '.spinner { animation: spin .8s linear; } .toggle { transition: transform .2s; } @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }',
+    'self-test incomplete reduced motion'
+  ),
+  /transition duration/,
+  'reduced-motion contract must require both animation and transition suppression when both are used'
+);
+
 for (const file of cssFiles) {
-  validateAnimationReferences(fs.readFileSync(path.join(root, file), 'utf8'), file);
+  const source = fs.readFileSync(path.join(root, file), 'utf8');
+  validateAnimationReferences(source, file);
+  validateReducedMotionCoverage(source, file);
 }
 
 const workflow = fs.readFileSync(
@@ -179,4 +278,4 @@ for (const relativePath of [
   );
 }
 
-console.log(`CSS animation integrity passed for ${cssFiles.length} tracked files`);
+console.log(`CSS animation and reduced-motion integrity passed for ${cssFiles.length} tracked files`);
