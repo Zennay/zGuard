@@ -11,6 +11,7 @@ const chromiumBackground = read("chromium/background.js");
 const firefoxBackground = read("firefox/background.js");
 const chromiumContent = read("chromium/content.js");
 const firefoxContent = read("firefox/content.js");
+const workflow = read(".github/workflows/zguard-cross-browser-parity.yml");
 
 function extractArray(source, name) {
   const match = source.match(new RegExp("const\\s+" + name + "\\s*=\\s*(\\[[\\s\\S]*?\\])\\s*;"));
@@ -96,5 +97,21 @@ for (const [name, source] of [
   assert.match(source, /mode:\s*['"]balanced['"]/, `${name}: balanced must remain the safe default`);
   assert.match(source, /mode === ['"]strict['"]/, `${name}: strict mode behavior must remain explicit`);
 }
+
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `cross-browser workflow must retain exact-head checkout proof: ${expected}`
+  );
+}
+assert.ok(
+  workflow.includes("persist-credentials: false"),
+  "cross-browser checkout must not persist credentials"
+);
 
 console.log("zGuard cross-browser contract parity passed");
