@@ -205,6 +205,16 @@ for (const file of htmlFiles) {
   );
   assert.doesNotMatch(
     source,
+    /\sstyle\s*=\s*(["'])/i,
+    `${file}: inline style attributes are forbidden; use a local stylesheet`
+  );
+  assert.doesNotMatch(
+    source,
+    /<style\b[^>]*>[\s\S]*?<\/style>/i,
+    `${file}: inline style blocks are forbidden; use a local stylesheet`
+  );
+  assert.doesNotMatch(
+    source,
     /\b(?:href|src|action|formaction)\s*=\s*(["'])\s*javascript:/i,
     `${file}: javascript: URLs are forbidden`
   );
