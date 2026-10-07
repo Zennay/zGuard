@@ -8,7 +8,8 @@ const workflowDir = path.join(root, '.github', 'workflows');
 const secretReference = /\$\{\{[^}]*\bsecrets\b[^}]*\}\}/i;
 
 assert.match('${{ secrets.API_KEY }}', secretReference);
-assert.match("${{ secrets['API_KEY'] }}", secretReference);\nassert.match('${{ toJSON(secrets) }}', secretReference);
+assert.match("${{ secrets['API_KEY'] }}", secretReference);
+assert.match('${{ toJSON(secrets) }}', secretReference);
 assert.doesNotMatch('${{ github.ref }}', secretReference);
 
 const workflows = fs.readdirSync(workflowDir)
