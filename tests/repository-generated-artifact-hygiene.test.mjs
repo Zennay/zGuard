@@ -22,8 +22,8 @@ const forbiddenDirectories = new Set([
 ]);
 
 const forbiddenBasenames = new Set([
-  '.DS_Store',
-  'Thumbs.db',
+  '.ds_store',
+  'thumbs.db',
   'desktop.ini',
   'npm-debug.log',
   'yarn-error.log',
@@ -31,6 +31,19 @@ const forbiddenBasenames = new Set([
 ]);
 
 const transientSuffix = /(?:\.swp|\.swo|\.tmp|\.bak|\.orig|\.rej|~)$/i;
+
+function isGeneratedDirectory(segment) {
+  return forbiddenDirectories.has(segment.toLowerCase());
+}
+
+function isGeneratedBasename(base) {
+  return forbiddenBasenames.has(base.toLowerCase());
+}
+
+assert.equal(isGeneratedDirectory('NODE_MODULES'), true, 'generated directories must be matched case-insensitively');
+assert.equal(isGeneratedBasename('THUMBS.DB'), true, 'OS artifacts must be matched case-insensitively');
+assert.equal(isGeneratedBasename('notes.md'), false, 'ordinary filenames must remain allowed');
+
 const findings = [];
 
 for (const relative of tracked) {
@@ -38,13 +51,13 @@ for (const relative of tracked) {
   const segments = normalized.split('/');
   const base = segments.at(-1);
 
-  const generatedSegment = segments.find((segment) => forbiddenDirectories.has(segment));
+  const generatedSegment = segments.find(isGeneratedDirectory);
   if (generatedSegment) {
     findings.push(`${relative}: generated directory "${generatedSegment}"`);
     continue;
   }
 
-  if (forbiddenBasenames.has(base)) {
+  if (isGeneratedBasename(base)) {
     findings.push(`${relative}: generated/OS artifact "${base}"`);
     continue;
   }
