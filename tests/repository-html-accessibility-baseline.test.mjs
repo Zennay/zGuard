@@ -122,11 +122,34 @@ assert.throws(
 function validateHtmlAccessibility(file, source) {
   const labelForIds = new Set();
   const wrappedControlIds = new Set();
+  const labelableControlIds = new Set();
+
+  for (const control of source.matchAll(/<(button|input|meter|output|progress|select|textarea)\b[^>]*>/gi)) {
+    const kind = control[1].toLowerCase();
+    const controlAttrs = attributes(control[0]);
+    const type = (controlAttrs.get("type") || "").toLowerCase();
+    const id = controlAttrs.get("id")?.trim();
+    if (id && !(kind === "input" && type === "hidden")) {
+      labelableControlIds.add(id);
+    }
+  }
 
   for (const label of source.matchAll(/<label\b([^>]*)>([\s\S]*?)<\/label>/gi)) {
     const labelAttrs = attributes(`<label${label[1]}>`);
     const forId = labelAttrs.get("for")?.trim();
-    if (forId) labelForIds.add(forId);
+
+    assert.ok(
+      textContent(label[2]),
+      `${file}: label must have readable text: ${label[0]}`
+    );
+
+    if (forId) {
+      assert.ok(
+        labelableControlIds.has(forId),
+        `${file}: label for="${forId}" must reference a labelable control`
+      );
+      labelForIds.add(forId);
+    }
 
     for (const control of label[2].matchAll(/<(?:input|select|textarea)\b[^>]*>/gi)) {
       const controlAttrs = attributes(control[0]);
@@ -226,6 +249,22 @@ assert.doesNotThrow(() => validateHtmlAccessibility("self-test-valid.html", vali
 assert.throws(
   () => validateHtmlAccessibility("self-test-input.html", "<input id=\"orphan\">"),
   /accessible label\/name/
+);
+assert.throws(
+  () =>
+    validateHtmlAccessibility(
+      "self-test-label-target.html",
+      '<label for="note">Note</label><div id="note"></div>'
+    ),
+  /must reference a labelable control/
+);
+assert.throws(
+  () =>
+    validateHtmlAccessibility(
+      "self-test-empty-label.html",
+      '<label for="name"></label><input id="name">'
+    ),
+  /label must have readable text/
 );
 assert.throws(
   () => validateHtmlAccessibility("self-test-button.html", "<button type=\"button\"></button>"),
