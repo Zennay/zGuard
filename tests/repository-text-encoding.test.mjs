@@ -16,7 +16,7 @@ const textExtensions = new Set([
 ]);
 const textBasenames = new Set([
   ".dockerignore", ".editorconfig", ".gitattributes", ".gitignore",
-  "LICENSE", "README"
+  "license", "readme"
 ]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const unsafeFormatCharacter = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
@@ -36,11 +36,23 @@ function isDockerfilePath(file) {
   return base === "dockerfile" || base.startsWith("dockerfile.");
 }
 
+const envTemplateSuffixes = [
+  ".env.example",
+  ".env.sample",
+  ".env.template"
+];
+
+function isEnvironmentTemplatePath(file) {
+  const base = path.basename(file).toLowerCase();
+  return envTemplateSuffixes.some((suffix) => base.endsWith(suffix));
+}
+
 function isTextContractPath(file) {
   const base = path.basename(file);
-  if (textBasenames.has(base)) return true;
+  const normalizedBase = base.toLowerCase();
+  if (textBasenames.has(normalizedBase)) return true;
   if (isDockerfilePath(file)) return true;
-  if (base.endsWith(".env.example")) return true;
+  if (isEnvironmentTemplatePath(file)) return true;
   if (textExtensions.has(path.extname(base).toLowerCase())) return true;
   return hasShebang(file);
 }
@@ -49,6 +61,15 @@ assert.equal(isDockerfilePath("Dockerfile"), true, "text contract must include c
 assert.equal(isDockerfilePath("dockerfile"), true, "text contract must include lowercase Dockerfile variants");
 assert.equal(isDockerfilePath("images/DOCKERFILE.prod"), true, "text contract must include suffixed case variants");
 assert.equal(isDockerfilePath("images/MyDockerfile"), false, "text contract must reject unrelated basenames");
+assert.equal(isEnvironmentTemplatePath(".env.example"), true, "text contract must include .env.example");
+assert.equal(isEnvironmentTemplatePath(".ENV.EXAMPLE"), true, "text contract must casefold env example names");
+assert.equal(isEnvironmentTemplatePath("service.env.sample"), true, "text contract must include .env.sample templates");
+assert.equal(isEnvironmentTemplatePath("service.ENV.TEMPLATE"), true, "text contract must include .env.template case variants");
+assert.equal(isEnvironmentTemplatePath(".env.local"), false, "text contract must not classify local env state as a template");
+assert.equal(isTextContractPath("README"), true, "text contract must include canonical README");
+assert.equal(isTextContractPath("readme"), true, "text contract must casefold README basenames");
+assert.equal(isTextContractPath("License"), true, "text contract must casefold LICENSE basenames");
+assert.equal(isTextContractPath(".GITIGNORE"), true, "text contract must casefold standard repository dotfiles");
 
 const extensionlessShebangs = tracked
   .filter((file) => !path.basename(file).includes("."))
