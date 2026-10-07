@@ -12,6 +12,7 @@ on:
       - "tests/zbrowse.install-preflight.test.mjs"
       - "tests/zbrowse.validation-entrypoint.test.mjs"
       - "tests/dedicated-workflow-checkout-integrity.test.mjs"
+      - ".github/workflows/**"
       - ".github/workflows/repository-hygiene-validation.yml"
   push:
     branches:
@@ -26,6 +27,7 @@ on:
       - "tests/zbrowse.install-preflight.test.mjs"
       - "tests/zbrowse.validation-entrypoint.test.mjs"
       - "tests/dedicated-workflow-checkout-integrity.test.mjs"
+      - ".github/workflows/**"
       - ".github/workflows/repository-hygiene-validation.yml"
   workflow_dispatch:
 
