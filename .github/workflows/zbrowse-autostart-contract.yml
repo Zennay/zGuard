@@ -1,0 +1,42 @@
+name: zBrowse autostart contract validation
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/browser/root/defaults/autostart_wayland"
+      - "zbrowse/browser/root/usr/local/bin/start-zbrowse"
+      - "zbrowse/browser/Dockerfile"
+      - "tests/zbrowse.autostart-contract.test.mjs"
+      - ".github/workflows/zbrowse-autostart-contract.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/browser/root/defaults/autostart_wayland"
+      - "zbrowse/browser/root/usr/local/bin/start-zbrowse"
+      - "zbrowse/browser/Dockerfile"
+      - "tests/zbrowse.autostart-contract.test.mjs"
+      - ".github/workflows/zbrowse-autostart-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-autostart-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate zBrowse Wayland autostart
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Validate autostart contract
+        run: node tests/zbrowse.autostart-contract.test.mjs
