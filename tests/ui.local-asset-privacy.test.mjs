@@ -1,18 +1,37 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const tracked = execFileSync("git", ["ls-files", "-z"], {
+  cwd: root,
+  encoding: "utf8"
+}).split("\0").filter(Boolean);
 
-const files = [
-  "chromium/popup.html",
-  "chromium/popup.css",
-  "firefox/popup.html",
-  "firefox/popup.css",
-  "zbrowse/gateway/public/index.html",
-  "zbrowse/gateway/public/styles.css"
+const uiRoots = [
+  "chromium/",
+  "firefox/",
+  "zbrowse/gateway/public/",
+  "zbrowse/browser/zguard/"
 ];
+
+function isUiAsset(relative) {
+  const normalized = relative.replaceAll("\\", "/");
+  const extension = path.extname(normalized).toLowerCase();
+  return uiRoots.some((prefix) => normalized.startsWith(prefix)) &&
+    (extension === ".html" || extension === ".css");
+}
+
+const files = tracked.filter(isUiAsset).sort();
+assert.ok(files.length > 0, "repository must contain tracked UI HTML/CSS assets");
+assert.equal(isUiAsset("chromium/popup.html"), true, "canonical Chromium UI assets must be discovered");
+assert.equal(isUiAsset("firefox/POPUP.CSS"), true, "UI asset discovery must casefold extensions");
+assert.equal(isUiAsset("zbrowse/gateway/public/panel.HTML"), true, "future zBrowse public UI assets must be discovered");
+assert.equal(isUiAsset("zbrowse/browser/zguard/popup.css"), true, "bundled zGuard UI assets must be covered");
+assert.equal(isUiAsset("docs/example.html"), false, "non-UI documentation assets must remain outside this contract");
+assert.equal(isUiAsset("chromium/background.js"), false, "non-HTML/CSS UI package files must remain outside this contract");
 
 const remoteUrl = /(?:https?:)?\/\//i;
 const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
@@ -205,10 +224,10 @@ for (const relative of files) {
   assert.ok(fs.existsSync(absolute), `${relative}: expected UI asset is missing`);
   const content = fs.readFileSync(absolute, "utf8");
 
-  if (relative.endsWith(".html")) {
+  if (path.extname(relative).toLowerCase() === ".html") {
     assertNoExternalHtmlAssets(relative, content);
   }
-  const normalizedCss = relative.endsWith(".css") ? decodeCssEscapes(content) : content;
+  const normalizedCss = path.extname(relative).toLowerCase() === ".css" ? decodeCssEscapes(content) : content;
   assert.doesNotMatch(
     normalizedCss,
     cssImport,
@@ -220,7 +239,7 @@ for (const relative of files) {
     `${relative}: remote CSS url() dependencies are forbidden`
   );
 
-  if (relative.endsWith(".css")) {
+  if (path.extname(relative).toLowerCase() === ".css") {
     assert.doesNotMatch(
       normalizedCss,
       remoteUrl,
