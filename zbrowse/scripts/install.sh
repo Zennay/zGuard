@@ -21,6 +21,9 @@ if [[ ! -S /var/run/docker.sock ]]; then
   exit 1
 fi
 
+# Fail closed on source/runtime contract errors before touching local install state.
+bash scripts/validate.sh
+
 if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
@@ -32,7 +35,6 @@ else
   printf '\nDOCKER_GID=%s\n' "$docker_gid" >> .env
 fi
 
-bash scripts/validate.sh
 browser_image="$(sed -n 's/^BROWSER_IMAGE=//p' .env | tail -n 1)"
 browser_image="${browser_image:-zbrowse-browser:1.0.0}"
 
