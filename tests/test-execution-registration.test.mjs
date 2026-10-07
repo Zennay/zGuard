@@ -29,6 +29,13 @@ function read(relative) {
   return fs.readFileSync(path.join(root, relative), 'utf8');
 }
 
+const registrationWorkflow = read('.github/workflows/test-execution-registration.yml');
+assert.doesNotMatch(
+  registrationWorkflow,
+  /^\s+paths:\s*(?:#.*)?$/m,
+  'test execution registration workflow must remain always-on for PRs and pushes'
+);
+
 function workflowRunBlocks(source) {
   const lines = source.split(/\r?\n/);
   const blocks = [];
