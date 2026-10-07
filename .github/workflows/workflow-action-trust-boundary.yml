@@ -1,0 +1,37 @@
+name: Workflow action trust boundary
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/workflows/workflow-action-trust-boundary.yml"
+      - "tests/workflow-action-trust-boundary.test.rb"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - ".github/workflows/workflow-action-trust-boundary.yml"
+      - "tests/workflow-action-trust-boundary.test.rb"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-action-trust-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Workflow action trust boundary contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate external action trust
+        run: ruby tests/workflow-action-trust-boundary.test.rb
