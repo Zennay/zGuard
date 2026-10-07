@@ -26,13 +26,27 @@ assert.match("\u202e", unsafeFormatCharacter, "bidi-override self-test must be r
 assert.match("\u200b", unsafeFormatCharacter, "zero-width self-test must be rejected");
 assert.doesNotMatch("plain text", unsafeFormatCharacter, "ordinary text must remain allowed");
 
+function hasShebang(file) {
+  const bytes = readFileSync(file);
+  return bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21;
+}
+
 function isTextContractPath(file) {
   const base = path.basename(file);
   if (textBasenames.has(base)) return true;
   if (base.startsWith("Dockerfile.")) return true;
   if (base.endsWith(".env.example")) return true;
-  return textExtensions.has(path.extname(base).toLowerCase());
+  if (textExtensions.has(path.extname(base).toLowerCase())) return true;
+  return hasShebang(file);
 }
+
+const extensionlessShebangs = tracked
+  .filter((file) => !path.basename(file).includes("."))
+  .filter(hasShebang);
+assert.ok(
+  extensionlessShebangs.length > 0,
+  "at least one extensionless shebang script must exercise the text contract"
+);
 
 for (const file of tracked.filter(isTextContractPath)) {
   const bytes = readFileSync(file);
