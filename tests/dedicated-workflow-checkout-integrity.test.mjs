@@ -7,6 +7,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const workflowDir = path.join(root, '.github', 'workflows');
 const checkoutSha = 'df4cb1c069e1874edd31b4311f1884172cec0e10';
+const temporarilyOwnedWorkflow = '.github/workflows/quality-validation.yml';
+const requiredChecks = JSON.parse(
+  fs.readFileSync(path.join(root, '.github', 'required-checks.json'), 'utf8')
+).checks.map(({ workflow }) => workflow);
+const prHeadContractWorkflows = new Set(
+  requiredChecks.filter((workflow) => workflow !== temporarilyOwnedWorkflow)
+);
+
 
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
@@ -33,6 +41,19 @@ for (const { relative: workflow, source } of workflows) {
     /persist-credentials:\s*false/,
     `${workflow} must not persist checkout credentials`
   );
+
+  if (prHeadContractWorkflows.has(workflow)) {
+    assert.match(
+      source,
+      /ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\|\|\s*github\.sha\s*\}\}/,
+      `${workflow} must checkout the PR head SHA and fall back to github.sha outside pull_request`
+    );
+    assert.match(
+      source,
+      /name:\s*Verify checkout commit[\s\S]*?EXPECTED_SHA:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\|\|\s*github\.sha\s*\}\}[\s\S]*?run:\s*test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SHA"/,
+      `${workflow} must prove the checked-out git HEAD matches the selected PR-head contract`
+    );
+  }
   assert.match(
     source,
     /permissions:\s*\n\s+contents:\s*read/,
@@ -73,4 +94,13 @@ for (const { relative: workflow, source } of workflows) {
   );
 }
 
-console.log(`Dedicated workflow integrity contract passed for ${workflows.length} checkout workflows`);
+assert.deepEqual(
+  [...prHeadContractWorkflows].sort(),
+  requiredChecks.filter((workflow) => workflow !== temporarilyOwnedWorkflow).sort(),
+  'every required workflow outside the explicitly owned quality-validation lane must use the landed PR-head checkout contract'
+);
+
+console.log(
+  `Dedicated workflow integrity contract passed for ${workflows.length} checkout workflows; ` +
+  `${prHeadContractWorkflows.size} required workflows prove PR-head checkout`
+);
