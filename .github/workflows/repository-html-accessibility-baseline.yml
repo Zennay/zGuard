@@ -1,0 +1,37 @@
+name: Repository HTML accessibility baseline
+
+on:
+  pull_request:
+    paths:
+      - "**/*.html"
+      - "tests/repository-html-accessibility-baseline.test.mjs"
+      - ".github/workflows/repository-html-accessibility-baseline.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.html"
+      - "tests/repository-html-accessibility-baseline.test.mjs"
+      - ".github/workflows/repository-html-accessibility-baseline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-html-accessibility-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tracked HTML accessibility baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate tracked HTML accessibility baseline
+        run: node tests/repository-html-accessibility-baseline.test.mjs
