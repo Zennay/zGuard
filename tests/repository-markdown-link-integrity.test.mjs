@@ -16,8 +16,51 @@ assert.ok(markdownFiles.length > 0, "repository must contain tracked Markdown fi
 const unsafeScheme = /^(?:javascript|file|data):/i;
 const externalScheme = /^(?:https?|mailto):/i;
 
+function assertBalancedCodeFences(file, source) {
+  let openFence = null;
+  const lines = source.split("\\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const lineNumber = index + 1;
+    const match = lines[index].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!match) continue;
+
+    const marker = match[1];
+    const rest = match[2];
+    const markerChar = marker[0];
+
+    if (!openFence) {
+      if (markerChar === "`") {
+        assert.doesNotMatch(
+          rest,
+          /`/,
+          `${file}:${lineNumber}: backtick fence info strings must not contain backticks`
+        );
+      }
+      openFence = { markerChar, length: marker.length, lineNumber };
+      continue;
+    }
+
+    const closesCurrent =
+      markerChar === openFence.markerChar &&
+      marker.length >= openFence.length &&
+      rest.trim() === "";
+
+    if (closesCurrent) openFence = null;
+  }
+
+  assert.equal(
+    openFence,
+    null,
+    openFence
+      ? `${file}:${openFence.lineNumber}: fenced code block is not closed`
+      : `${file}: fenced code block integrity failed`
+  );
+}
+
 for (const file of markdownFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
+  assertBalancedCodeFences(file, source);
   const references = [...source.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)]
     .map((match) => match[1].replace(/^<|>$/g, ""));
 
@@ -59,4 +102,4 @@ for (const file of markdownFiles) {
   }
 }
 
-console.log(`Markdown link integrity passed for ${markdownFiles.length} tracked files`);
+console.log(`Markdown link and code-fence integrity passed for ${markdownFiles.length} tracked files`);
