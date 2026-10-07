@@ -6,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const trackedTestPath = /^tests\\/.*\\.(?:js|mjs|cjs|py|rb)$/i;
+const trackedShellPath = /\\.sh$/i;
+
+assert.equal(trackedTestPath.test('tests/example.MJS'), true, 'test discovery must casefold extensions');
+assert.equal(trackedTestPath.test('tests/example.PY'), true, 'Python test discovery must casefold extensions');
+assert.equal(trackedTestPath.test('docs/example.MJS'), false, 'only the tests directory is executable-test scope');
+assert.equal(trackedShellPath.test('scripts/validate.SH'), true, 'shell executor discovery must casefold extensions');
 
 const tracked = execFileSync('git', ['ls-files', '-z'], {
   cwd: root,
@@ -62,7 +69,7 @@ const workflowCorpus = tracked
   .join('\n');
 
 const shellCorpus = tracked
-  .filter((file) => file.endsWith('.sh'))
+  .filter((file) => trackedShellPath.test(file))
   .map(read)
   .join('\n');
 
