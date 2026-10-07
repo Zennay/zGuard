@@ -2,19 +2,9 @@ name: Repository JSON syntax validation
 
 on:
   pull_request:
-    paths:
-      - "**/*.json"
-      - "tests/repository-json-syntax.test.mjs"
-      - "tests/repository-json-duplicate-keys.test.py"
-      - ".github/workflows/repository-json-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.json"
-      - "tests/repository-json-syntax.test.mjs"
-      - "tests/repository-json-duplicate-keys.test.py"
-      - ".github/workflows/repository-json-syntax.yml"
   workflow_dispatch:
 
 permissions:
