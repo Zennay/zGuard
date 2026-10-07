@@ -11,6 +11,18 @@ on:
       - "tests/zbrowse.gateway-runtime.test.mjs"
       - "tests/zbrowse.validation-entrypoint.test.mjs"
       - ".github/workflows/gateway-containment-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/docker-compose.yml"
+      - "zbrowse/gateway/**"
+      - "zbrowse/README.md"
+      - "zbrowse/scripts/validate.sh"
+      - "tests/zbrowse.gateway-containment.test.mjs"
+      - "tests/zbrowse.gateway-runtime.test.mjs"
+      - "tests/zbrowse.validation-entrypoint.test.mjs"
+      - ".github/workflows/gateway-containment-validation.yml"
   workflow_dispatch:
 
 permissions:
