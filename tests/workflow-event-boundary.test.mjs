@@ -22,8 +22,8 @@ function workflowEvents(source) {
     if (!line.trim() || /^\s*#/.test(line)) continue;
     if (/^\S/.test(line)) break;
 
-    const match = line.match(/^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
-    if (match) events.push(match[1]);
+    const match = line.match(/^  (['"]?)([A-Za-z0-9_-]+)\1:\s*(?:#.*)?$/);
+    if (match) events.push(match[2]);
   }
 
   assert.ok(events.length > 0, 'workflow on: section must contain at least one explicit event');
@@ -35,10 +35,10 @@ const safeFixture = [
   '  pull_request:',
   '    paths:',
   '      - "tests/**"',
-  '  push:',
+  '  "push":',
   '    branches:',
   '      - main',
-  '  workflow_dispatch:',
+  "  'workflow_dispatch':",
   '',
   'permissions:',
   '  contents: read',
@@ -47,13 +47,20 @@ const safeFixture = [
 assert.deepEqual(
   workflowEvents(safeFixture),
   ['pull_request', 'push', 'workflow_dispatch'],
-  'event parser must capture only direct children of the on: block'
+  'event parser must capture plain or quoted direct children of the on: block only'
 );
 
 for (const event of ['pull_request_target', 'workflow_run', 'issue_comment', 'repository_dispatch']) {
-  const fixture = ['on:', `  ${event}:`, 'jobs:', '  validate:'].join('\n');
-  const disallowed = workflowEvents(fixture).filter((name) => !allowedEvents.has(name));
-  assert.deepEqual(disallowed, [event], `self-test must reject privileged or indirect trigger ${event}`);
+  for (const quote of ['', '"', "'"]) {
+    const key = quote ? `${quote}${event}${quote}` : event;
+    const fixture = ['on:', `  ${key}:`, 'jobs:', '  validate:'].join('\n');
+    const disallowed = workflowEvents(fixture).filter((name) => !allowedEvents.has(name));
+    assert.deepEqual(
+      disallowed,
+      [event],
+      `self-test must reject ${quote ? 'quoted ' : ''}privileged or indirect trigger ${event}`
+    );
+  }
 }
 
 const workflows = fs.readdirSync(workflowDir)
