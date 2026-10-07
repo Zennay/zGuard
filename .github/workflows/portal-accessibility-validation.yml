@@ -10,6 +10,17 @@ on:
       - "tests/zbrowse.frontend-session.test.js"
       - "tests/zbrowse.portal-workflow-coverage.test.mjs"
       - ".github/workflows/portal-accessibility-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/gateway/public/index.html"
+      - "zbrowse/gateway/public/styles.css"
+      - "zbrowse/gateway/public/app.js"
+      - "tests/zbrowse.portal-accessibility.test.mjs"
+      - "tests/zbrowse.frontend-session.test.js"
+      - "tests/zbrowse.portal-workflow-coverage.test.mjs"
+      - ".github/workflows/portal-accessibility-validation.yml"
   workflow_dispatch:
 
 permissions:
