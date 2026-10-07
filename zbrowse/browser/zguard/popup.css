@@ -13,3 +13,7 @@ section { border-top: 1px solid #273244; padding-top: 13px; margin-top: 12px; } 
 .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } button { border: 1px solid #374151; border-radius: 8px; background: #1f2937; color: #d1d5db; padding: 9px 6px; cursor: pointer; font-size: 12px; } button.active { border-color: #8b5cf6; background: #312e81; color: white; }
 .stats { display: flex; justify-content: space-between; align-items: center; color: #9ca3af; font-size: 12px; } .stats strong { color: white; font-size: 18px; }
 .status { margin-top: 13px; color: #34d399; } .status.off { color: #fbbf24; }
+
+@media (prefers-reduced-motion: reduce) {
+  .switch .track::after { transition: none; }
+}
