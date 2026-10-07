@@ -4,14 +4,30 @@ require "pathname"
 
 ROOT = Pathname(__dir__).parent
 
+RUBY_SHEBANG = /\A#!.*(?:\/|\s)ruby(?:\s|$)/
+
+def has_ruby_shebang?(path)
+  first_line = File.open((ROOT / path).to_s, "rb", &:gets).to_s
+  RUBY_SHEBANG.match?(first_line)
+end
+
 def tracked_ruby_files
   output = IO.popen(["git", "ls-files", "-z"], chdir: ROOT.to_s, &:read)
-  output.split("\0").reject(&:empty?).map { |path| Pathname(path) }.select { |path| path.extname == ".rb" }.sort
+  output
+    .split("\0")
+    .reject(&:empty?)
+    .map { |path| Pathname(path) }
+    .select { |path| path.extname.downcase == ".rb" || has_ruby_shebang?(path) }
+    .sort
 end
 
 def compile_ruby(source, filename)
   RubyVM::InstructionSequence.compile(source, filename, filename, 1)
 end
+
+raise "env Ruby shebang discovery self-test failed" unless RUBY_SHEBANG.match?("#!/usr/bin/env ruby\n")
+raise "direct Ruby shebang discovery self-test failed" unless RUBY_SHEBANG.match?("#!/usr/bin/ruby\n")
+raise "non-Ruby shebang discovery self-test failed" if RUBY_SHEBANG.match?("#!/usr/bin/env bash\n")
 
 compile_ruby("value = 1\nputs value\n", "self-test-valid.rb")
 
