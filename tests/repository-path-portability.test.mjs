@@ -14,6 +14,8 @@ const portableKeys = new Map();
 
 assert.match("COM¹.txt", windowsReserved, "Windows superscript COM device names must be rejected");
 assert.match("lpt²", windowsReserved, "Windows superscript LPT device names must be rejected");
+assert.match("COM³", windowsReserved, "all documented superscript COM device digits must be rejected");
+assert.match("LPT³.log", windowsReserved, "superscript LPT device names stay reserved with extensions");
 assert.doesNotMatch("component¹.txt", windowsReserved, "ordinary superscript filenames must remain allowed");
 
 for (const file of tracked) {
