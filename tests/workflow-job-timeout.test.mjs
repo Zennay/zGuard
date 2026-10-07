@@ -41,7 +41,7 @@ function discoverLocalJobs(source, relative) {
       block.push(candidate);
     }
 
-    if (block.some((candidate) => /^    runs-on:\s*\S/.test(candidate))) {
+    if (block.some((candidate) => /^    runs-on:\s*(?:\S.*)?$/.test(candidate))) {
       jobs.push({ jobId, block });
     }
   }
@@ -52,6 +52,10 @@ function discoverLocalJobs(source, relative) {
 const fixtures = [
   [
     'jobs:\n  validate:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps: []\n',
+    [{ jobId: 'validate', timeout: 5 }]
+  ],
+  [
+    'jobs:\n  validate:\n    runs-on:\n      - self-hosted\n      - zcloud\n      - vps\n    timeout-minutes: 5\n    steps: []\n',
     [{ jobId: 'validate', timeout: 5 }]
   ],
   [
