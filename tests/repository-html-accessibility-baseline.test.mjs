@@ -54,7 +54,7 @@ function hasNativeButtonName(attrs) {
 }
 
 function validateMainLandmarks(file, source) {
-  const mains = [...source.matchAll(/<main\\b([^>]*)>([\\s\\S]*?)<\\/main>/gi)].map((match) => ({
+  const mains = [...source.matchAll(/<main\b([^>]*)>([\s\S]*?)<\/main>/gi)].map((match) => ({
     source: `<main${match[1]}>`,
     attrs: attributes(`<main${match[1]}>`),
     body: match[2]
@@ -75,7 +75,7 @@ function validateMainLandmarks(file, source) {
       `${file}: main landmark must not use aria-hidden=true: ${main.source}`
     );
 
-    const primaryHeadings = [...main.body.matchAll(/<h1\\b[^>]*>([\\s\\S]*?)<\\/h1>/gi)];
+    const primaryHeadings = [...main.body.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)];
     assert.equal(
       primaryHeadings.length,
       1,
