@@ -16,7 +16,7 @@ const textExtensions = new Set([
 ]);
 const textBasenames = new Set([
   ".dockerignore", ".editorconfig", ".gitattributes", ".gitignore",
-  "Dockerfile", "LICENSE", "README"
+  "LICENSE", "README"
 ]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const unsafeFormatCharacter = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
@@ -31,14 +31,24 @@ function hasShebang(file) {
   return bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21;
 }
 
+function isDockerfilePath(file) {
+  const base = path.basename(file).toLowerCase();
+  return base === "dockerfile" || base.startsWith("dockerfile.");
+}
+
 function isTextContractPath(file) {
   const base = path.basename(file);
   if (textBasenames.has(base)) return true;
-  if (base.startsWith("Dockerfile.")) return true;
+  if (isDockerfilePath(file)) return true;
   if (base.endsWith(".env.example")) return true;
   if (textExtensions.has(path.extname(base).toLowerCase())) return true;
   return hasShebang(file);
 }
+
+assert.equal(isDockerfilePath("Dockerfile"), true, "text contract must include canonical Dockerfiles");
+assert.equal(isDockerfilePath("dockerfile"), true, "text contract must include lowercase Dockerfile variants");
+assert.equal(isDockerfilePath("images/DOCKERFILE.prod"), true, "text contract must include suffixed case variants");
+assert.equal(isDockerfilePath("images/MyDockerfile"), false, "text contract must reject unrelated basenames");
 
 const extensionlessShebangs = tracked
   .filter((file) => !path.basename(file).includes("."))
