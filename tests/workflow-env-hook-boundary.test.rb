@@ -1,5 +1,6 @@
 require "yaml"
 require "pathname"
+require "set"
 
 FORBIDDEN_ENV_KEYS = %w[
   BASH_ENV ENV PATH
@@ -43,8 +44,6 @@ def validate_workflow_env(parsed, relative)
 
   findings
 end
-
-require "set"
 
 safe_fixture = YAML.safe_load(<<~YAML)
   env:
