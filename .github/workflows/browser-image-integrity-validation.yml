@@ -9,6 +9,16 @@ on:
       - "tests/zbrowse.contract.test.js"
       - "tests/zbrowse.browser-image-workflow.test.mjs"
       - ".github/workflows/browser-image-integrity-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/browser/Dockerfile"
+      - "zbrowse/browser/root/**"
+      - "tests/zbrowse.base-provenance.test.mjs"
+      - "tests/zbrowse.contract.test.js"
+      - "tests/zbrowse.browser-image-workflow.test.mjs"
+      - ".github/workflows/browser-image-integrity-validation.yml"
   workflow_dispatch:
 
 permissions:
