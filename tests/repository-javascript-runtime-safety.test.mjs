@@ -24,7 +24,11 @@ assert.ok(
 
 const forbidden = [
   { name: 'eval identifier', pattern: /\beval\b/ },
-  { name: 'Function constructor identifier', pattern: /\bFunction\b/ }
+  { name: 'Function constructor identifier', pattern: /\bFunction\b/ },
+  { name: 'innerHTML sink', pattern: /\.\s*innerHTML\b/ },
+  { name: 'outerHTML sink', pattern: /\.\s*outerHTML\b/ },
+  { name: 'insertAdjacentHTML sink', pattern: /\.\s*insertAdjacentHTML\s*\(/ },
+  { name: 'document.write sink', pattern: /\bdocument\s*\.\s*write(?:ln)?\s*\(/ }
 ];
 
 function violationsFor(source) {
@@ -36,16 +40,22 @@ function violationsFor(source) {
 for (const [source, expected] of [
   ['console.log("safe");', []],
   ['const evaluation = "safe";', []],
+  ['element.textContent = value;', []],
   ['eval("alert(1)")', ['eval identifier']],
   ['(0, eval)("alert(1)")', ['eval identifier']],
   ['window.eval("alert(1)")', ['eval identifier']],
   ['Function("return 1")()', ['Function constructor identifier']],
-  ['new Function("return 1")()', ['Function constructor identifier']]
+  ['new Function("return 1")()', ['Function constructor identifier']],
+  ['node.innerHTML = html;', ['innerHTML sink']],
+  ['node.outerHTML = html;', ['outerHTML sink']],
+  ['node.insertAdjacentHTML("beforeend", html);', ['insertAdjacentHTML sink']],
+  ['document.write(html);', ['document.write sink']],
+  ['document.writeln(html);', ['document.write sink']]
 ]) {
   assert.deepEqual(
     violationsFor(source),
     expected,
-    `runtime-code-generation detector self-test failed for ${JSON.stringify(source)}`
+    `runtime-safety detector self-test failed for ${JSON.stringify(source)}`
   );
 }
 
@@ -61,8 +71,8 @@ for (const file of productionJavaScript) {
 if (violations.length > 0) {
   throw new Error(
     [
-      'Production JavaScript must not use string-based runtime code generation.',
-      'Keep extension and gateway code compatible with restrictive CSPs and avoid eval/Function.',
+      'Production JavaScript must avoid dynamic code generation and raw HTML injection sinks.',
+      'Prefer static code paths and DOM APIs such as textContent/createElement instead of eval/Function or HTML-string sinks.',
       ...violations.map((violation) => `- ${violation}`)
     ].join('\n')
   );
