@@ -86,9 +86,14 @@ function assertDocumentMetadataContract(file, source) {
   const htmlTags = [...source.matchAll(/<html\b[^>]*>/gi)];
   assert.equal(htmlTags.length, 1, `${file}: must declare exactly one html root element`);
   const htmlAttrs = attributes(htmlTags[0][0]);
+  const language = htmlAttrs.get("lang")?.trim();
   assert.ok(
-    htmlAttrs.get("lang")?.trim(),
+    language,
     `${file}: html element must declare a non-empty language`
+  );
+  assert.doesNotThrow(
+    () => Intl.getCanonicalLocales(language),
+    `${file}: html lang must be a valid BCP 47 language tag`
   );
 
   const charsetMetas = [];
@@ -133,6 +138,14 @@ assert.throws(
       '<!doctype html><html lang=""><head><meta charset="utf-8"><title>Example</title></head></html>'
     ),
   /non-empty language/
+);
+assert.throws(
+  () =>
+    assertDocumentMetadataContract(
+      "self-test",
+      '<!doctype html><html lang="en_US"><head><meta charset="utf-8"><title>Example</title></head></html>'
+    ),
+  /valid BCP 47 language tag/
 );
 assert.throws(
   () =>
