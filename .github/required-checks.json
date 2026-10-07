@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "workflow": ".github/workflows/repository-shell-syntax.yml",
+      "check": "Parse tracked Bash scripts"
+    },
+    {
+      "workflow": ".github/workflows/repository-path-portability.yml",
+      "check": "Repository path portability contract"
+    },
+    {
+      "workflow": ".github/workflows/repository-secret-hygiene.yml",
+      "check": "Repository secret hygiene contract"
+    },
+    {
+      "workflow": ".github/workflows/repository-text-encoding.yml",
+      "check": "Repository text encoding contract"
+    },
+    {
+      "workflow": ".github/workflows/quality-validation.yml",
+      "check": "zGuard + zBrowse contracts"
+    }
+  ]
+}
