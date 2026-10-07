@@ -83,17 +83,27 @@ function validateCommandLine(markdownFile, line, lineNumber) {
 
   const label = `shell block line ${lineNumber}`;
 
-  if (argv[0] === "node" || argv[0] === "bash") {
+  if (argv[0] === "node") {
+    if (argv.some((arg) => ["-e", "--eval", "-p", "--print"].includes(arg))) return 0;
     const target = argv.find((arg, index) => index > 0 && !arg.startsWith("-"));
-    assertLocalTarget(markdownFile, target, `${label} ${argv[0]}`);
+    assertLocalTarget(markdownFile, target, `${label} node`);
+    return 1;
+  }
+
+  if (argv[0] === "bash") {
+    if (argv.some((arg) => ["-c", "--command"].includes(arg))) return 0;
+    const target = argv.find((arg, index) => index > 0 && !arg.startsWith("-"));
+    assertLocalTarget(markdownFile, target, `${label} bash`);
     return 1;
   }
 
   if (argv[0] === "cp") {
     const operands = argv.slice(1).filter((arg) => !arg.startsWith("-"));
     assert.ok(operands.length >= 2, `${markdownFile}: ${label} cp must have source and destination`);
-    assertLocalTarget(markdownFile, operands[0], `${label} cp source`);
-    return 1;
+    for (const source of operands.slice(0, -1)) {
+      assertLocalTarget(markdownFile, source, `${label} cp source`);
+    }
+    return operands.length - 1;
   }
 
   if (argv[0] === "docker" && argv[1] === "build") {
@@ -109,6 +119,8 @@ function validateCommandLine(markdownFile, line, lineNumber) {
 const selfRoot = "docs/guide.md";
 assert.deepEqual(tokens('node "tests/example.js"'), ["node", "tests/example.js"]);
 assert.equal(validateCommandLine("README.md", "node tests/smoke.test.js", 1), 1);
+assert.equal(validateCommandLine("README.md", 'node -e "console.log(1)"', 2), 0);
+assert.equal(validateCommandLine("README.md", 'bash -c "echo ok"', 3), 0);
 assert.throws(
   () => assertLocalTarget(selfRoot, "../definitely-missing-file", "self-test"),
   /target does not exist/
