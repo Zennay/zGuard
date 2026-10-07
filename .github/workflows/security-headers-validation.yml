@@ -1,0 +1,32 @@
+name: zBrowse security headers validation
+
+on:
+  pull_request:
+    paths:
+      - 'zbrowse/gateway/server.js'
+      - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - '.github/workflows/security-headers-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-headers:
+    name: Gateway security header contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Verify Node runtime
+        run: node --version
+
+      - name: Syntax-check gateway
+        run: node --check zbrowse/gateway/server.js
+
+      - name: Validate security header contract
+        run: node tests/zbrowse.security-headers-contract.test.mjs
