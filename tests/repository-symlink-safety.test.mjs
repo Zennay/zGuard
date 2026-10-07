@@ -20,6 +20,38 @@ assert.ok(entries.length > 0, "at least one tracked entry must be discovered");
 
 const allowedModes = new Set(["100644", "100755", "120000"]);
 
+function resolveSafeSymlinkTarget(file, target) {
+  assert.ok(!path.isAbsolute(target), `tracked symlink must be relative: ${file} -> ${target}`);
+
+  const resolved = path.resolve(root, path.dirname(file), target);
+  assert.ok(
+    resolved === root || resolved.startsWith(root + path.sep),
+    `tracked symlink escapes the repository: ${file} -> ${target}`
+  );
+
+  const relative = path.relative(root, resolved);
+  assert.ok(
+    relative !== ".git" && !relative.startsWith(`.git${path.sep}`),
+    `tracked symlink must not target Git metadata: ${file} -> ${target}`
+  );
+
+  return resolved;
+}
+
+assert.doesNotThrow(() => resolveSafeSymlinkTarget("nested/link", "../target.txt"));
+assert.throws(
+  () => resolveSafeSymlinkTarget("link", ".git/config"),
+  /must not target Git metadata/
+);
+assert.throws(
+  () => resolveSafeSymlinkTarget("nested/link", "../.git/config"),
+  /must not target Git metadata/
+);
+assert.throws(
+  () => resolveSafeSymlinkTarget("link", "../outside"),
+  /escapes the repository/
+);
+
 for (const { mode, stage, file } of entries) {
   assert.equal(stage, "0", `tracked path must not contain unresolved index stages: ${file}`);
   assert.ok(
@@ -31,13 +63,8 @@ for (const { mode, stage, file } of entries) {
 
   const linkPath = path.join(root, file);
   const target = fs.readlinkSync(linkPath);
-  assert.ok(!path.isAbsolute(target), `tracked symlink must be relative: ${file} -> ${target}`);
+  const resolved = resolveSafeSymlinkTarget(file, target);
 
-  const resolved = path.resolve(path.dirname(linkPath), target);
-  assert.ok(
-    resolved === root || resolved.startsWith(root + path.sep),
-    `tracked symlink escapes the repository: ${file} -> ${target}`
-  );
   assert.ok(
     fs.existsSync(resolved),
     `tracked symlink target must exist in the checkout: ${file} -> ${target}`
