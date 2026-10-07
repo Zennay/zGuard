@@ -115,4 +115,14 @@ for (const file of cssFiles) {
   validateCssStructure(source, file);
 }
 
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-css-structure-integrity.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  "CSS structure workflow must run on every PR/push so extension casing cannot bypass validation"
+);
+
 console.log(`CSS structure integrity passed for ${cssFiles.length} tracked files`);
