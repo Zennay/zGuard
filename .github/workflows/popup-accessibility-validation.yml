@@ -60,7 +60,9 @@ jobs:
           persist-credentials: false
 
       - name: Validate popup accessibility contract
+        shell: bash
         run: |
+          set -euo pipefail
           node tests/zguard.popup-accessibility.test.mjs
           node tests/zguard.popup-a11y-runtime.test.js
           node tests/zguard.popup-workflow-coverage.test.mjs
