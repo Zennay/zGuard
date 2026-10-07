@@ -81,8 +81,8 @@ for (const name of workflows) {
   const source = fs.readFileSync(path.join(workflowDir, name), 'utf8');
   const jobs = discoverLocalJobs(source, relative);
 
-  assert.ok(jobs.length > 0, `${relative} must define at least one local runs-on job`);
-
+  // Reusable-workflow call jobs use `uses:` and do not support `timeout-minutes`
+  // at the caller job level, so this contract deliberately targets local runners.
   for (const { jobId, block } of jobs) {
     localJobCount += 1;
     const timeoutLines = block.filter((line) => /^    timeout-minutes:\s*/.test(line));
