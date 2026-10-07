@@ -72,10 +72,10 @@ assert.match(
 );
 
 function assertNoExternalHtmlAssets(relative, content) {
-  for (const match of content.matchAll(/<(?:script|link|img|iframe|source)\b[^>]*>/gi)) {
+  for (const match of content.matchAll(/<(?:script|link|img|iframe|source|video|audio|embed|object)\b[^>]*>/gi)) {
     const attrs = attributes(match[0]);
 
-    for (const attribute of ["src", "href"]) {
+    for (const attribute of ["src", "href", "poster", "data"]) {
       const value = attrs.get(attribute);
       if (value === undefined) continue;
 
@@ -84,6 +84,22 @@ function assertNoExternalHtmlAssets(relative, content) {
         /^(?:https?:)?\/\//i,
         `${relative}: UI must not load third-party script/style/media assets`
       );
+    }
+
+    const srcset = attrs.get("srcset");
+    if (srcset !== undefined) {
+      const candidates = srcset
+        .split(",")
+        .map((candidate) => candidate.trim().split(/\s+/, 1)[0])
+        .filter(Boolean);
+
+      for (const candidate of candidates) {
+        assert.doesNotMatch(
+          normalizeHtmlUrl(candidate),
+          /^(?:https?:)?\/\//i,
+          `${relative}: UI srcset must not load third-party media assets`
+        );
+      }
     }
   }
 }
@@ -101,6 +117,18 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<source src=&#x2f;&#x2f;cdn.example/video.mp4>'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img srcset="/local.png 1x, https&#58;//cdn.example/remote.png 2x">'),
+  /srcset must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<video poster=//cdn.example/poster.jpg></video>'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<object data="https://cdn.example/widget"></object>'),
   /must not load third-party/
 );
 
