@@ -15,6 +15,7 @@ const files = [
 ];
 
 const remoteUrl = /(?:https?:)?\/\//i;
+const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
 const embeddedUrl = /^(?:data|blob):/i;
 const cssImport = /@import\s+/i;
 const remoteCssUrl = /url\(\s*['"]?(?:https?:)?\/\//i;
@@ -46,6 +47,7 @@ function normalizeHtmlUrl(value) {
     })
     .replace(/&colon;/gi, ":")
     .replace(/&sol;/gi, "/")
+    .replace(/&bsol;/gi, "\\")
     .replace(/&tab;/gi, "\t")
     .replace(/&newline;/gi, "\n");
 
@@ -84,7 +86,7 @@ function assertNoExternalHtmlAssets(relative, content) {
       const normalized = normalizeHtmlUrl(value);
       assert.doesNotMatch(
         normalized,
-        /^(?:https?:)?\/\//i,
+        remoteHtmlUrl,
         `${relative}: UI must not load third-party script/style/media assets`
       );
       assert.doesNotMatch(
@@ -105,7 +107,7 @@ function assertNoExternalHtmlAssets(relative, content) {
         const normalized = normalizeHtmlUrl(candidate);
         assert.doesNotMatch(
           normalized,
-          /^(?:https?:)?\/\//i,
+          remoteHtmlUrl,
           `${relative}: UI srcset must not load third-party media assets`
         );
         assert.doesNotMatch(
@@ -141,6 +143,18 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<source src=&sol;&sol;cdn.example/video.mp4>'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="https:cdn.example/logo.svg">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<source src="&bsol;&bsol;cdn.example/video.mp4">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<track src="/&bsol;cdn.example/captions.vtt">'),
   /must not load third-party/
 );
 assert.throws(
