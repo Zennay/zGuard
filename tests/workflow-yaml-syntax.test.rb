@@ -112,6 +112,9 @@ workflows.each do |workflow|
     if job.key?("continue-on-error")
       abort "#{relative}: job #{job_name.inspect} must not use continue-on-error; validation failures must remain terminal"
     end
+    if job.key?("if")
+      abort "#{relative}: job #{job_name.inspect} must not be conditionally skipped"
+    end
 
     steps = job["steps"]
     if steps
@@ -121,6 +124,9 @@ workflows.each do |workflow|
         abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must be a mapping" unless step.is_a?(Hash)
         if step.key?("continue-on-error")
           abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must not use continue-on-error; validation failures must remain terminal"
+        end
+        if step.key?("if")
+          abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must not be conditionally skipped"
         end
       end
     end
@@ -138,4 +144,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, and terminal-failure contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, terminal-failure, and unconditional-execution contract passed for #{workflows.length} workflows"
