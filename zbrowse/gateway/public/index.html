@@ -37,7 +37,8 @@
       </section>
     </main>
 
-    <section id="browserView" class="browser-view" hidden>
+    <main id="browserView" class="browser-view" hidden aria-labelledby="browserViewTitle">
+      <h1 id="browserViewTitle" class="sr-only">zBrowse browser session</h1>
       <div class="browser-toolbar">
         <div class="browser-brand"><span class="brand-mark small">z</span><strong>Browse</strong></div>
         <div class="session-pill"><span class="live-dot" aria-hidden="true"></span><span class="sr-only">Session time remaining: </span><span id="timer">15:00</span></div>
@@ -52,7 +53,7 @@
         </div>
         <iframe id="browserFrame" title="zBrowse browser session" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
       </div>
-    </section>
+    </main>
 
     <script src="/app.js"></script>
   </body>
