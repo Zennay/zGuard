@@ -33,3 +33,6 @@ jobs:
 
       - name: Validate tracked Bash syntax
         run: node tests/repository-shell-syntax.test.mjs
+
+      - name: Validate zBrowse installer supply-chain boundary
+        run: node tests/zbrowse.install-supply-chain.test.mjs
