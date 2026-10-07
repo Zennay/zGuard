@@ -178,6 +178,22 @@ function validateHtmlAccessibility(file, source) {
       name === "textarea" ||
       (name === "a" && attrs.has("href"));
 
+    const role = (attrs.get("role") ?? "").trim().toLowerCase();
+    if (role === "button") {
+      assert.equal(
+        name,
+        "button",
+        `${file}: role=button must use a native button element instead: ${tag[0]}`
+      );
+    }
+    if (role === "link") {
+      assert.equal(
+        name === "a" && attrs.has("href"),
+        true,
+        `${file}: role=link must use a native anchor with href instead: ${tag[0]}`
+      );
+    }
+
     if (isInteractive) {
       assert.notEqual(
         attrs.get("aria-hidden")?.toLowerCase(),
@@ -302,6 +318,14 @@ assert.throws(
 assert.throws(
   () => validateHtmlAccessibility("self-test-hidden.html", "<button aria-hidden=\"true\">Go</button>"),
   /must not be hidden/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-fake-button.html", '<div role="button" tabindex="0">Go</div>'),
+  /role=button must use a native button/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-fake-link.html", '<span role="link" tabindex="0">Help</span>'),
+  /role=link must use a native anchor with href/
 );
 
 for (const file of htmlFiles) {
