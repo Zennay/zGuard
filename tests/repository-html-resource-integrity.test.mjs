@@ -31,12 +31,27 @@ const multiIdRefAttributes = new Set([
 ]);
 
 function attributes(source) {
+  const body = source
+    .replace(/^<[a-z][\\w:-]*\\b/i, "")
+    .replace(/\\/?>$/, "");
   const attrs = new Map();
-  for (const match of source.matchAll(/([:\w-]+)\s*=\s*(["'])(.*?)\2/gs)) {
-    attrs.set(match[1].toLowerCase(), match[3]);
+  const pattern = /([:\\w-]+)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\\x60]+)))?/g;
+
+  for (const match of body.matchAll(pattern)) {
+    const name = match[1].toLowerCase();
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    attrs.set(name, value);
   }
   return attrs;
 }
+
+const attributeParserSelfTest = attributes(
+  '<input aria-describedby=hint disabled data-label="quoted" title=\'single\'>'
+);
+assert.equal(attributeParserSelfTest.get("aria-describedby"), "hint");
+assert.equal(attributeParserSelfTest.get("disabled"), "");
+assert.equal(attributeParserSelfTest.get("data-label"), "quoted");
+assert.equal(attributeParserSelfTest.get("title"), "single");
 
 function assertNoDuplicateAttributes(file, tagSource) {
   const tag = tagSource.match(/^<([a-z][\w:-]*)\b/i);
