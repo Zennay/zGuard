@@ -30,7 +30,7 @@ Voor de standaardinstallatie:
 bash scripts/install.sh
 ```
 
-Het installatiescript controleert Docker, Compose, Node.js en de Docker-socket voordat het lokale `.env`-bestand wordt aangemaakt of aangepast. Daardoor laat een ontbrekende prerequisite geen gedeeltelijke installatiestate achter.
+Het installatiescript controleert Docker, Compose, Node.js en de Docker-socket en draait daarna de volledige zBrowse-validatie **voordat** het lokale `.env`-bestand wordt aangemaakt of aangepast. Daardoor laten ontbrekende prerequisites én bron-/contractfouten geen gedeeltelijk gemuteerde lokale configuratie achter.
 
 Wil je instellingen vóór de eerste build aanpassen, maak dan zelf eerst `.env` aan en pas die aan:
 
