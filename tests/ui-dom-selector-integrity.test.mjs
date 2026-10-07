@@ -109,7 +109,7 @@ for (const target of targets) {
 assert.deepEqual(
   auditDomReferences(
     '<main id="present"><button data-mode="balanced"></button></main>',
-    ['const ok = $("present"); const broken = $("#missing"); document.querySelectorAll("[data-role]");']
+    ['const ok = $("present"); const broken = document.querySelector("#missing"); document.querySelectorAll("[data-role]");']
   ),
   { missingIds: ['missing'], missingAttributes: ['data-role'] },
   'selector-integrity self-test must detect missing id and attribute targets'
