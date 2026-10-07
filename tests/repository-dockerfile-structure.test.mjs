@@ -26,6 +26,10 @@ const jsonInstructions = new Set([
   "ADD", "CMD", "COPY", "ENTRYPOINT", "RUN", "SHELL", "VOLUME"
 ]);
 
+const singletonStageInstructions = new Set([
+  "CMD", "ENTRYPOINT", "HEALTHCHECK", "STOPSIGNAL"
+]);
+
 function stripLeadingFlags(value) {
   let rest = value.trimStart();
   while (rest.startsWith("--")) {
@@ -66,6 +70,7 @@ function validateDockerfile(source, label) {
   assert.ok(logical.length > 0, `${label}: Dockerfile must contain at least one instruction`);
 
   let seenFrom = false;
+  let stageSingletons = new Set();
 
   for (const statement of logical) {
     const match = statement.match(/^([A-Za-z]+)(?:\s+([\s\S]*))?$/);
@@ -86,6 +91,13 @@ function validateDockerfile(source, label) {
 
     if (instruction === "FROM") {
       seenFrom = true;
+      stageSingletons = new Set();
+    } else if (singletonStageInstructions.has(instruction)) {
+      assert.ok(
+        !stageSingletons.has(instruction),
+        `${label}: ${instruction} appears more than once in the same build stage; Docker keeps only the last declaration`
+      );
+      stageSingletons.add(instruction);
     }
 
     if (jsonInstructions.has(instruction)) {
@@ -121,6 +133,17 @@ assert.doesNotThrow(() => validateDockerfile(
   "self-test valid"
 ));
 
+assert.doesNotThrow(() => validateDockerfile(
+  [
+    "FROM node:22-alpine AS build",
+    "CMD [\"node\", \"build.js\"]",
+    "FROM node:22-alpine AS runtime",
+    "CMD [\"node\", \"server.js\"]",
+    ""
+  ].join("\n"),
+  "self-test multi-stage"
+));
+
 assert.throws(
   () => validateDockerfile("RUN echo nope\n", "self-test missing FROM"),
   /only ARG may appear before the first FROM/
@@ -138,6 +161,18 @@ assert.throws(
 assert.throws(
   () => validateDockerfile("FROM node:22-alpine\nCMD [\"node\",]\n", "self-test JSON"),
   /invalid JSON form/
+);
+assert.throws(
+  () => validateDockerfile(
+    [
+      "FROM node:22-alpine",
+      "CMD [\"node\", \"first.js\"]",
+      "CMD [\"node\", \"second.js\"]",
+      ""
+    ].join("\n"),
+    "self-test shadowed CMD"
+  ),
+  /CMD appears more than once in the same build stage/
 );
 
 for (const file of dockerfiles) {
