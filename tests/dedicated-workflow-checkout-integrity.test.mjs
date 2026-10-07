@@ -45,6 +45,11 @@ for (const { relative: workflow, source } of workflows) {
   );
   assert.match(
     source,
+    /push:\s*\n\s+branches:\s*\n\s+- main/,
+    `${workflow} must re-validate relevant changes after they land on main`
+  );
+  assert.match(
+    source,
     /workflow_dispatch:\s*(?:\n|$)/,
     `${workflow} must remain manually dispatchable for deterministic re-validation`
   );
