@@ -61,4 +61,40 @@ assert.equal(
   'zero trusted hops must ignore forwarding headers'
 );
 
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { 'x-forwarded-for': 'not-an-ip' }
+  }, 1),
+  '10.0.0.3',
+  'a malformed forwarded client must fail closed to the socket address'
+);
+
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { 'x-forwarded-for': '198.51.100.20, , 10.0.0.2' }
+  }, 2),
+  '10.0.0.3',
+  'empty forwarded chain entries must not be collapsed across the trust boundary'
+);
+
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { 'x-forwarded-for': ['198.51.100.20', '10.0.0.2'] }
+  }, 2),
+  '198.51.100.20',
+  'array-form forwarded headers must preserve trusted-hop ordering'
+);
+
+assert.equal(
+  requestIp({
+    socket: { remoteAddress: '::1' },
+    headers: { 'x-forwarded-for': '2001:db8::10, 2001:db8::2' }
+  }, 2),
+  '2001:db8::10',
+  'valid IPv6 forwarded clients must remain supported'
+);
+
 console.log('zBrowse request IP tests passed');
