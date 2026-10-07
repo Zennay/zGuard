@@ -112,8 +112,8 @@ assert.match(
 );
 assert.match(
   gateway,
-  /RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force/,
-  'gateway image must use the locked production dependency graph without lifecycle scripts and clear npm cache'
+  /RUN npm ci --omit=dev --ignore-scripts --no-audit && npm cache clean --force/,
+  'gateway image must use the locked production dependency graph without lifecycle scripts or implicit audit traffic and clear npm cache'
 );
 assert.doesNotMatch(
   gateway,
