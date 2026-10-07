@@ -124,6 +124,62 @@ function isUniqueBasename(counts, basename) {
   return counts.get(basename) === 1;
 }
 
+function sourceExecutesTest(source, test, basename, uniqueBasename) {
+  const references = uniqueBasename ? [test, basename] : [test];
+  const lines = source.split(/\r?\n/);
+  const childProcessCall = /\b(?:execFileSync|spawnSync|execSync|spawn)\s*\(/;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*')) continue;
+    if (!references.some((reference) => line.includes(reference))) continue;
+
+    const window = lines
+      .slice(Math.max(0, index - 2), Math.min(lines.length, index + 3))
+      .filter((candidate) => {
+        const value = candidate.trim();
+        return !value.startsWith('//') && !value.startsWith('#') && !value.startsWith('*');
+      })
+      .join(' ');
+
+    if (childProcessCall.test(window)) return true;
+  }
+
+  return false;
+}
+
+assert.equal(
+  sourceExecutesTest(
+    "execFileSync(process.execPath, [path.join(__dirname, 'child.test.js')]);",
+    'tests/child.test.js',
+    'child.test.js',
+    true
+  ),
+  true,
+  'explicit child-process execution must register a nested test'
+);
+assert.equal(
+  sourceExecutesTest(
+    "const expected = 'node tests/child.test.js';",
+    'tests/child.test.js',
+    'child.test.js',
+    true
+  ),
+  false,
+  'a command-shaped assertion string must not register a nested test'
+);
+assert.equal(
+  sourceExecutesTest(
+    "// execFileSync(process.execPath, ['tests/child.test.js']);",
+    'tests/child.test.js',
+    'child.test.js',
+    true
+  ),
+  false,
+  'a commented-out child-process call must not register a nested test'
+);
+
 const basenameFixture = new Map([
   ['unique.test.mjs', 1],
   ['duplicate.test.mjs', 2],
@@ -144,7 +200,7 @@ for (const test of tests) {
   const uniqueBasename = isUniqueBasename(basenameCounts, basename);
 
   const executedByAnotherTest = [...testSources.entries()].some(([other, source]) => (
-    other !== test && (source.includes(test) || (uniqueBasename && source.includes(basename)))
+    other !== test && sourceExecutesTest(source, test, basename, uniqueBasename)
   ));
 
   if (!directlyExecuted && !executedByAnotherTest) {
