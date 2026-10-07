@@ -34,10 +34,10 @@ assert.equal(isUiAsset("docs/example.html"), false, "non-UI documentation assets
 assert.equal(isUiAsset("chromium/background.js"), false, "non-HTML/CSS UI package files must remain outside this contract");
 
 const remoteUrl = /(?:https?:)?\/\//i;
-const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
+const nonLocalHtmlUrl = /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i;
 const embeddedUrl = /^(?:data|blob):/i;
 const cssImport = /@import\s+/i;
-const remoteCssUrl = /url\(\s*['"]?(?:https?:|\/\/)/i;
+const nonLocalCssUrl = /url\(\s*['"]?(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 function attributes(tagSource) {
   const opening = tagSource.match(/^<[a-z][\w:-]*\b/i);
   assert.ok(opening, `opening tag could not be parsed: ${tagSource}`);
@@ -90,18 +90,33 @@ assert.match(
 );
 assert.match(
   decodeCssEscapes("body{background:url(https:\\00002f\\00002fcdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "escaped remote CSS url() must normalize before privacy checks"
 );
 assert.match(
   decodeCssEscapes("body{background:url(https:cdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "special-scheme CSS url() must be treated as non-local even without //"
 );
 assert.match(
   decodeCssEscapes("body{background:url(https\\00003acdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "escaped CSS scheme delimiter must normalize before special-scheme checks"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(data:image/svg+xml;base64,PHN2Zz4=)}"),
+  nonLocalCssUrl,
+  "data: CSS resources must be rejected as non-local"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(file:///tmp/private.png)}"),
+  nonLocalCssUrl,
+  "file: CSS resources must be rejected as non-local"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(blob:https://example.test/id)}"),
+  nonLocalCssUrl,
+  "blob: CSS resources must be rejected as non-local"
 );
 
 function assertNoExternalHtmlAssets(relative, content) {
@@ -115,7 +130,7 @@ function assertNoExternalHtmlAssets(relative, content) {
       const normalized = normalizeHtmlUrl(value);
       assert.doesNotMatch(
         normalized,
-        remoteHtmlUrl,
+        nonLocalHtmlUrl,
         `${relative}: UI must not load third-party script/style/media assets`
       );
       assert.doesNotMatch(
@@ -136,7 +151,7 @@ function assertNoExternalHtmlAssets(relative, content) {
         const normalized = normalizeHtmlUrl(candidate);
         assert.doesNotMatch(
           normalized,
-          remoteHtmlUrl,
+          nonLocalHtmlUrl,
           `${relative}: UI srcset must not load third-party media assets`
         );
         assert.doesNotMatch(
@@ -208,7 +223,15 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<object data="blob:https://example.test/id"></object>'),
-  /must come from tracked\/local URLs/
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="file:///tmp/private.png">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="ftp://cdn.example/logo.png">'),
+  /must not load third-party/
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<iframe srcdoc="<p>inline</p>"></iframe>'),
@@ -235,7 +258,7 @@ for (const relative of files) {
   );
   assert.doesNotMatch(
     normalizedCss,
-    remoteCssUrl,
+    nonLocalCssUrl,
     `${relative}: remote CSS url() dependencies are forbidden`
   );
 
