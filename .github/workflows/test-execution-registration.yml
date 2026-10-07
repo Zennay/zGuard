@@ -2,21 +2,9 @@ name: Test execution registration validation
 
 on:
   pull_request:
-    paths:
-      - "tests/**"
-      - ".github/workflows/**"
-      - "**/*.sh"
-      - "**/package.json"
-      - ".github/workflows/test-execution-registration.yml"
   push:
     branches:
       - main
-    paths:
-      - "tests/**"
-      - ".github/workflows/**"
-      - "**/*.sh"
-      - "**/package.json"
-      - ".github/workflows/test-execution-registration.yml"
   workflow_dispatch:
 
 permissions:
