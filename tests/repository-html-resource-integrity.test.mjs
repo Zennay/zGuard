@@ -13,6 +13,23 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
 const htmlFiles = tracked.filter((file) => file.endsWith(".html")).sort();
 assert.ok(htmlFiles.length > 0, "repository must contain tracked HTML files");
 
+const singleIdRefAttributes = new Set([
+  "aria-activedescendant",
+  "aria-details",
+  "aria-errormessage",
+  "for",
+  "form",
+  "list"
+]);
+const multiIdRefAttributes = new Set([
+  "aria-controls",
+  "aria-describedby",
+  "aria-flowto",
+  "aria-labelledby",
+  "aria-owns",
+  "headers"
+]);
+
 function attributes(source) {
   const attrs = new Map();
   for (const match of source.matchAll(/([:\w-]+)\s*=\s*(["'])(.*?)\2/gs)) {
@@ -27,6 +44,24 @@ function resolveLocalAsset(htmlFile, reference) {
     return path.join(path.dirname(htmlFile), clean.slice(1));
   }
   return path.normalize(path.join(path.dirname(htmlFile), clean));
+}
+
+function assertIdRef(file, attribute, value, seenIds, multiple) {
+  const references = multiple
+    ? value.trim().split(/\s+/).filter(Boolean)
+    : [value.trim()].filter(Boolean);
+
+  assert.ok(
+    references.length > 0,
+    `${file}: ${attribute} must reference at least one non-empty id`
+  );
+
+  for (const reference of references) {
+    assert.ok(
+      seenIds.has(reference),
+      `${file}: ${attribute} references missing id "${reference}"`
+    );
+  }
 }
 
 for (const file of htmlFiles) {
@@ -60,6 +95,27 @@ for (const file of htmlFiles) {
     seenIds.add(id);
   }
 
+  for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+
+    for (const attribute of singleIdRefAttributes) {
+      if (attrs.has(attribute)) {
+        assertIdRef(file, attribute, attrs.get(attribute), seenIds, false);
+      }
+    }
+
+    for (const attribute of multiIdRefAttributes) {
+      if (attrs.has(attribute)) {
+        assertIdRef(file, attribute, attrs.get(attribute), seenIds, true);
+      }
+    }
+
+    const href = attrs.get("href");
+    if (href?.startsWith("#")) {
+      assertIdRef(file, "href fragment", href.slice(1), seenIds, false);
+    }
+  }
+
   for (const match of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
     const attrs = attributes(match[1]);
     const src = attrs.get("src");
@@ -83,4 +139,6 @@ for (const file of htmlFiles) {
   }
 }
 
-console.log(`HTML resource integrity passed for ${htmlFiles.length} tracked files`);
+console.log(
+  `HTML resource and ID-reference integrity passed for ${htmlFiles.length} tracked files`
+);
