@@ -2,17 +2,9 @@ name: HTML resource integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-resource-integrity.test.mjs"
-      - ".github/workflows/repository-html-resource-integrity.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-resource-integrity.test.mjs"
-      - ".github/workflows/repository-html-resource-integrity.yml"
   workflow_dispatch:
 
 permissions:

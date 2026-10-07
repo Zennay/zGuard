@@ -2,17 +2,9 @@ name: HTML structure integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-structure.test.mjs"
-      - ".github/workflows/repository-html-structure.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-structure.test.mjs"
-      - ".github/workflows/repository-html-structure.yml"
   workflow_dispatch:
 
 permissions:

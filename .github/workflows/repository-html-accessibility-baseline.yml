@@ -2,17 +2,9 @@ name: Repository HTML accessibility baseline
 
 on:
   pull_request:
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-accessibility-baseline.test.mjs"
-      - ".github/workflows/repository-html-accessibility-baseline.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.html"
-      - "tests/repository-html-accessibility-baseline.test.mjs"
-      - ".github/workflows/repository-html-accessibility-baseline.yml"
   workflow_dispatch:
 
 permissions:
