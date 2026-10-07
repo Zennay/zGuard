@@ -1,0 +1,38 @@
+name: Repository documentation command-target validation
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "tests/repository-doc-command-targets.test.mjs"
+      - ".github/workflows/repository-doc-command-targets.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+      - "tests/repository-doc-command-targets.test.mjs"
+      - ".github/workflows/repository-doc-command-targets.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-doc-command-targets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate documented local command targets
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Validate documented local command targets
+        run: node tests/repository-doc-command-targets.test.mjs
