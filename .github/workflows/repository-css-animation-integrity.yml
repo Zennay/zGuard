@@ -2,17 +2,9 @@ name: Repository CSS animation integrity
 
 on:
   pull_request:
-    paths:
-      - "**/*.css"
-      - "tests/repository-css-animation-integrity.test.mjs"
-      - ".github/workflows/repository-css-animation-integrity.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.css"
-      - "tests/repository-css-animation-integrity.test.mjs"
-      - ".github/workflows/repository-css-animation-integrity.yml"
   workflow_dispatch:
 
 permissions:
