@@ -79,6 +79,78 @@ assert.throws(
   /duplicate HTML attribute "id"/
 );
 
+function assertDocumentMetadataContract(file, source) {
+  const doctypes = [...source.matchAll(/<!doctype\s+html\s*>/gi)];
+  assert.equal(doctypes.length, 1, `${file}: must declare exactly one HTML doctype`);
+
+  const htmlTags = [...source.matchAll(/<html\b[^>]*>/gi)];
+  assert.equal(htmlTags.length, 1, `${file}: must declare exactly one html root element`);
+  const htmlAttrs = attributes(htmlTags[0][0]);
+  assert.ok(
+    htmlAttrs.get("lang")?.trim(),
+    `${file}: html element must declare a non-empty language`
+  );
+
+  const charsetMetas = [];
+  for (const match of source.matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+    if (attrs.has("charset")) charsetMetas.push(attrs);
+  }
+  assert.equal(
+    charsetMetas.length,
+    1,
+    `${file}: must declare exactly one charset meta tag`
+  );
+  assert.equal(
+    charsetMetas[0].get("charset")?.toLowerCase(),
+    "utf-8",
+    `${file}: charset must be UTF-8`
+  );
+
+  const titles = [...source.matchAll(/<title\b[^>]*>([\s\S]*?)<\/title>/gi)];
+  assert.equal(titles.length, 1, `${file}: must declare exactly one title`);
+  assert.ok(titles[0][1].trim(), `${file}: title must not be empty`);
+}
+
+assert.doesNotThrow(() =>
+  assertDocumentMetadataContract(
+    "self-test",
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Example</title></head></html>'
+  )
+);
+assert.throws(
+  () =>
+    assertDocumentMetadataContract(
+      "self-test",
+      '<!doctype html><!doctype html><html lang="en"><head><meta charset="utf-8"><title>Example</title></head></html>'
+    ),
+  /exactly one HTML doctype/
+);
+assert.throws(
+  () =>
+    assertDocumentMetadataContract(
+      "self-test",
+      '<!doctype html><html lang=""><head><meta charset="utf-8"><title>Example</title></head></html>'
+    ),
+  /non-empty language/
+);
+assert.throws(
+  () =>
+    assertDocumentMetadataContract(
+      "self-test",
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta charset="windows-1252"><title>Example</title></head></html>'
+    ),
+  /exactly one charset meta tag/
+);
+assert.throws(
+  () =>
+    assertDocumentMetadataContract(
+      "self-test",
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>One</title><title>Two</title></head></html>'
+    ),
+  /exactly one title/
+);
+
 function assertViewportContract(file, source) {
   const viewportMetas = [];
 
@@ -192,10 +264,7 @@ for (const file of htmlFiles) {
   const absolute = path.join(root, file);
   const source = fs.readFileSync(absolute, "utf8");
 
-  assert.match(source, /^<!doctype html>/i, `${file}: must declare an HTML doctype`);
-  assert.match(source, /<html\b[^>]*\blang=(["'])[^"']+\1/i, `${file}: html element must declare a language`);
-  assert.match(source, /<meta\b[^>]*\bcharset=(["'])?utf-8\1?/i, `${file}: must declare UTF-8`);
-  assert.match(source, /<title>[^<]+<\/title>/i, `${file}: must include a non-empty title`);
+  assertDocumentMetadataContract(file, source);
   assertViewportContract(file, source);
 
   assert.doesNotMatch(
