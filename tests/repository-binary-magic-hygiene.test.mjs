@@ -28,6 +28,19 @@ function binaryKind(bytes) {
     if (machO.has(magic)) return 'Mach-O executable/object';
     if (magic === 0xcafebabe) return 'Java class/fat Mach-O binary';
     if (magic === 0x0061736d) return 'WebAssembly binary';
+    if (magic === 0x504b0304 || magic === 0x504b0506 || magic === 0x504b0708) return 'ZIP archive';
+    if (magic === 0x377abcaf) return '7z archive';
+  }
+
+  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    return 'gzip archive';
+  }
+
+  if (
+    bytes.length >= 7 &&
+    bytes.subarray(0, 7).equals(Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]))
+  ) {
+    return 'RAR archive';
   }
 
   return null;
@@ -38,7 +51,11 @@ const fixtures = [
   [Buffer.from([0x4d, 0x5a, 0x90, 0x00]), 'PE/DOS executable'],
   [Buffer.from([0xfe, 0xed, 0xfa, 0xcf]), 'Mach-O executable/object'],
   [Buffer.from([0xca, 0xfe, 0xba, 0xbe]), 'Java class/fat Mach-O binary'],
-  [Buffer.from([0x00, 0x61, 0x73, 0x6d]), 'WebAssembly binary']
+  [Buffer.from([0x00, 0x61, 0x73, 0x6d]), 'WebAssembly binary'],
+  [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'ZIP archive'],
+  [Buffer.from([0x1f, 0x8b, 0x08, 0x00]), 'gzip archive'],
+  [Buffer.from([0x37, 0x7a, 0xbc, 0xaf]), '7z archive'],
+  [Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]), 'RAR archive']
 ];
 
 for (const [bytes, expected] of fixtures) {
@@ -75,9 +92,9 @@ assert.deepEqual(
   findings,
   [],
   [
-    'tracked repository files must not contain compiled executable/bytecode magic',
+    'tracked repository files must not contain opaque executable/bytecode/archive magic',
     ...findings.map((finding) => `- ${finding}`),
-    'Build executable and bytecode artifacts in CI/runtime stages instead of committing or disguising binaries.'
+    'Build executable, bytecode and archive artifacts in CI/release stages instead of committing or disguising opaque binaries.'
   ].join('\n')
 );
 
