@@ -20,7 +20,7 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
 }).split('\0').filter(Boolean);
 
 const tests = tracked
-  .filter((file) => /^tests\/.*\.(?:js|mjs|cjs|py|rb)$/.test(file))
+  .filter((file) => trackedTestPath.test(file))
   .sort();
 
 assert.ok(tests.length > 0, 'at least one tracked test file must be discovered');
@@ -96,6 +96,17 @@ const packageCorpus = tracked
 const executableCorpus = [workflowCorpus, shellCorpus, packageCorpus].join('\n');
 
 const testSources = new Map(tests.map((file) => [file, read(file)]));
+function isUniqueBasename(counts, basename) {
+  return counts.get(basename) === 1;
+}
+
+const basenameFixture = new Map([
+  ['unique.test.mjs', 1],
+  ['duplicate.test.mjs', 2],
+]);
+assert.equal(isUniqueBasename(basenameFixture, 'unique.test.mjs'), true, 'unique basenames may be used as registration aliases');
+assert.equal(isUniqueBasename(basenameFixture, 'duplicate.test.mjs'), false, 'duplicate basenames must not be used as registration aliases');
+
 const basenameCounts = new Map();
 for (const test of tests) {
   const basename = path.basename(test);
@@ -106,7 +117,7 @@ const unregistered = [];
 for (const test of tests) {
   const basename = path.basename(test);
   const directlyExecuted = executableCorpus.includes(test);
-  const uniqueBasename = basenameCounts.get(basename) === 1;
+  const uniqueBasename = isUniqueBasename(basenameCounts, basename);
 
   const executedByAnotherTest = [...testSources.entries()].some(([other, source]) => (
     other !== test && (source.includes(test) || (uniqueBasename && source.includes(basename)))
@@ -116,12 +127,6 @@ for (const test of tests) {
     unregistered.push(test);
   }
 }
-
-assert.equal(
-  [...new Map([['same.test.mjs', 2]]).values()][0] === 1,
-  false,
-  'duplicate basenames must not be treated as globally unique registration aliases'
-);
 
 assert.deepEqual(
   unregistered,
