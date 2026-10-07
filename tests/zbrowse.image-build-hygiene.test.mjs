@@ -4,6 +4,8 @@ import fs from 'node:fs';
 const read = (relative) => fs.readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 const browser = read('zbrowse/browser/Dockerfile');
 const gateway = read('zbrowse/gateway/Dockerfile');
+const browserIgnore = read('zbrowse/browser/.dockerignore');
+const gatewayIgnore = read('zbrowse/gateway/.dockerignore');
 
 function dockerInstructions(source) {
   return source
@@ -26,6 +28,44 @@ function assertNoBroadCopy(source, label) {
     `${label} must not use JSON-form broad build-context copies`
   );
 }
+
+function ignorePatterns(source) {
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+}
+
+assert.deepEqual(
+  ignorePatterns(browserIgnore),
+  [
+    '**',
+    '!Dockerfile',
+    '!zguard/',
+    '!zguard/**',
+    '!policies/',
+    '!policies/**',
+    '!root/',
+    '!root/**'
+  ],
+  'browser build context must stay default-deny and expose only reviewed Docker inputs'
+);
+
+assert.deepEqual(
+  ignorePatterns(gatewayIgnore),
+  [
+    '**',
+    '!Dockerfile',
+    '!package.json',
+    '!package-lock.json',
+    '!*.js',
+    '!public/',
+    '!public/**',
+    '!config/',
+    '!config/**'
+  ],
+  'gateway build context must stay default-deny and expose only reviewed Docker inputs'
+);
 
 for (const [label, source] of [['browser image', browser], ['gateway image', gateway]]) {
   const instructions = dockerInstructions(source);
