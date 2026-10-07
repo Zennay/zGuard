@@ -144,6 +144,25 @@ function assertSafeInlineAttributes(file, tagSource) {
       `${file}: ${attribute} must remain a same-origin relative submission target`
     );
   }
+
+  assert.equal(
+    attrs.has("ping"),
+    false,
+    `${file}: ping attributes are forbidden because they emit navigation-tracking requests`
+  );
+
+  if ((attrs.get("target") ?? "").trim().toLowerCase() === "_blank") {
+    const relTokens = new Set(
+      (attrs.get("rel") ?? "")
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+    );
+    assert.ok(
+      relTokens.has("noopener") && relTokens.has("noreferrer"),
+      `${file}: target=_blank must declare rel="noopener noreferrer"`
+    );
+  }
 }
 
 assert.doesNotThrow(() =>
@@ -188,6 +207,28 @@ assert.throws(
 assert.throws(
   () => assertSafeInlineAttributes("self-test", '<input formaction="mailto:collector@example.test">'),
   /same-origin relative submission target/
+);
+assert.doesNotThrow(() =>
+  assertSafeInlineAttributes(
+    "self-test",
+    '<a href="/help" target="_blank" rel="noopener noreferrer">Help</a>'
+  )
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<a href="/help" ping="/telemetry">Help</a>'),
+  /ping attributes are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<a href="/help" target="_blank">Help</a>'),
+  /target=_blank must declare/
+);
+assert.throws(
+  () =>
+    assertSafeInlineAttributes(
+      "self-test",
+      '<a href="/help" target="_blank" rel="noopener">Help</a>'
+    ),
+  /target=_blank must declare/
 );
 
 function assertDocumentUrlContext(file, source) {
