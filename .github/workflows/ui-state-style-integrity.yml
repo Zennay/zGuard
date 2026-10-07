@@ -1,0 +1,57 @@
+name: UI state-style integrity
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/gateway/public/app.js"
+      - "zbrowse/gateway/public/styles.css"
+      - "chromium/popup.js"
+      - "chromium/popup-a11y.js"
+      - "chromium/popup.css"
+      - "firefox/popup.js"
+      - "firefox/popup-a11y.js"
+      - "firefox/popup.css"
+      - "zbrowse/browser/zguard/popup.js"
+      - "zbrowse/browser/zguard/popup-a11y.js"
+      - "zbrowse/browser/zguard/popup.css"
+      - "tests/ui-state-style-integrity.test.mjs"
+      - ".github/workflows/ui-state-style-integrity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/gateway/public/app.js"
+      - "zbrowse/gateway/public/styles.css"
+      - "chromium/popup.js"
+      - "chromium/popup-a11y.js"
+      - "chromium/popup.css"
+      - "firefox/popup.js"
+      - "firefox/popup-a11y.js"
+      - "firefox/popup.css"
+      - "zbrowse/browser/zguard/popup.js"
+      - "zbrowse/browser/zguard/popup-a11y.js"
+      - "zbrowse/browser/zguard/popup.css"
+      - "tests/ui-state-style-integrity.test.mjs"
+      - ".github/workflows/ui-state-style-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-ui-state-style-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-state-style-integrity:
+    name: UI state-style integrity contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate UI state styles
+        run: node tests/ui-state-style-integrity.test.mjs
