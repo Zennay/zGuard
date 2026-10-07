@@ -1,6 +1,46 @@
 require "yaml"
 require "pathname"
 
+def duplicate_mapping_keys(node, path = [], findings = [])
+  if node.is_a?(Psych::Nodes::Mapping)
+    seen = {}
+
+    node.children.each_slice(2) do |key_node, value_node|
+      segment = key_node.is_a?(Psych::Nodes::Scalar) ? key_node.value : "<complex-key>"
+
+      if key_node.is_a?(Psych::Nodes::Scalar)
+        identity = [key_node.tag, key_node.value]
+        if seen.key?(identity)
+          findings << {
+            key: key_node.value,
+            path: (path + [key_node.value]).join("."),
+            line: key_node.start_line + 1,
+            first_line: seen[identity]
+          }
+        else
+          seen[identity] = key_node.start_line + 1
+        end
+      end
+
+      duplicate_mapping_keys(key_node, path, findings)
+      duplicate_mapping_keys(value_node, path + [segment], findings)
+    end
+  elsif node.respond_to?(:children) && node.children
+    node.children.each { |child| duplicate_mapping_keys(child, path, findings) }
+  end
+
+  findings
+end
+
+self_test = Psych.parse_stream(<<~YAML)
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      runs-on: self-hosted
+YAML
+self_findings = duplicate_mapping_keys(self_test)
+abort "Duplicate-key detector self-test failed" unless self_findings.any? { |finding| finding[:key] == "runs-on" }
+
 root = Pathname.new(__dir__).parent
 workflow_dir = root.join(".github", "workflows")
 workflows = Dir[workflow_dir.join("*.{yml,yaml}")].sort
@@ -12,9 +52,18 @@ workflows.each do |workflow|
   source = File.read(workflow, encoding: "UTF-8")
 
   begin
+    syntax_tree = Psych.parse_stream(source)
     parsed = YAML.safe_load(source, permitted_classes: [], permitted_symbols: [], aliases: true)
   rescue Psych::SyntaxError => error
     abort "#{relative}: invalid YAML at line #{error.line}, column #{error.column}: #{error.problem}"
+  end
+
+  duplicates = duplicate_mapping_keys(syntax_tree)
+  unless duplicates.empty?
+    detail = duplicates.map do |finding|
+      "#{finding[:path]} at line #{finding[:line]} (first defined at line #{finding[:first_line]})"
+    end.join(", ")
+    abort "#{relative}: duplicate YAML mapping keys: #{detail}"
   end
 
   abort "#{relative}: workflow root must be a mapping" unless parsed.is_a?(Hash)
@@ -27,4 +76,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML syntax contract passed for #{workflows.length} workflows"
+puts "Workflow YAML syntax and duplicate-key contract passed for #{workflows.length} workflows"
