@@ -9,13 +9,32 @@ function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8');
 }
 
+function addLiteralClasses(classes, source) {
+  for (const literal of source.matchAll(/["']([A-Za-z_][A-Za-z0-9_-]*)["']/g)) {
+    classes.add(literal[1]);
+  }
+}
+
 function dynamicClasses(source) {
   const classes = new Set();
 
+  for (const call of source.matchAll(
+    /\.classList\.(?:add|remove)\(\s*([^)]*)\)/g
+  )) {
+    addLiteralClasses(classes, call[1]);
+  }
+
   for (const match of source.matchAll(
-    /\.classList\.(?:add|remove|toggle|contains)\(\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']/g
+    /\.classList\.(?:toggle|contains)\(\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']/g
   )) {
     classes.add(match[1]);
+  }
+
+  for (const match of source.matchAll(
+    /\.classList\.replace\(\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']\s*,\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']/g
+  )) {
+    classes.add(match[1]);
+    classes.add(match[2]);
   }
 
   for (const assignment of source.matchAll(/\.className\s*=\s*([^;]+);/g)) {
@@ -30,8 +49,9 @@ function dynamicClasses(source) {
 }
 
 function cssClasses(source) {
+  const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, '');
   return new Set(
-    [...source.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map((match) => match[1])
+    [...withoutComments.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map((match) => match[1])
   );
 }
 
@@ -75,10 +95,17 @@ for (const target of targets) {
 
 assert.deepEqual(
   dynamicClasses(
-    'node.classList.toggle("active", enabled); node.classList.contains("busy"); node.className = "status ready";'
+    [
+      'node.classList.add("ready", "visible");',
+      'node.classList.remove("stale", "hidden");',
+      'node.classList.toggle("active", enabled);',
+      'node.classList.contains("busy");',
+      'node.classList.replace("old", "new");',
+      'node.className = "status ready";'
+    ].join(' ')
   ),
-  ['active', 'busy', 'ready', 'status'],
-  'state-class parser self-test must discover classList and className literals'
+  ['active', 'busy', 'hidden', 'new', 'old', 'ready', 'stale', 'status', 'visible'],
+  'state-class parser self-test must discover multi-class, replace, toggle, contains and className literals'
 );
 
 assert.deepEqual(
@@ -92,11 +119,20 @@ assert.deepEqual(
 
 assert.deepEqual(
   missingStateStyles(
-    ['node.classList.toggle("active"); node.className = "status busy";'],
-    '.status { display: block; } .status.busy { opacity: .5; } button.active { font-weight: bold; }'
+    ['node.classList.add("busy");'],
+    '/* .busy { opacity: .5; } */ .ready { opacity: 1; }'
+  ),
+  ['busy'],
+  'state-style self-test must not treat selectors inside CSS comments as active styles'
+);
+
+assert.deepEqual(
+  missingStateStyles(
+    ['node.classList.add("active", "ready"); node.classList.replace("ready", "busy");'],
+    '.active { font-weight: bold; } .ready { opacity: 1; } .busy { opacity: .5; }'
   ),
   [],
-  'state-style self-test must accept styled dynamic classes'
+  'state-style self-test must accept styled multi-class and replacement states'
 );
 
 const workflow = read('.github/workflows/ui-state-style-integrity.yml');
@@ -112,6 +148,17 @@ assert.match(
   'state-style checkout must be pinned to the reviewed v6.0.3 commit'
 );
 assert.match(workflow, /persist-credentials:\s*false/, 'checkout credentials must not persist');
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `state-style workflow must retain exact-head checkout proof: ${expected}`
+  );
+}
 assert.match(
   workflow,
   /node tests\/ui-state-style-integrity\.test\.mjs/,
