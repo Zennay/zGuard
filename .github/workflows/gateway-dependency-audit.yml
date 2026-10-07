@@ -42,7 +42,7 @@ jobs:
 
       - name: Install locked production dependencies
         working-directory: zbrowse/gateway
-        run: npm ci --omit=dev --ignore-scripts
+        run: npm ci --omit=dev --ignore-scripts --no-audit
 
       - name: Validate installed dependency graph
         working-directory: zbrowse/gateway
