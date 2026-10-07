@@ -36,28 +36,55 @@ function emittedEvents(source) {
     .sort();
 }
 
+const chromiumBackgroundHosts = extractArray(chromiumBackground, "HOSTILE_HOSTS");
+const firefoxBackgroundHosts = extractArray(firefoxBackground, "HOSTILE_HOSTS");
+const chromiumContentHosts = extractSetArray(chromiumContent, "HOSTILE_HOSTS");
+const firefoxContentHosts = extractSetArray(firefoxContent, "HOSTILE_HOSTS");
+
+assert.ok(chromiumBackgroundHosts.length > 0, "hostile-host policy must not become empty");
 assert.deepEqual(
-  extractArray(chromiumBackground, "HOSTILE_HOSTS"),
-  extractArray(firefoxBackground, "HOSTILE_HOSTS"),
+  chromiumBackgroundHosts,
+  firefoxBackgroundHosts,
   "Chromium and Firefox background hostile-host policy must stay identical"
 );
-
 assert.deepEqual(
-  extractSetArray(chromiumContent, "HOSTILE_HOSTS"),
-  extractSetArray(firefoxContent, "HOSTILE_HOSTS"),
+  chromiumContentHosts,
+  firefoxContentHosts,
   "Chromium and Firefox content-script hostile-host policy must stay identical"
 );
-
 assert.deepEqual(
-  messageTypes(chromiumBackground),
-  messageTypes(firefoxBackground),
-  "Chromium and Firefox runtime message contracts must stay aligned"
+  chromiumContentHosts,
+  chromiumBackgroundHosts,
+  "Chromium background and content hostile-host policy must stay aligned"
+);
+assert.deepEqual(
+  firefoxContentHosts,
+  firefoxBackgroundHosts,
+  "Firefox background and content hostile-host policy must stay aligned"
 );
 
+const expectedMessageTypes = ["blocked-event", "get-settings", "set-settings"].sort();
+assert.deepEqual(
+  messageTypes(chromiumBackground),
+  expectedMessageTypes,
+  "Chromium runtime message contract must remain complete"
+);
+assert.deepEqual(
+  messageTypes(firefoxBackground),
+  expectedMessageTypes,
+  "Firefox runtime message contract must remain complete"
+);
+
+const expectedEvents = ["external-link", "window-open"].sort();
 assert.deepEqual(
   emittedEvents(chromiumContent),
+  expectedEvents,
+  "Chromium blocked-event telemetry contract must remain complete"
+);
+assert.deepEqual(
   emittedEvents(firefoxContent),
-  "Chromium and Firefox blocked-event telemetry names must stay aligned"
+  expectedEvents,
+  "Firefox blocked-event telemetry contract must remain complete"
 );
 
 for (const [name, source] of [
