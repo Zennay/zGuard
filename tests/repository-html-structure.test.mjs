@@ -226,7 +226,7 @@ const workflow = fs.readFileSync(
 );
 assert.doesNotMatch(
   workflow,
-  /^\\s+paths:\\s*$/m,
+  /^\s+paths:\s*$/m,
   "HTML structure workflow must run on every PR/push so extension casing cannot bypass validation"
 );
 
