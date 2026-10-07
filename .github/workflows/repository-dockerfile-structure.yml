@@ -1,0 +1,41 @@
+name: Repository Dockerfile structure validation
+
+on:
+  pull_request:
+    paths:
+      - "**/Dockerfile"
+      - "**/Dockerfile.*"
+      - "tests/repository-dockerfile-structure.test.mjs"
+      - ".github/workflows/repository-dockerfile-structure.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/Dockerfile"
+      - "**/Dockerfile.*"
+      - "tests/repository-dockerfile-structure.test.mjs"
+      - ".github/workflows/repository-dockerfile-structure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-dockerfile-structure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate tracked Dockerfile structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Validate Dockerfile structure
+        run: node tests/repository-dockerfile-structure.test.mjs
