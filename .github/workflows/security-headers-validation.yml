@@ -6,10 +6,21 @@ on:
       - 'zbrowse/gateway/server.js'
       - 'tests/zbrowse.security-headers-contract.test.mjs'
       - '.github/workflows/security-headers-validation.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'zbrowse/gateway/server.js'
+      - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - '.github/workflows/security-headers-validation.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: zguard-security-headers-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   security-headers:

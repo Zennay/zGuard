@@ -14,10 +14,10 @@ const workflows = fs.readdirSync(workflowDir)
     relative: path.posix.join('.github', 'workflows', name),
     source: fs.readFileSync(path.join(workflowDir, name), 'utf8')
   }))
-  .filter(({ source }) => /runs-on:\s*ubuntu-latest/.test(source))
+  .filter(({ source }) => /uses:\s*actions\/checkout@/.test(source))
   .sort((a, b) => a.relative.localeCompare(b.relative));
 
-assert.ok(workflows.length > 0, 'at least one portable hosted workflow must be discovered');
+assert.ok(workflows.length > 0, 'at least one checkout-based workflow must be discovered');
 
 for (const { relative: workflow, source } of workflows) {
   const matches = [...source.matchAll(/uses:\s*actions\/checkout@([^\s#]+)/g)];
@@ -58,10 +58,19 @@ for (const { relative: workflow, source } of workflows) {
     /concurrency:\s*\n[\s\S]*?cancel-in-progress:\s*true/,
     `${workflow} must cancel superseded duplicate runs`
   );
+
+  const hasExplicitSelfPath = source.includes(workflow);
+  const hasUnfilteredPullRequest = /^  pull_request:\s*$/m.test(source);
   assert.ok(
-    source.includes(workflow),
+    hasExplicitSelfPath || hasUnfilteredPullRequest,
     `${workflow} must trigger when its own workflow definition changes`
+  );
+
+  assert.doesNotMatch(
+    source,
+    /pull_request_target\s*:/,
+    `${workflow} must not execute checkout-based validation via pull_request_target`
   );
 }
 
-console.log(`Dedicated workflow integrity contract passed for ${workflows.length} hosted workflows`);
+console.log(`Dedicated workflow integrity contract passed for ${workflows.length} checkout workflows`);
