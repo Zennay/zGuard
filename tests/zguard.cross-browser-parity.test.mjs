@@ -15,13 +15,13 @@ const firefoxContent = read("firefox/content.js");
 function extractArray(source, name) {
   const match = source.match(new RegExp("const\\s+" + name + "\\s*=\\s*(\\[[\\s\\S]*?\\])\\s*;"));
   assert.ok(match, `missing ${name}`);
-  return vm.runInNewContext(match[1]);
+  return Array.from(vm.runInNewContext(match[1]));
 }
 
 function extractSetArray(source, name) {
   const match = source.match(new RegExp("const\\s+" + name + "\\s*=\\s*new Set\\((\\[[\\s\\S]*?\\])\\)\\s*;"));
   assert.ok(match, `missing Set ${name}`);
-  return vm.runInNewContext(match[1]);
+  return Array.from(vm.runInNewContext(match[1]));
 }
 
 function messageTypes(source) {
