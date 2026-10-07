@@ -12,7 +12,11 @@ const workflows = [
   '.github/workflows/popup-accessibility-validation.yml',
   '.github/workflows/portal-accessibility-validation.yml',
   '.github/workflows/repository-hygiene-validation.yml',
-  '.github/workflows/browser-image-integrity-validation.yml'
+  '.github/workflows/browser-image-integrity-validation.yml',
+  '.github/workflows/gateway-containment-validation.yml',
+  '.github/workflows/gateway-dependency-audit.yml',
+  '.github/workflows/zbrowse-sites-config-safety.yml',
+  '.github/workflows/zbrowse-env-compose-parity.yml'
 ];
 
 for (const workflow of workflows) {
