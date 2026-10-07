@@ -47,6 +47,9 @@ workflows = Dir[workflow_dir.join("*.{yml,yaml}")].sort
 
 abort "No GitHub Actions workflows found" if workflows.empty?
 
+workflow_names = {}
+job_display_names = {}
+
 workflows.each do |workflow|
   relative = Pathname.new(workflow).relative_path_from(root).to_s
   source = File.read(workflow, encoding: "UTF-8")
@@ -68,12 +71,32 @@ workflows.each do |workflow|
 
   abort "#{relative}: workflow root must be a mapping" unless parsed.is_a?(Hash)
 
+  workflow_name = parsed["name"]
+  unless workflow_name.is_a?(String) && !workflow_name.strip.empty?
+    abort "#{relative}: workflow must define a non-empty top-level name"
+  end
+  if workflow_names.key?(workflow_name)
+    abort "#{relative}: workflow name #{workflow_name.inspect} duplicates #{workflow_names[workflow_name]}"
+  end
+  workflow_names[workflow_name] = relative
+
   jobs = parsed["jobs"]
   abort "#{relative}: workflow must define a non-empty jobs mapping" unless jobs.is_a?(Hash) && !jobs.empty?
 
   jobs.each do |job_name, job|
     abort "#{relative}: job #{job_name.inspect} must be a mapping" unless job.is_a?(Hash)
+
+    display_name = job["name"]
+    unless display_name.is_a?(String) && !display_name.strip.empty?
+      abort "#{relative}: job #{job_name.inspect} must define a non-empty display name"
+    end
+
+    identity = "#{relative}:#{job_name}"
+    if job_display_names.key?(display_name)
+      abort "#{identity}: job display name #{display_name.inspect} duplicates #{job_display_names[display_name]}"
+    end
+    job_display_names[display_name] = identity
   end
 end
 
-puts "Workflow YAML syntax and duplicate-key contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, and check-identity contract passed for #{workflows.length} workflows"
