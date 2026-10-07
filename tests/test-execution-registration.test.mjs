@@ -36,6 +36,23 @@ assert.doesNotMatch(
   'test execution registration workflow must remain always-on for PRs and pushes'
 );
 
+assert.ok(
+  registrationWorkflow.includes('repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}'),
+  'test execution registration workflow must checkout the PR-head repository'
+);
+assert.ok(
+  registrationWorkflow.includes('ref: ${{ github.event.pull_request.head.sha || github.sha }}'),
+  'test execution registration workflow must checkout the PR-head SHA'
+);
+assert.ok(
+  registrationWorkflow.includes('EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}'),
+  'test execution registration workflow must bind checkout verification to the selected SHA'
+);
+assert.ok(
+  registrationWorkflow.includes('run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'),
+  'test execution registration workflow must prove the checked-out git HEAD'
+);
+
 function workflowRunBlocks(source) {
   const lines = source.split(/\r?\n/);
   const blocks = [];
