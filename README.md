@@ -49,6 +49,22 @@ node tests/smoke.test.js
 
 The smoke gate also executes behavior coverage for the balanced/strict decision semantics.
 
+### CI merge gate
+
+`zGuard quality validation` is the portable merge gate for pull requests. It runs on
+`ubuntu-latest` and keeps the extension smoke suite, zBrowse runtime contracts,
+locked production install, and high-severity production dependency audit in one
+terminal check.
+
+Runner evidence only counts for the exact pull-request head commit: the workflow
+run's `head_sha` must equal the PR `head_sha`. A green run for an older commit is
+not merge evidence after the branch moves.
+
+Portable validation must not use an unlabelled generic `self-hosted` runner. When
+real VPS-specific proof is required, use an explicit exact-ref route labelled for
+the permanent zCloud VPS runner (for example `[self-hosted, zcloud, vps]`) and keep
+that verification read-only: no deploy, service restart, or production mutation.
+
 ## Quality status
 
 The Node/VM smoke suite proves decision logic and package consistency, but it is not

@@ -1,0 +1,38 @@
+name: Workflow runner availability
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tests/workflow-runner-availability.test.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - "tests/workflow-runner-availability.test.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-runner-availability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Reject generic self-hosted runner selection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Verify Node runtime
+        run: node --version
+
+      - name: Validate workflow runner availability
+        run: node tests/workflow-runner-availability.test.mjs
