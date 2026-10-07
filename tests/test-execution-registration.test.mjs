@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const trackedTestPath = /^tests\\/.*\\.(?:js|mjs|cjs|py|rb)$/i;
-const trackedShellPath = /\\.sh$/i;
+const trackedTestPath = /^tests\/.*\.(?:js|mjs|cjs|py|rb)$/i;
+const trackedShellPath = /\.sh$/i;
 
 assert.equal(trackedTestPath.test('tests/example.MJS'), true, 'test discovery must casefold extensions');
 assert.equal(trackedTestPath.test('tests/example.PY'), true, 'Python test discovery must casefold extensions');
