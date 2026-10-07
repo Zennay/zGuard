@@ -186,6 +186,14 @@ function validateHtmlAccessibility(file, source) {
       );
     }
 
+    if (name === "img") {
+      assert.equal(
+        attrs.has("alt"),
+        true,
+        `${file}: img must declare alt text; use alt="" for decorative images`
+      );
+    }
+
     if (name === "iframe") {
       assert.ok(
         attrs.get("title")?.trim(),
@@ -243,6 +251,8 @@ const validFixture = `
 <label><span>Enabled</span><input id="enabled" type="checkbox"></label>
 <button type="button">Save</button>
 <a href="/">Home</a>
+<img src="/decorative.svg" alt="">
+<img src="/logo.svg" alt="Product logo">
 <iframe title="Preview"></iframe>
 </body></html>`;
 assert.doesNotThrow(() => validateHtmlAccessibility("self-test-valid.html", validFixture));
@@ -273,6 +283,13 @@ assert.throws(
 assert.throws(
   () => validateHtmlAccessibility("self-test-button-type.html", "<button>Save</button>"),
   /button must declare an explicit valid type/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-image.html", '<img src="/logo.svg">'),
+  /img must declare alt text/
+);
+assert.doesNotThrow(() =>
+  validateHtmlAccessibility("self-test-decorative-image.html", '<img src="/line.svg" alt="">')
 );
 assert.throws(
   () => validateHtmlAccessibility("self-test-iframe.html", "<iframe></iframe>"),
