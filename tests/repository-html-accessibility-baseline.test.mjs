@@ -53,6 +53,52 @@ function hasNativeButtonName(attrs) {
   return false;
 }
 
+function validateMainLandmarks(file, source) {
+  const mains = [...source.matchAll(/<main\b[^>]*>/gi)].map((match) => ({
+    source: match[0],
+    attrs: attributes(match[0])
+  }));
+
+  assert.ok(mains.length > 0, `${file}: document must include a main landmark`);
+
+  const initiallyVisible = mains.filter(({ attrs }) => !attrs.has("hidden"));
+  assert.ok(
+    initiallyVisible.length <= 1,
+    `${file}: document must not expose multiple main landmarks at initial render`
+  );
+
+  for (const main of mains) {
+    assert.notEqual(
+      main.attrs.get("aria-hidden")?.toLowerCase(),
+      "true",
+      `${file}: main landmark must not use aria-hidden=true: ${main.source}`
+    );
+  }
+}
+
+assert.doesNotThrow(() =>
+  validateMainLandmarks(
+    "self-test-main.html",
+    '<main id="home"></main><main id="session" hidden aria-labelledby="sessionTitle"></main>'
+  )
+);
+assert.throws(
+  () => validateMainLandmarks("self-test-missing-main.html", "<div></div>"),
+  /must include a main landmark/
+);
+assert.throws(
+  () =>
+    validateMainLandmarks(
+      "self-test-multiple-visible-main.html",
+      '<main id="home"></main><main id="session"></main>'
+    ),
+  /must not expose multiple main landmarks/
+);
+assert.throws(
+  () => validateMainLandmarks("self-test-hidden-main.html", '<main aria-hidden="true"></main>'),
+  /main landmark must not use aria-hidden=true/
+);
+
 function validateHtmlAccessibility(file, source) {
   const labelForIds = new Set();
   const wrappedControlIds = new Set();
@@ -175,6 +221,7 @@ assert.throws(
 
 for (const file of htmlFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
+  validateMainLandmarks(file, source);
   validateHtmlAccessibility(file, source);
 }
 
