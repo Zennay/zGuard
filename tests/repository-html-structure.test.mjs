@@ -10,8 +10,12 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
   encoding: "utf8"
 }).split("\0").filter(Boolean);
 
-const htmlFiles = tracked.filter((file) => file.endsWith(".html")).sort();
+const isHtmlPath = (file) => path.extname(file).toLowerCase() === ".html";
+const htmlFiles = tracked.filter(isHtmlPath).sort();
 assert.ok(htmlFiles.length > 0, "repository must contain tracked HTML files");
+assert.equal(isHtmlPath("index.HTML"), true, "HTML discovery must be case-insensitive");
+assert.equal(isHtmlPath("index.HtMl"), true, "HTML discovery must accept mixed-case extensions");
+assert.equal(isHtmlPath("index.html.txt"), false, "HTML discovery must reject non-HTML suffixes");
 
 const voidElements = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -215,5 +219,15 @@ for (const file of htmlFiles) {
   validateHtmlStructure(file, source);
   assertDocumentSkeleton(file, source);
 }
+
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-html-structure.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\\s+paths:\\s*$/m,
+  "HTML structure workflow must run on every PR/push so extension casing cannot bypass validation"
+);
 
 console.log(`HTML tag structure integrity passed for ${htmlFiles.length} tracked files`);
