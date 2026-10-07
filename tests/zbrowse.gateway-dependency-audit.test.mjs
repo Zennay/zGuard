@@ -40,6 +40,17 @@ assert.match(
   /uses:\s*actions\/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10/,
   'dependency audit checkout must be pinned to the reviewed v6.0.3 commit'
 );
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `dependency audit must retain exact-head checkout proof: ${expected}`
+  );
+}
 assert.match(workflow, /persist-credentials:\s*false/, 'checkout credentials must not persist');
 assert.match(
   workflow,
