@@ -42,7 +42,9 @@ jobs:
           persist-credentials: false
 
       - name: Validate portal accessibility and session contracts
+        shell: bash
         run: |
+          set -euo pipefail
           node tests/zbrowse.portal-accessibility.test.mjs
           node tests/zbrowse.frontend-session.test.js
           node tests/zbrowse.portal-workflow-coverage.test.mjs
