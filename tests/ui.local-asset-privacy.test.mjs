@@ -130,13 +130,13 @@ function assertNoExternalHtmlAssets(relative, content) {
       const normalized = normalizeHtmlUrl(value);
       assert.doesNotMatch(
         normalized,
-        nonLocalHtmlUrl,
-        `${relative}: UI must not load third-party script/style/media assets`
+        embeddedUrl,
+        `${relative}: UI resources must come from tracked/local URLs, not data: or blob: schemes`
       );
       assert.doesNotMatch(
         normalized,
-        embeddedUrl,
-        `${relative}: UI resources must come from tracked/local URLs, not data: or blob: schemes`
+        nonLocalHtmlUrl,
+        `${relative}: UI must not load third-party script/style/media assets`
       );
     }
 
@@ -223,7 +223,7 @@ assert.throws(
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<object data="blob:https://example.test/id"></object>'),
-  /must not load third-party/
+  /must come from tracked\/local URLs/
 );
 assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<img src="file:///tmp/private.png">'),
