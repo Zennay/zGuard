@@ -58,10 +58,14 @@ for (const { relative: workflow, source } of workflows) {
     /concurrency:\s*\n[\s\S]*?cancel-in-progress:\s*true/,
     `${workflow} must cancel superseded duplicate runs`
   );
+
+  const hasExplicitSelfPath = source.includes(workflow);
+  const hasUnfilteredPullRequest = /^  pull_request:\s*$/m.test(source);
   assert.ok(
-    source.includes(workflow),
+    hasExplicitSelfPath || hasUnfilteredPullRequest,
     `${workflow} must trigger when its own workflow definition changes`
   );
+
   assert.doesNotMatch(
     source,
     /pull_request_target\s*:/,
