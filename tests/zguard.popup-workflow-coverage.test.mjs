@@ -6,6 +6,46 @@ const workflow = fs.readFileSync(
   'utf8'
 );
 
+function eventPaths(source, eventName) {
+  const lines = source.split(/\r?\n/);
+  const eventStart = lines.findIndex((line) => line === `  ${eventName}:`);
+  assert.notEqual(eventStart, -1, `workflow must define ${eventName}`);
+
+  let pathsStart = -1;
+  for (let index = eventStart + 1; index < lines.length; index += 1) {
+    if (/^  \S/.test(lines[index])) break;
+    if (lines[index] === '    paths:') {
+      pathsStart = index;
+      break;
+    }
+  }
+  assert.notEqual(pathsStart, -1, `${eventName} must define a paths filter`);
+
+  const paths = [];
+  for (let index = pathsStart + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^    \S/.test(line) || /^  \S/.test(line)) break;
+    const match = line.match(/^      - ["']([^"']+)["']\s*$/);
+    if (match) paths.push(match[1]);
+  }
+  return paths;
+}
+
+const eventPathFixture = [
+  'on:',
+  '  pull_request:',
+  '    paths:',
+  '      - "pull-only"',
+  '  push:',
+  '    paths:',
+  '      - "push-only"',
+].join('\n');
+assert.deepEqual(eventPaths(eventPathFixture, 'pull_request'), ['pull-only']);
+assert.deepEqual(eventPaths(eventPathFixture, 'push'), ['push-only']);
+
+const pullRequestPaths = new Set(eventPaths(workflow, 'pull_request'));
+const pushPaths = new Set(eventPaths(workflow, 'push'));
+
 const requiredPaths = [
   'chromium/popup.html',
   'chromium/popup.css',
@@ -27,8 +67,12 @@ const requiredPaths = [
 
 for (const path of requiredPaths) {
   assert.ok(
-    workflow.includes(`- "${path}"`),
-    `popup accessibility workflow must trigger on ${path}`
+    pullRequestPaths.has(path),
+    `popup accessibility pull_request workflow must trigger on ${path}`
+  );
+  assert.ok(
+    pushPaths.has(path),
+    `popup accessibility push workflow must trigger on ${path}`
   );
 }
 
