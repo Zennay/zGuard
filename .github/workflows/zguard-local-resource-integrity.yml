@@ -1,0 +1,38 @@
+name: zGuard local resource integrity
+
+on:
+  pull_request:
+    paths:
+      - "chromium/**"
+      - "firefox/**"
+      - "tests/zguard.local-resource-integrity.test.mjs"
+      - ".github/workflows/zguard-local-resource-integrity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "chromium/**"
+      - "firefox/**"
+      - "tests/zguard.local-resource-integrity.test.mjs"
+      - ".github/workflows/zguard-local-resource-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-local-resource-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: zGuard local resource integrity contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Validate extension resources
+        run: node tests/zguard.local-resource-integrity.test.mjs
