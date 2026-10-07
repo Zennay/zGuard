@@ -5,6 +5,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, '.github', 'workflows');
+const secretReference = /\$\{\{[^}]*\bsecrets\s*(?:\.|\[)/i;
+
+assert.match('${{ secrets.API_KEY }}', secretReference);
+assert.match("${{ secrets['API_KEY'] }}", secretReference);
+assert.doesNotMatch('${{ github.ref }}', secretReference);
 
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
@@ -69,6 +74,11 @@ for (const name of workflows) {
     /^\s*secrets:\s*inherit\s*(?:#.*)?$/m,
     `${relative} must not inherit all caller secrets`
   );
+  assert.doesNotMatch(
+    source,
+    secretReference,
+    `${relative} validation workflows must not read repository or environment secrets`
+  );
 }
 
-console.log(`Workflow token permission boundary passed for ${workflows.length} workflows`);
+console.log(`Workflow token/secret boundary passed for ${workflows.length} workflows`);
