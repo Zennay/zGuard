@@ -6,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const trackedTestPath = /^tests\\/.*\\.(?:js|mjs|cjs|py|rb)$/i;
+const trackedShellPath = /\\.sh$/i;
+
+assert.equal(trackedTestPath.test('tests/example.MJS'), true, 'test discovery must casefold extensions');
+assert.equal(trackedTestPath.test('tests/example.PY'), true, 'Python test discovery must casefold extensions');
+assert.equal(trackedTestPath.test('docs/example.MJS'), false, 'only the tests directory is executable-test scope');
+assert.equal(trackedShellPath.test('scripts/validate.SH'), true, 'shell executor discovery must casefold extensions');
 
 const tracked = execFileSync('git', ['ls-files', '-z'], {
   cwd: root,
@@ -13,7 +20,7 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
 }).split('\0').filter(Boolean);
 
 const tests = tracked
-  .filter((file) => /^tests\/.*\.(?:js|mjs|cjs|py|rb)$/.test(file))
+  .filter((file) => trackedTestPath.test(file))
   .sort();
 
 assert.ok(tests.length > 0, 'at least one tracked test file must be discovered');
@@ -22,18 +29,26 @@ function read(relative) {
   return fs.readFileSync(path.join(root, relative), 'utf8');
 }
 
+const registrationWorkflow = read('.github/workflows/test-execution-registration.yml');
+assert.doesNotMatch(
+  registrationWorkflow,
+  /^\s+paths:\s*(?:#.*)?$/m,
+  'test execution registration workflow must remain always-on for PRs and pushes'
+);
+
 function workflowRunBlocks(source) {
   const lines = source.split(/\r?\n/);
   const blocks = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^(\s*)run:\s*(.*)$/);
+    const match = lines[index].match(/^(\s*)(?:-\s*)?run:\s*(.*)$/);
     if (!match) continue;
 
     const indent = match[1].length;
-    const inline = match[2].trim();
+    const inline = match[2].replace(/\s+#.*$/, '').trim();
+    const blockScalar = /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(inline);
 
-    if (inline && inline !== '|' && inline !== '>') {
+    if (inline && !blockScalar) {
       blocks.push(inline);
       continue;
     }
@@ -56,13 +71,27 @@ function workflowRunBlocks(source) {
   return blocks.join('\n');
 }
 
+const runBlockFixture = [
+  'steps:',
+  '  - run: node tests/inline.MJS',
+  '  - run: |-',
+  '      python tests/block.PY',
+  '  - name: Named step',
+  '    run: >+ # folded command',
+  '      ruby tests/folded.RB',
+].join('\n');
+const extractedRunBlocks = workflowRunBlocks(runBlockFixture);
+assert.match(extractedRunBlocks, /node tests\/inline\.MJS/, 'inline list-item run steps must be discovered');
+assert.match(extractedRunBlocks, /python tests\/block\.PY/, 'literal block run steps with chomping indicators must be discovered');
+assert.match(extractedRunBlocks, /ruby tests\/folded\.RB/, 'folded block run steps with comments must be discovered');
+
 const workflowCorpus = tracked
   .filter((file) => /^\.github\/workflows\/.*\.ya?ml$/.test(file))
   .map((file) => workflowRunBlocks(read(file)))
   .join('\n');
 
 const shellCorpus = tracked
-  .filter((file) => file.endsWith('.sh'))
+  .filter((file) => trackedShellPath.test(file))
   .map(read)
   .join('\n');
 
@@ -74,14 +103,31 @@ const packageCorpus = tracked
 const executableCorpus = [workflowCorpus, shellCorpus, packageCorpus].join('\n');
 
 const testSources = new Map(tests.map((file) => [file, read(file)]));
+function isUniqueBasename(counts, basename) {
+  return counts.get(basename) === 1;
+}
+
+const basenameFixture = new Map([
+  ['unique.test.mjs', 1],
+  ['duplicate.test.mjs', 2],
+]);
+assert.equal(isUniqueBasename(basenameFixture, 'unique.test.mjs'), true, 'unique basenames may be used as registration aliases');
+assert.equal(isUniqueBasename(basenameFixture, 'duplicate.test.mjs'), false, 'duplicate basenames must not be used as registration aliases');
+
+const basenameCounts = new Map();
+for (const test of tests) {
+  const basename = path.basename(test);
+  basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
+}
 const unregistered = [];
 
 for (const test of tests) {
   const basename = path.basename(test);
   const directlyExecuted = executableCorpus.includes(test);
+  const uniqueBasename = isUniqueBasename(basenameCounts, basename);
 
   const executedByAnotherTest = [...testSources.entries()].some(([other, source]) => (
-    other !== test && (source.includes(test) || source.includes(basename))
+    other !== test && (source.includes(test) || (uniqueBasename && source.includes(basename)))
   ));
 
   if (!directlyExecuted && !executedByAnotherTest) {
