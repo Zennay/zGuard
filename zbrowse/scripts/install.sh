@@ -20,6 +20,10 @@ if [[ ! -S /var/run/docker.sock ]]; then
   echo "Docker socket /var/run/docker.sock is unavailable." >&2
   exit 1
 fi
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker daemon is unavailable to the installer user." >&2
+  exit 1
+fi
 
 # Fail closed on source/runtime contract errors before touching local install state.
 bash scripts/validate.sh
