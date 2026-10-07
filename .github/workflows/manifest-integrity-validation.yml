@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: zguard-manifest-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   manifest-integrity:
     name: Manifest and popup asset integrity
