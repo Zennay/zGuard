@@ -9,6 +9,7 @@ assert.ok(tracked.length > 0, "at least one tracked path must be discovered");
 
 const windowsReserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 const windowsForbidden = /[<>:"\\|?*]/;
+const unsafeInvisibleCharacter = /[\u0001-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
 const portableKeys = new Map();
 
 for (const file of tracked) {
@@ -27,6 +28,11 @@ for (const file of tracked) {
       segment,
       windowsForbidden,
       `tracked path contains a Windows-forbidden character: ${file}`
+    );
+    assert.doesNotMatch(
+      segment,
+      unsafeInvisibleCharacter,
+      `tracked path contains an unsafe control/format character: ${JSON.stringify(file)}`
     );
     assert.doesNotMatch(
       segment,
