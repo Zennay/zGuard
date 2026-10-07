@@ -54,9 +54,10 @@ function hasNativeButtonName(attrs) {
 }
 
 function validateMainLandmarks(file, source) {
-  const mains = [...source.matchAll(/<main\b[^>]*>/gi)].map((match) => ({
-    source: match[0],
-    attrs: attributes(match[0])
+  const mains = [...source.matchAll(/<main\\b([^>]*)>([\\s\\S]*?)<\\/main>/gi)].map((match) => ({
+    source: `<main${match[1]}>`,
+    attrs: attributes(`<main${match[1]}>`),
+    body: match[2]
   }));
 
   assert.ok(mains.length > 0, `${file}: document must include a main landmark`);
@@ -73,13 +74,24 @@ function validateMainLandmarks(file, source) {
       "true",
       `${file}: main landmark must not use aria-hidden=true: ${main.source}`
     );
+
+    const primaryHeadings = [...main.body.matchAll(/<h1\\b[^>]*>([\\s\\S]*?)<\\/h1>/gi)];
+    assert.equal(
+      primaryHeadings.length,
+      1,
+      `${file}: each main landmark must contain exactly one h1`
+    );
+    assert.ok(
+      textContent(primaryHeadings[0][1]),
+      `${file}: main landmark h1 must not be empty`
+    );
   }
 }
 
 assert.doesNotThrow(() =>
   validateMainLandmarks(
     "self-test-main.html",
-    '<main id="home"></main><main id="session" hidden aria-labelledby="sessionTitle"></main>'
+    '<main id="home"><h1>Home</h1></main><main id="session" hidden aria-labelledby="sessionTitle"><h1 id="sessionTitle">Session</h1></main>'
   )
 );
 assert.throws(
@@ -90,13 +102,21 @@ assert.throws(
   () =>
     validateMainLandmarks(
       "self-test-multiple-visible-main.html",
-      '<main id="home"></main><main id="session"></main>'
+      '<main id="home"><h1>Home</h1></main><main id="session"><h1>Session</h1></main>'
     ),
   /must not expose multiple main landmarks/
 );
 assert.throws(
-  () => validateMainLandmarks("self-test-hidden-main.html", '<main aria-hidden="true"></main>'),
+  () => validateMainLandmarks("self-test-hidden-main.html", '<main aria-hidden="true"><h1>Hidden</h1></main>'),
   /main landmark must not use aria-hidden=true/
+);
+assert.throws(
+  () => validateMainLandmarks("self-test-main-heading.html", '<main><p>No primary heading</p></main>'),
+  /must contain exactly one h1/
+);
+assert.throws(
+  () => validateMainLandmarks("self-test-empty-main-heading.html", '<main><h1></h1></main>'),
+  /h1 must not be empty/
 );
 
 function validateHtmlAccessibility(file, source) {
