@@ -1,24 +1,43 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const tracked = execFileSync("git", ["ls-files", "-z"], {
+  cwd: root,
+  encoding: "utf8"
+}).split("\0").filter(Boolean);
 
-const files = [
-  "chromium/popup.html",
-  "chromium/popup.css",
-  "firefox/popup.html",
-  "firefox/popup.css",
-  "zbrowse/gateway/public/index.html",
-  "zbrowse/gateway/public/styles.css"
+const uiRoots = [
+  "chromium/",
+  "firefox/",
+  "zbrowse/gateway/public/",
+  "zbrowse/browser/zguard/"
 ];
 
+function isUiAsset(relative) {
+  const normalized = relative.replaceAll("\\", "/");
+  const extension = path.extname(normalized).toLowerCase();
+  return uiRoots.some((prefix) => normalized.startsWith(prefix)) &&
+    (extension === ".html" || extension === ".css");
+}
+
+const files = tracked.filter(isUiAsset).sort();
+assert.ok(files.length > 0, "repository must contain tracked UI HTML/CSS assets");
+assert.equal(isUiAsset("chromium/popup.html"), true, "canonical Chromium UI assets must be discovered");
+assert.equal(isUiAsset("firefox/POPUP.CSS"), true, "UI asset discovery must casefold extensions");
+assert.equal(isUiAsset("zbrowse/gateway/public/panel.HTML"), true, "future zBrowse public UI assets must be discovered");
+assert.equal(isUiAsset("zbrowse/browser/zguard/popup.css"), true, "bundled zGuard UI assets must be covered");
+assert.equal(isUiAsset("docs/example.html"), false, "non-UI documentation assets must remain outside this contract");
+assert.equal(isUiAsset("chromium/background.js"), false, "non-HTML/CSS UI package files must remain outside this contract");
+
 const remoteUrl = /(?:https?:)?\/\//i;
-const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
+const nonLocalHtmlUrl = /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i;
 const embeddedUrl = /^(?:data|blob):/i;
 const cssImport = /@import\s+/i;
-const remoteCssUrl = /url\(\s*['"]?(?:https?:|\/\/)/i;
+const nonLocalCssUrl = /url\(\s*['"]?(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 function attributes(tagSource) {
   const opening = tagSource.match(/^<[a-z][\w:-]*\b/i);
   assert.ok(opening, `opening tag could not be parsed: ${tagSource}`);
@@ -71,18 +90,33 @@ assert.match(
 );
 assert.match(
   decodeCssEscapes("body{background:url(https:\\00002f\\00002fcdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "escaped remote CSS url() must normalize before privacy checks"
 );
 assert.match(
   decodeCssEscapes("body{background:url(https:cdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "special-scheme CSS url() must be treated as non-local even without //"
 );
 assert.match(
   decodeCssEscapes("body{background:url(https\\00003acdn.example/x.png)}"),
-  remoteCssUrl,
+  nonLocalCssUrl,
   "escaped CSS scheme delimiter must normalize before special-scheme checks"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(data:image/svg+xml;base64,PHN2Zz4=)}"),
+  nonLocalCssUrl,
+  "data: CSS resources must be rejected as non-local"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(file:///tmp/private.png)}"),
+  nonLocalCssUrl,
+  "file: CSS resources must be rejected as non-local"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(blob:https://example.test/id)}"),
+  nonLocalCssUrl,
+  "blob: CSS resources must be rejected as non-local"
 );
 
 function assertNoExternalHtmlAssets(relative, content) {
@@ -96,13 +130,13 @@ function assertNoExternalHtmlAssets(relative, content) {
       const normalized = normalizeHtmlUrl(value);
       assert.doesNotMatch(
         normalized,
-        remoteHtmlUrl,
-        `${relative}: UI must not load third-party script/style/media assets`
+        embeddedUrl,
+        `${relative}: UI resources must come from tracked/local URLs, not data: or blob: schemes`
       );
       assert.doesNotMatch(
         normalized,
-        embeddedUrl,
-        `${relative}: UI resources must come from tracked/local URLs, not data: or blob: schemes`
+        nonLocalHtmlUrl,
+        `${relative}: UI must not load third-party script/style/media assets`
       );
     }
 
@@ -117,7 +151,7 @@ function assertNoExternalHtmlAssets(relative, content) {
         const normalized = normalizeHtmlUrl(candidate);
         assert.doesNotMatch(
           normalized,
-          remoteHtmlUrl,
+          nonLocalHtmlUrl,
           `${relative}: UI srcset must not load third-party media assets`
         );
         assert.doesNotMatch(
@@ -192,6 +226,14 @@ assert.throws(
   /must come from tracked\/local URLs/
 );
 assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="file:///tmp/private.png">'),
+  /must not load third-party/
+);
+assert.throws(
+  () => assertNoExternalHtmlAssets("self-test.html", '<img src="ftp://cdn.example/logo.png">'),
+  /must not load third-party/
+);
+assert.throws(
   () => assertNoExternalHtmlAssets("self-test.html", '<iframe srcdoc="<p>inline</p>"></iframe>'),
   /iframe srcdoc is forbidden/
 );
@@ -205,10 +247,10 @@ for (const relative of files) {
   assert.ok(fs.existsSync(absolute), `${relative}: expected UI asset is missing`);
   const content = fs.readFileSync(absolute, "utf8");
 
-  if (relative.endsWith(".html")) {
+  if (path.extname(relative).toLowerCase() === ".html") {
     assertNoExternalHtmlAssets(relative, content);
   }
-  const normalizedCss = relative.endsWith(".css") ? decodeCssEscapes(content) : content;
+  const normalizedCss = path.extname(relative).toLowerCase() === ".css" ? decodeCssEscapes(content) : content;
   assert.doesNotMatch(
     normalizedCss,
     cssImport,
@@ -216,11 +258,11 @@ for (const relative of files) {
   );
   assert.doesNotMatch(
     normalizedCss,
-    remoteCssUrl,
+    nonLocalCssUrl,
     `${relative}: remote CSS url() dependencies are forbidden`
   );
 
-  if (relative.endsWith(".css")) {
+  if (path.extname(relative).toLowerCase() === ".css") {
     assert.doesNotMatch(
       normalizedCss,
       remoteUrl,
