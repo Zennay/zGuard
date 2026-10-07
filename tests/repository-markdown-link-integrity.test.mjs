@@ -16,6 +16,28 @@ assert.ok(markdownFiles.length > 0, "repository must contain tracked Markdown fi
 const unsafeScheme = /^(?:javascript|file|data):/i;
 const externalScheme = /^(?:https?|mailto):/i;
 
+function normalizeMarkdownUrl(value) {
+  return value
+    .replace(/&#x([0-9a-f]+);?/gi, (match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&#([0-9]+);?/g, (match, decimal) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&colon;/gi, ":")
+    .replace(/&sol;/gi, "/")
+    .replace(/&bsol;/gi, "\\")
+    .replace(/\\:/g, ":")
+    .trimStart();
+}
+
+assert.equal(normalizeMarkdownUrl("javascript&colon;alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("javascript&#58;alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("javascript\\:alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("&sol;&sol;example.test/path"), "//example.test/path");
+
 function assertBalancedCodeFences(file, source) {
   let openFence = null;
   const lines = source.split("\n");
@@ -137,24 +159,29 @@ for (const file of markdownFiles) {
     .map((match) => match[1].replace(/^<|>$/g, ""));
 
   for (const reference of references) {
-    assert.doesNotMatch(reference, unsafeScheme, `${file}: unsafe Markdown link scheme: ${reference}`);
+    const normalizedReference = normalizeMarkdownUrl(reference);
+    assert.doesNotMatch(
+      normalizedReference,
+      unsafeScheme,
+      `${file}: unsafe Markdown link scheme: ${reference}`
+    );
 
-    if (externalScheme.test(reference) || reference === "") {
+    if (externalScheme.test(normalizedReference) || normalizedReference === "") {
       continue;
     }
 
-    if (reference.startsWith("#")) {
+    if (normalizedReference.startsWith("#")) {
       assertMarkdownFragment(file, source, reference.slice(1), reference);
       continue;
     }
 
     assert.equal(
-      reference.startsWith("//"),
+      normalizedReference.startsWith("//"),
       false,
       `${file}: protocol-relative Markdown links are forbidden: ${reference}`
     );
     assert.equal(
-      reference.startsWith("/"),
+      normalizedReference.startsWith("/"),
       false,
       `${file}: root-relative Markdown links are not portable: ${reference}`
     );
