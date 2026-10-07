@@ -20,7 +20,8 @@ for (const [pattern, label] of [
   [/command -v docker/, "Docker prerequisite check"],
   [/docker compose version/, "Compose prerequisite check"],
   [/command -v node/, "Node prerequisite check"],
-  [/\[\[ ! -S \/var\/run\/docker\.sock \]\]/, "Docker socket prerequisite check"]
+  [/\[\[ ! -S \/var\/run\/docker\.sock \]\]/, "Docker socket prerequisite check"],
+  [/docker info >\/dev\/null 2>&1/, "Docker daemon access check"]
 ]) {
   assert.ok(
     firstLine(pattern, label) < validationLine,
