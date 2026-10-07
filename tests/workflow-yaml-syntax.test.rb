@@ -128,6 +128,17 @@ workflows.each do |workflow|
         if step.key?("if")
           abort "#{relative}: job #{job_name.inspect} step ##{index + 1} must not be conditionally skipped"
         end
+
+        run = step["run"]
+        if run.is_a?(String) && run.include?("\n")
+          unless step["shell"] == "bash"
+            abort "#{relative}: job #{job_name.inspect} step ##{index + 1} multiline run must declare shell: bash"
+          end
+          first_command = run.lines.find { |line| !line.strip.empty? }&.strip
+          unless first_command == "set -euo pipefail"
+            abort "#{relative}: job #{job_name.inspect} step ##{index + 1} multiline run must start with set -euo pipefail"
+          end
+        end
       end
     end
 
@@ -144,4 +155,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, terminal-failure, and unconditional-execution contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, terminal-failure, unconditional-execution, and multiline-shell contract passed for #{workflows.length} workflows"
