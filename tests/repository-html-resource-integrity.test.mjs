@@ -90,6 +90,7 @@ function normalizeUrlForSchemeCheck(value) {
       return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
     })
     .replace(/&colon;/gi, ":")
+    .replace(/&sol;/gi, "/")
     .replace(/&tab;/gi, "\t")
     .replace(/&newline;/gi, "\n");
 
@@ -105,6 +106,16 @@ assert.match(
   normalizeUrlForSchemeCheck("&#x2f;&#x2f;example.test/app.css"),
   /^(?:https?:)?\/\//i,
   "encoded protocol-relative URL must normalize before remote-resource checks"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("https&colon;&sol;&sol;example.test/app.js"),
+  /^(?:https?:)?\/\//i,
+  "named slash entities must normalize before remote-resource checks"
+);
+assert.match(
+  normalizeUrlForSchemeCheck("&sol;&sol;example.test/app.css"),
+  /^(?:https?:)?\/\//i,
+  "named slash entities must normalize protocol-relative URLs"
 );
 
 function assertSafeInlineAttributes(file, tagSource) {
