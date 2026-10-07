@@ -50,6 +50,27 @@ function normalizeHtmlUrl(value) {
   return decoded.replace(/[\t\n\r]/g, "").trimStart();
 }
 
+function decodeCssEscapes(value) {
+  return value
+    .replace(/\\([0-9a-f]{1,6})(?:\r\n|[ \t\r\n\f])?/gi, (match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      if (codePoint === 0 || codePoint > 0x10ffff) return "\uFFFD";
+      return String.fromCodePoint(codePoint);
+    })
+    .replace(/\\([^\n\r\f0-9a-f])/gi, "$1");
+}
+
+assert.match(
+  decodeCssEscapes("@\\69mport url(local.css)"),
+  cssImport,
+  "escaped CSS @import must normalize before privacy checks"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(https:\\2f\\2fcdn.example/x.png)}"),
+  remoteCssUrl,
+  "escaped remote CSS url() must normalize before privacy checks"
+);
+
 function assertNoExternalHtmlAssets(relative, content) {
   for (const match of content.matchAll(/<(?:script|link|img|iframe|source)\b[^>]*>/gi)) {
     const attrs = attributes(match[0]);
@@ -91,20 +112,21 @@ for (const relative of files) {
   if (relative.endsWith(".html")) {
     assertNoExternalHtmlAssets(relative, content);
   }
+  const normalizedCss = relative.endsWith(".css") ? decodeCssEscapes(content) : content;
   assert.doesNotMatch(
-    content,
+    normalizedCss,
     cssImport,
     `${relative}: CSS @import is forbidden; bundle local styles directly`
   );
   assert.doesNotMatch(
-    content,
+    normalizedCss,
     remoteCssUrl,
     `${relative}: remote CSS url() dependencies are forbidden`
   );
 
   if (relative.endsWith(".css")) {
     assert.doesNotMatch(
-      content,
+      normalizedCss,
       remoteUrl,
       `${relative}: stylesheets must remain fully local`
     );
