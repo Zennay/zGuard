@@ -2,8 +2,8 @@
   "version": 1,
   "checks": [
     {
-      "workflow": ".github/workflows/quality-validation.yml",
-      "check": "zGuard + zBrowse contracts"
+      "workflow": ".github/workflows/repository-shell-syntax.yml",
+      "check": "Parse tracked Bash scripts"
     },
     {
       "workflow": ".github/workflows/repository-path-portability.yml",
@@ -14,12 +14,12 @@
       "check": "Repository secret hygiene contract"
     },
     {
-      "workflow": ".github/workflows/repository-shell-syntax.yml",
-      "check": "Parse tracked Bash scripts"
-    },
-    {
       "workflow": ".github/workflows/repository-text-encoding.yml",
       "check": "Repository text encoding contract"
+    },
+    {
+      "workflow": ".github/workflows/quality-validation.yml",
+      "check": "zGuard + zBrowse contracts"
     }
   ]
 }
