@@ -1,0 +1,37 @@
+name: Repository CSS custom-property integrity
+
+on:
+  pull_request:
+    paths:
+      - "**/*.css"
+      - "tests/repository-css-custom-property-integrity.test.mjs"
+      - ".github/workflows/repository-css-custom-property-integrity.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.css"
+      - "tests/repository-css-custom-property-integrity.test.mjs"
+      - ".github/workflows/repository-css-custom-property-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-repository-css-custom-property-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  css-custom-property-integrity:
+    name: Repository CSS custom-property integrity contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate CSS custom properties
+        run: node tests/repository-css-custom-property-integrity.test.mjs
