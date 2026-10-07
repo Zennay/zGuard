@@ -12,6 +12,7 @@ const workflows = [
   '.github/workflows/popup-accessibility-validation.yml',
   '.github/workflows/portal-accessibility-validation.yml',
   '.github/workflows/repository-hygiene-validation.yml',
+  '.github/workflows/repository-secret-hygiene.yml',
   '.github/workflows/browser-image-integrity-validation.yml',
   '.github/workflows/gateway-containment-validation.yml',
   '.github/workflows/gateway-dependency-audit.yml',
