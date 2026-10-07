@@ -21,6 +21,11 @@ function genericSelfHostedRunsOn(source) {
     const indent = match[1].length;
     const rawValue = match[2].trim();
 
+    if (/\$\{\{/.test(rawValue)) {
+      findings.push(index + 1);
+      continue;
+    }
+
     if (normalizedLabel(rawValue) === 'self-hosted') {
       findings.push(index + 1);
       continue;
@@ -47,6 +52,10 @@ function genericSelfHostedRunsOn(source) {
       const labelMatch = candidate.match(/^\s*-\s*(.*?)\s*(?:#.*)?$/);
       if (labelMatch) labels.push(normalizedLabel(labelMatch[1]));
     }
+    if (labels.some((label) => /\$\{\{/.test(label))) {
+      findings.push(index + 1);
+      continue;
+    }
     if (labels.length === 1 && labels[0] === 'self-hosted') findings.push(index + 1);
   }
 
@@ -60,6 +69,9 @@ const selfTests = [
   ['runs-on:\n  - self-hosted\n', true],
   ['runs-on: [self-hosted, zcloud, vps]\n', false],
   ['runs-on:\n  - self-hosted\n  - zcloud\n  - vps\n', false],
+  ['runs-on: ${{ matrix.runner }}\n', true],
+  ['runs-on: [self-hosted, ${{ inputs.runner_label }}]\n', true],
+  ['runs-on:\n  - ${{ matrix.runner }}\n', true],
   ['runs-on: ubuntu-latest\n', false],
 ];
 
@@ -89,8 +101,8 @@ for (const name of workflowFiles) {
 }
 
 if (violations.length > 0) {
-  console.error('Generic self-hosted runner selection can queue indefinitely.');
-  console.error('Use a portable hosted runner, or explicit self-hosted labels such as [self-hosted, zcloud, vps].');
+  console.error('Generic or dynamic runner selection can queue indefinitely or bypass runner-label guarantees.');
+  console.error('Use a literal hosted runner, or explicit self-hosted labels such as [self-hosted, zcloud, vps].');
   for (const violation of violations) console.error(`- ${violation}`);
   process.exit(1);
 }
