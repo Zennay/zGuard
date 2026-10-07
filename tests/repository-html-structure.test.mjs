@@ -17,7 +17,7 @@ const voidElements = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "param", "source", "track", "wbr"
 ]);
-const rawTextElements = new Set(["script", "style"]);
+const textParsingElements = new Set(["script", "style", "title", "textarea"]);
 
 function findTagEnd(source, start) {
   let quote = null;
@@ -145,7 +145,7 @@ function validateHtmlStructure(file, source) {
 
     stack.push(name);
 
-    if (rawTextElements.has(name)) {
+    if (textParsingElements.has(name)) {
       const closePattern = new RegExp(`<\\/\\s*${name}\\s*>`, "ig");
       closePattern.lastIndex = tagEnd + 1;
       const close = closePattern.exec(source);
@@ -172,6 +172,14 @@ validateHtmlStructure(
 validateHtmlStructure(
   "self-test-raw-text.html",
   '<!doctype html><html><body><script>if (a < b) console.log("<div>");</script></body></html>'
+);
+validateHtmlStructure(
+  "self-test-rcdata.html",
+  '<!doctype html><html><head><title>1 < 2</title></head><body><textarea>Use <tag> literally</textarea></body></html>'
+);
+assert.throws(
+  () => validateHtmlStructure("self-test-unclosed-rcdata.html", "<textarea>missing close"),
+  /unclosed <textarea> element/
 );
 assert.throws(
   () => validateHtmlStructure("self-test-mismatch.html", "<div><span></div></span>"),
