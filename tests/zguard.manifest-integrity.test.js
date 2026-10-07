@@ -54,10 +54,29 @@ function htmlAssets(browserDir, popupPath) {
   }
 }
 
+function validateExtensionVersion(browserDir, version) {
+  assert.equal(typeof version, 'string', `${browserDir}: extension version must be a string`);
+  assert.match(
+    version,
+    /^(?:0|[1-9][0-9]*)(?:[.](?:0|[1-9][0-9]*)){0,3}$/,
+    `${browserDir}: invalid extension version format (${version})`
+  );
+
+  const parts = version.split('.').map(Number);
+  assert.ok(
+    parts.every((part) => part <= 65535),
+    `${browserDir}: extension version segments must be <= 65535 (${version})`
+  );
+  assert.ok(
+    parts.some((part) => part !== 0),
+    `${browserDir}: extension version must not be all zero (${version})`
+  );
+}
+
 function validateManifest(browserDir, manifest, expectedVersion) {
   assert.equal(manifest.manifest_version, expectedVersion, `${browserDir}: unexpected manifest version`);
   assert.ok(manifest.name, `${browserDir}: missing extension name`);
-  assert.ok(manifest.version, `${browserDir}: missing extension version`);
+  validateExtensionVersion(browserDir, manifest.version);
   assert.ok(manifest.description, `${browserDir}: missing extension description`);
 
   const action = manifest.action || manifest.browser_action;
@@ -99,6 +118,17 @@ function validateManifest(browserDir, manifest, expectedVersion) {
       localAsset(browserDir, asset, `${browserDir} background script`);
     }
   }
+}
+
+for (const version of ['1', '1.0', '2.10.2', '3.1.2.4567', '0.2', '65535.0']) {
+  validateExtensionVersion('fixture', version);
+}
+for (const version of ['', '01.2', '1.02', '1.0.0-beta', '1.2.3.4.5', '65536', '0.0.0']) {
+  assert.throws(
+    () => validateExtensionVersion('fixture', version),
+    undefined,
+    `invalid extension version unexpectedly accepted: ${version}`
+  );
 }
 
 const chromium = readJson('chromium/manifest.json');
