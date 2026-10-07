@@ -44,6 +44,13 @@ for (const file of tracked.filter(isTextContractPath)) {
   );
   assert.ok(!text.includes("\u0000"), `tracked text file contains a NUL byte: ${file}`);
   assert.ok(!text.includes("\r"), `tracked text file must use LF line endings: ${file}`);
+
+  const unsafeControl = text.match(/[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f]/u);
+  assert.equal(
+    unsafeControl,
+    null,
+    `tracked text file contains an unsafe control character: ${file}`
+  );
   checked += 1;
 }
 
