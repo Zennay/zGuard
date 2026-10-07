@@ -1,0 +1,47 @@
+name: zBrowse portal network boundary
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/gateway/public/app.js"
+      - "tests/zbrowse.portal-network-boundary.test.mjs"
+      - ".github/workflows/zbrowse-portal-network-boundary.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/gateway/public/app.js"
+      - "tests/zbrowse.portal-network-boundary.test.mjs"
+      - ".github/workflows/zbrowse-portal-network-boundary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-portal-network-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate zBrowse portal network boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Validate portal same-origin network boundary
+        run: node tests/zbrowse.portal-network-boundary.test.mjs
