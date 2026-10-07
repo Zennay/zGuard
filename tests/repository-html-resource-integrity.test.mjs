@@ -164,6 +164,39 @@ assert.throws(
   /javascript: URLs are forbidden/
 );
 
+function assertDocumentUrlContext(file, source) {
+  const baseTags = [...source.matchAll(/<base\b[^>]*>/gi)];
+  assert.equal(
+    baseTags.length,
+    0,
+    `${file}: base elements are forbidden because they can rewrite local asset URLs`
+  );
+
+  for (const match of source.matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+    assert.notEqual(
+      (attrs.get("http-equiv") ?? "").trim().toLowerCase(),
+      "refresh",
+      `${file}: meta refresh is forbidden; navigation must remain explicit`
+    );
+  }
+}
+
+assert.doesNotThrow(() =>
+  assertDocumentUrlContext(
+    "self-test",
+    '<meta name="description" content="safe">'
+  )
+);
+assert.throws(
+  () => assertDocumentUrlContext("self-test", '<base href="https://example.test/">'),
+  /base elements are forbidden/
+);
+assert.throws(
+  () => assertDocumentUrlContext("self-test", '<meta HTTP-EQUIV=refresh content="0;url=https://example.test/">'),
+  /meta refresh is forbidden/
+);
+
 function assertDocumentMetadataContract(file, source) {
   const doctypes = [...source.matchAll(/<!doctype\s+html\s*>/gi)];
   assert.equal(doctypes.length, 1, `${file}: must declare exactly one HTML doctype`);
@@ -362,6 +395,7 @@ for (const file of htmlFiles) {
   const absolute = path.join(root, file);
   const source = fs.readFileSync(absolute, "utf8");
 
+  assertDocumentUrlContext(file, source);
   assertDocumentMetadataContract(file, source);
   assertViewportContract(file, source);
 
