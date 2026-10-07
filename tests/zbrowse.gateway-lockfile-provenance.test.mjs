@@ -8,6 +8,10 @@ const gatewayDir = path.join(root, 'zbrowse', 'gateway');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(gatewayDir, 'package.json'), 'utf8'));
 const lock = JSON.parse(fs.readFileSync(path.join(gatewayDir, 'package-lock.json'), 'utf8'));
+const workflow = fs.readFileSync(
+  path.join(root, '.github', 'workflows', 'gateway-lockfile-provenance.yml'),
+  'utf8'
+);
 
 assert.equal(lock.lockfileVersion, 3, 'gateway lockfile must remain npm lockfileVersion 3');
 assert.equal(lock.requires, true, 'gateway lockfile must retain dependency resolution metadata');
@@ -74,6 +78,22 @@ assert.deepEqual(
   installScriptPackages,
   approvedInstallScripts,
   'gateway dependency lifecycle scripts changed; review the production install-script policy before accepting drift'
+);
+
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `gateway lockfile workflow must retain exact-head checkout proof: ${expected}`
+  );
+}
+assert.ok(
+  workflow.includes('persist-credentials: false'),
+  'gateway lockfile checkout must not persist credentials'
 );
 
 console.log(
