@@ -56,9 +56,13 @@ The smoke gate also executes behavior coverage for the balanced/strict decision 
 locked production install, and high-severity production dependency audit in one
 terminal check.
 
-Runner evidence only counts for the exact pull-request head commit: the workflow
-run's `head_sha` must equal the PR `head_sha`. A green run for an older commit is
-not merge evidence after the branch moves.
+A workflow run is current only when its `head_sha` equals the PR `head_sha`;
+a green run for an older PR revision is not merge evidence after the branch moves.
+That metadata match is necessary but, by itself, does not prove which Git commit
+`actions/checkout` placed in the workspace for a pull-request event. Until the
+checkout-ref contract in [issue #103](https://github.com/Zennay/zGuard/issues/103)
+is resolved, describe these as current-PR validation results rather than
+exact-head checkout proof.
 
 Portable validation must not use an unlabelled generic `self-hosted` runner. When
 real VPS-specific proof is required, use an explicit exact-ref route labelled for
