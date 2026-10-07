@@ -39,6 +39,9 @@ function stripLeadingFlags(value) {
 function validateDockerfile(source, label) {
   const logical = [];
   const lines = source.split(/\r?\n/);
+  if (source.endsWith("\n") && lines.at(-1) === "") {
+    lines.pop();
+  }
   let pending = "";
 
   for (let index = 0; index < lines.length; index += 1) {
