@@ -24,8 +24,8 @@ assert.deepEqual(
 );
 assert.match(
   dockerfile,
-  /RUN npm ci --omit=dev/,
-  'gateway image must install the locked production dependency graph'
+  /RUN npm ci --omit=dev --ignore-scripts --no-audit/,
+  'gateway image must install the locked production dependency graph without lifecycle scripts or implicit audit traffic'
 );
 
 assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'dependency audit must use a portable hosted runner');
@@ -48,8 +48,8 @@ assert.match(
 );
 assert.match(
   workflow,
-  /npm ci --omit=dev --ignore-scripts/,
-  'dependency audit must materialize the locked production graph without lifecycle scripts'
+  /npm ci --omit=dev --ignore-scripts --no-audit/,
+  'dependency audit must materialize the locked production graph without lifecycle scripts or duplicate implicit audit traffic'
 );
 assert.match(
   workflow,
