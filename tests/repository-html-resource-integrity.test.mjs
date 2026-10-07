@@ -32,10 +32,10 @@ const multiIdRefAttributes = new Set([
 
 function attributes(source) {
   const body = source
-    .replace(/^<[a-z][\\w:-]*\\b/i, "")
-    .replace(/\\/?>$/, "");
+    .replace(/^<[a-z][\w:-]*\b/i, "")
+    .replace(/\/?>$/, "");
   const attrs = new Map();
-  const pattern = /([:\\w-]+)(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\\x60]+)))?/g;
+  const pattern = /([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+)))?/g;
 
   for (const match of body.matchAll(pattern)) {
     const name = match[1].toLowerCase();
