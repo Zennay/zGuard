@@ -18,7 +18,7 @@ const remoteUrl = /(?:https?:)?\/\//i;
 const remoteHtmlUrl = /^(?:https?:|[\\/]{2})/i;
 const embeddedUrl = /^(?:data|blob):/i;
 const cssImport = /@import\s+/i;
-const remoteCssUrl = /url\(\s*['"]?(?:https?:)?\/\//i;
+const remoteCssUrl = /url\(\s*['"]?(?:https?:|\/\/)/i;
 function attributes(tagSource) {
   const opening = tagSource.match(/^<[a-z][\w:-]*\b/i);
   assert.ok(opening, `opening tag could not be parsed: ${tagSource}`);
@@ -73,6 +73,16 @@ assert.match(
   decodeCssEscapes("body{background:url(https:\\00002f\\00002fcdn.example/x.png)}"),
   remoteCssUrl,
   "escaped remote CSS url() must normalize before privacy checks"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(https:cdn.example/x.png)}"),
+  remoteCssUrl,
+  "special-scheme CSS url() must be treated as non-local even without //"
+);
+assert.match(
+  decodeCssEscapes("body{background:url(https\\00003acdn.example/x.png)}"),
+  remoteCssUrl,
+  "escaped CSS scheme delimiter must normalize before special-scheme checks"
 );
 
 function assertNoExternalHtmlAssets(relative, content) {
