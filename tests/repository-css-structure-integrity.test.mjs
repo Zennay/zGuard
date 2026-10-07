@@ -10,8 +10,12 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
   encoding: "utf8"
 }).split("\0").filter(Boolean);
 
-const cssFiles = tracked.filter((file) => file.endsWith(".css")).sort();
+const isCssPath = (file) => path.extname(file).toLowerCase() === '.css';
+const cssFiles = tracked.filter(isCssPath).sort();
 assert.ok(cssFiles.length > 0, "repository must contain tracked CSS files");
+assert.equal(isCssPath('styles.CSS'), true, 'CSS discovery must be case-insensitive');
+assert.equal(isCssPath('styles.CsS'), true, 'CSS discovery must accept mixed-case extensions');
+assert.equal(isCssPath('styles.css.txt'), false, 'CSS discovery must reject non-CSS suffixes');
 
 const opening = new Map([["{", "}"], ["[", "]"], ["(", ")"]]);
 const closing = new Map([["}", "{"], ["]", "["], [")", "("]]);
@@ -110,5 +114,15 @@ for (const file of cssFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
   validateCssStructure(source, file);
 }
+
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-css-structure-integrity.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\s+paths:\s*$/m,
+  "CSS structure workflow must run on every PR/push so extension casing cannot bypass validation"
+);
 
 console.log(`CSS structure integrity passed for ${cssFiles.length} tracked files`);
