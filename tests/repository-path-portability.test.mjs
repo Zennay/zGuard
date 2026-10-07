@@ -7,10 +7,16 @@ const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
 
 assert.ok(tracked.length > 0, "at least one tracked path must be discovered");
 
-const windowsReserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const windowsReserved = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 const windowsForbidden = /[<>:"\\|?*]/;
 const unsafeInvisibleCharacter = /[\u0001-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
 const portableKeys = new Map();
+
+assert.match("COM¹.txt", windowsReserved, "Windows superscript COM device names must be rejected");
+assert.match("lpt²", windowsReserved, "Windows superscript LPT device names must be rejected");
+assert.match("COM³", windowsReserved, "all documented superscript COM device digits must be rejected");
+assert.match("LPT³.log", windowsReserved, "superscript LPT device names stay reserved with extensions");
+assert.doesNotMatch("component¹.txt", windowsReserved, "ordinary superscript filenames must remain allowed");
 
 for (const file of tracked) {
   const segments = file.split("/");
