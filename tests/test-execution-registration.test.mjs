@@ -96,20 +96,32 @@ const packageCorpus = tracked
 const executableCorpus = [workflowCorpus, shellCorpus, packageCorpus].join('\n');
 
 const testSources = new Map(tests.map((file) => [file, read(file)]));
+const basenameCounts = new Map();
+for (const test of tests) {
+  const basename = path.basename(test);
+  basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
+}
 const unregistered = [];
 
 for (const test of tests) {
   const basename = path.basename(test);
   const directlyExecuted = executableCorpus.includes(test);
+  const uniqueBasename = basenameCounts.get(basename) === 1;
 
   const executedByAnotherTest = [...testSources.entries()].some(([other, source]) => (
-    other !== test && (source.includes(test) || source.includes(basename))
+    other !== test && (source.includes(test) || (uniqueBasename && source.includes(basename)))
   ));
 
   if (!directlyExecuted && !executedByAnotherTest) {
     unregistered.push(test);
   }
 }
+
+assert.equal(
+  [...new Map([['same.test.mjs', 2]]).values()][0] === 1,
+  false,
+  'duplicate basenames must not be treated as globally unique registration aliases'
+);
 
 assert.deepEqual(
   unregistered,
