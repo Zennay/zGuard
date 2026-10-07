@@ -36,6 +36,12 @@ function collectStaticDomReferences(source) {
   }
 
   for (const match of source.matchAll(
+    /document\.getElementById\(\s*["']([A-Za-z][A-Za-z0-9_:.-]*)["']\s*\)/g
+  )) {
+    ids.add(match[1]);
+  }
+
+  for (const match of source.matchAll(
     /\$\(\s*["']([A-Za-z][A-Za-z0-9_:.-]*)["']\s*\)/g
   )) {
     ids.add(match[1]);
@@ -117,8 +123,17 @@ assert.deepEqual(
 
 assert.deepEqual(
   auditDomReferences(
+    '<main id="present"></main>',
+    ['const broken = document.getElementById("directMissing");']
+  ),
+  { missingIds: ['directMissing'], missingAttributes: [] },
+  'selector-integrity self-test must cover direct getElementById references'
+);
+
+assert.deepEqual(
+  auditDomReferences(
     '<main id="present"><button data-mode="balanced"></button></main>',
-    ['const ok = $("present"); document.querySelectorAll("[data-mode]");']
+    ['const ok = $("present"); document.querySelectorAll("[data-mode]"); document.getElementById("present");']
   ),
   { missingIds: [], missingAttributes: [] },
   'selector-integrity self-test must accept matching static selectors'
@@ -137,6 +152,17 @@ assert.match(
   'selector workflow checkout must be pinned to the reviewed v6.0.3 commit'
 );
 assert.match(workflow, /persist-credentials:\s*false/, 'checkout credentials must not persist');
+for (const expected of [
+  'repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}',
+  'ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
+  'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'
+]) {
+  assert.ok(
+    workflow.includes(expected),
+    `selector workflow must retain exact-head checkout proof: ${expected}`
+  );
+}
 assert.match(
   workflow,
   /node tests\/ui-dom-selector-integrity\.test\.mjs/,
