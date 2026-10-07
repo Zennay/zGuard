@@ -19,7 +19,12 @@ const textBasenames = new Set([
   "Dockerfile", "LICENSE", "README"
 ]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
+const unsafeFormatCharacter = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u;
 let checked = 0;
+
+assert.match("\u202e", unsafeFormatCharacter, "bidi-override self-test must be rejected");
+assert.match("\u200b", unsafeFormatCharacter, "zero-width self-test must be rejected");
+assert.doesNotMatch("plain text", unsafeFormatCharacter, "ordinary text must remain allowed");
 
 function isTextContractPath(file) {
   const base = path.basename(file);
@@ -69,6 +74,11 @@ for (const file of tracked.filter(isTextContractPath)) {
     null,
     `tracked text file contains an unsafe control character: ${file}`
   );
+  assert.doesNotMatch(
+    text,
+    unsafeFormatCharacter,
+    `tracked text file contains an unsafe invisible/bidi format character: ${file}`
+  );
   checked += 1;
 }
 
@@ -81,4 +91,6 @@ assert.match(
   ".gitattributes must normalize automatically detected text files to LF"
 );
 
-console.log(`repository text encoding, line-ending, and whitespace contract passed for ${checked} tracked text files`);
+console.log(
+  `repository text encoding, line-ending, whitespace, control-character, and invisible-format contract passed for ${checked} tracked text files`
+);
