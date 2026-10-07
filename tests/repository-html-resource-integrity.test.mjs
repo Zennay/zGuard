@@ -133,6 +133,17 @@ function assertSafeInlineAttributes(file, tagSource) {
       `${file}: javascript: URLs are forbidden in ${attribute}`
     );
   }
+
+  for (const attribute of ["action", "formaction"]) {
+    const value = attrs.get(attribute);
+    if (value === undefined || !value.trim()) continue;
+
+    assert.doesNotMatch(
+      normalizeUrlForSchemeCheck(value),
+      /^(?:(?:[a-z][a-z0-9+.-]*:)|\/\/)/i,
+      `${file}: ${attribute} must remain a same-origin relative submission target`
+    );
+  }
 }
 
 assert.doesNotThrow(() =>
@@ -162,6 +173,21 @@ assert.throws(
 assert.throws(
   () => assertSafeInlineAttributes("self-test", '<form action="javascript&#58;alert(1)">'),
   /javascript: URLs are forbidden/
+);
+assert.doesNotThrow(() =>
+  assertSafeInlineAttributes("self-test", '<form action="/api/session">')
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<form action="https&#58;//collector.example/submit">'),
+  /same-origin relative submission target/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<button formaction=//collector.example/submit>'),
+  /same-origin relative submission target/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<input formaction="mailto:collector@example.test">'),
+  /same-origin relative submission target/
 );
 
 function assertDocumentUrlContext(file, source) {
