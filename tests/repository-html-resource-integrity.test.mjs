@@ -31,12 +31,53 @@ const multiIdRefAttributes = new Set([
 ]);
 
 function attributes(source) {
+  const body = source
+    .replace(/^<[a-z][\w:-]*\b/i, "")
+    .replace(/\/?>$/, "");
   const attrs = new Map();
-  for (const match of source.matchAll(/([:\w-]+)\s*=\s*(["'])(.*?)\2/gs)) {
-    attrs.set(match[1].toLowerCase(), match[3]);
+  const pattern = /([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+)))?/g;
+
+  for (const match of body.matchAll(pattern)) {
+    const name = match[1].toLowerCase();
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    attrs.set(name, value);
   }
   return attrs;
 }
+
+const attributeParserSelfTest = attributes(
+  '<input id=sample aria-describedby=hint disabled data-label="quoted" title=\'single\'>'
+);
+assert.equal(attributeParserSelfTest.get("id"), "sample");
+assert.equal(attributeParserSelfTest.get("aria-describedby"), "hint");
+assert.equal(attributeParserSelfTest.get("disabled"), "");
+assert.equal(attributeParserSelfTest.get("data-label"), "quoted");
+assert.equal(attributeParserSelfTest.get("title"), "single");
+
+function assertNoDuplicateAttributes(file, tagSource) {
+  const tag = tagSource.match(/^<([a-z][\w:-]*)\b/i);
+  assert.ok(tag, `${file}: opening tag could not be parsed: ${tagSource}`);
+
+  const attributeSource = tagSource.slice(tag[0].length).replace(/\/?>$/, "");
+  const seen = new Set();
+  const pattern = /([:\w-]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>\x60]+))?/g;
+
+  for (const match of attributeSource.matchAll(pattern)) {
+    const name = match[1].toLowerCase();
+    assert.equal(
+      seen.has(name),
+      false,
+      `${file}: duplicate HTML attribute "${name}" in ${tagSource}`
+    );
+    seen.add(name);
+  }
+}
+
+assert.doesNotThrow(() => assertNoDuplicateAttributes("self-test", '<input id="a" hidden>'));
+assert.throws(
+  () => assertNoDuplicateAttributes("self-test", '<input id="a" ID="b">'),
+  /duplicate HTML attribute "id"/
+);
 
 function resolveLocalAsset(htmlFile, reference) {
   const clean = reference.split(/[?#]/, 1)[0];
@@ -85,8 +126,9 @@ for (const file of htmlFiles) {
   );
 
   const ids = [];
-  for (const match of source.matchAll(/\bid\s*=\s*(["'])(.*?)\1/gi)) {
-    ids.push(match[2]);
+  for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+    if (attrs.has("id")) ids.push(attrs.get("id"));
   }
   const seenIds = new Set();
   for (const id of ids) {
@@ -96,6 +138,7 @@ for (const file of htmlFiles) {
   }
 
   for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
+    assertNoDuplicateAttributes(file, match[0]);
     const attrs = attributes(match[0]);
 
     for (const attribute of singleIdRefAttributes) {
@@ -140,5 +183,5 @@ for (const file of htmlFiles) {
 }
 
 console.log(
-  `HTML resource and ID-reference integrity passed for ${htmlFiles.length} tracked files`
+  `HTML resource, attribute, and ID-reference integrity passed for ${htmlFiles.length} tracked files`
 );
