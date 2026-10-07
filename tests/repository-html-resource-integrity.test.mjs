@@ -79,6 +79,69 @@ assert.throws(
   /duplicate HTML attribute "id"/
 );
 
+function assertViewportContract(file, source) {
+  const viewportMetas = [];
+
+  for (const match of source.matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs = attributes(match[0]);
+    if ((attrs.get("name") ?? "").toLowerCase() === "viewport") {
+      viewportMetas.push(attrs);
+    }
+  }
+
+  assert.equal(
+    viewportMetas.length,
+    1,
+    `${file}: must declare exactly one viewport meta tag`
+  );
+
+  const content = (viewportMetas[0].get("content") ?? "")
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  const directives = new Map(
+    content.map((part) => {
+      const [name, ...rest] = part.split("=");
+      return [name.trim(), rest.join("=").trim()];
+    })
+  );
+
+  assert.equal(
+    directives.get("width"),
+    "device-width",
+    `${file}: viewport width must be device-width`
+  );
+  assert.equal(
+    directives.get("initial-scale"),
+    "1",
+    `${file}: viewport initial-scale must be 1`
+  );
+  assert.notEqual(
+    directives.get("user-scalable"),
+    "no",
+    `${file}: viewport must not disable user zoom`
+  );
+}
+
+assert.doesNotThrow(() =>
+  assertViewportContract(
+    "self-test",
+    '<meta content="initial-scale=1, width=device-width" name="viewport">'
+  )
+);
+assert.throws(
+  () => assertViewportContract("self-test", '<meta name="viewport" content="width=640,initial-scale=1">'),
+  /viewport width must be device-width/
+);
+assert.throws(
+  () =>
+    assertViewportContract(
+      "self-test",
+      '<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">'
+    ),
+  /must not disable user zoom/
+);
+
 function resolveLocalAsset(htmlFile, reference) {
   const clean = reference.split(/[?#]/, 1)[0];
   if (clean.startsWith("/")) {
@@ -113,6 +176,7 @@ for (const file of htmlFiles) {
   assert.match(source, /<html\b[^>]*\blang=(["'])[^"']+\1/i, `${file}: html element must declare a language`);
   assert.match(source, /<meta\b[^>]*\bcharset=(["'])?utf-8\1?/i, `${file}: must declare UTF-8`);
   assert.match(source, /<title>[^<]+<\/title>/i, `${file}: must include a non-empty title`);
+  assertViewportContract(file, source);
 
   assert.doesNotMatch(
     source,
