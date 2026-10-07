@@ -29,11 +29,19 @@ except DuplicateKeyError:
 else:
     raise SystemExit("Duplicate-key detector self-test failed")
 
+def is_json_path(path):
+    return pathlib.Path(path).suffix.lower() == ".json"
+
+
+if not is_json_path("fixture.JSON") or is_json_path("fixture.json.txt"):
+    raise SystemExit("Casefold JSON discovery self-test failed")
+
+
 tracked = subprocess.check_output(
     ["git", "-C", str(ROOT), "ls-files", "-z"],
     text=True,
 ).split("\0")
-json_files = sorted(path for path in tracked if path.endswith(".json"))
+json_files = sorted(path for path in tracked if is_json_path(path))
 
 if not json_files:
     raise SystemExit("No tracked JSON files found")
