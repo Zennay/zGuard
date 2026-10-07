@@ -41,6 +41,37 @@ function findTagEnd(source, start) {
   return -1;
 }
 
+function countStartTags(source, name) {
+  return [...source.matchAll(new RegExp(`<${name}\\b`, "gi"))].length;
+}
+
+function assertDocumentSkeleton(file, source) {
+  for (const name of ["html", "head", "body"]) {
+    assert.equal(
+      countStartTags(source, name),
+      1,
+      `${file}: document must contain exactly one <${name}> element`
+    );
+  }
+
+  const lower = source.toLowerCase();
+  const htmlStart = lower.indexOf("<html");
+  const headStart = lower.indexOf("<head");
+  const headEnd = lower.indexOf("</head>");
+  const bodyStart = lower.indexOf("<body");
+  const bodyEnd = lower.indexOf("</body>");
+  const htmlEnd = lower.indexOf("</html>");
+
+  assert.ok(
+    htmlStart < headStart &&
+      headStart < headEnd &&
+      headEnd < bodyStart &&
+      bodyStart < bodyEnd &&
+      bodyEnd < htmlEnd,
+    `${file}: expected document order is html > head, then body, then closing html`
+  );
+}
+
 function validateHtmlStructure(file, source) {
   const stack = [];
   let cursor = 0;
@@ -158,10 +189,23 @@ assert.throws(
   () => validateHtmlStructure("self-test-self-close.html", "<div/>"),
   /non-void/
 );
+assertDocumentSkeleton(
+  "self-test-skeleton.html",
+  "<!doctype html><html><head><title>x</title></head><body><main>x</main></body></html>"
+);
+assert.throws(
+  () =>
+    assertDocumentSkeleton(
+      "self-test-duplicate-body.html",
+      "<!doctype html><html><head><title>x</title></head><body></body><body></body></html>"
+    ),
+  /exactly one <body>/
+);
 
 for (const file of htmlFiles) {
   const source = fs.readFileSync(path.join(root, file), "utf8");
   validateHtmlStructure(file, source);
+  assertDocumentSkeleton(file, source);
 }
 
 console.log(`HTML tag structure integrity passed for ${htmlFiles.length} tracked files`);
