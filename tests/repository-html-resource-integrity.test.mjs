@@ -79,6 +79,23 @@ assert.throws(
   /duplicate HTML attribute "id"/
 );
 
+function normalizeUrlForSchemeCheck(value) {
+  const decoded = value
+    .replace(/&#x([0-9a-f]+);?/gi, (match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&#([0-9]+);?/g, (match, decimal) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+    })
+    .replace(/&colon;/gi, ":")
+    .replace(/&tab;/gi, "\t")
+    .replace(/&newline;/gi, "\n");
+
+  return decoded.replace(/[\t\n\r]/g, "").trimStart();
+}
+
 function assertSafeInlineAttributes(file, tagSource) {
   const attrs = attributes(tagSource);
 
@@ -100,7 +117,7 @@ function assertSafeInlineAttributes(file, tagSource) {
     const value = attrs.get(attribute);
     if (value === undefined) continue;
     assert.doesNotMatch(
-      value.trim(),
+      normalizeUrlForSchemeCheck(value),
       /^javascript:/i,
       `${file}: javascript: URLs are forbidden in ${attribute}`
     );
@@ -120,6 +137,19 @@ assert.throws(
 );
 assert.throws(
   () => assertSafeInlineAttributes("self-test", "<a href=javascript:alert(1)>"),
+  /javascript: URLs are forbidden/
+);
+
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", "<a href=jav&#x61;script:alert(1)>"),
+  /javascript: URLs are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<a href="java&#10;script:alert(1)">'),
+  /javascript: URLs are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", '<form action="javascript&#58;alert(1)">'),
   /javascript: URLs are forbidden/
 );
 
