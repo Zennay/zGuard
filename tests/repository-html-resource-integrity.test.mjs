@@ -79,6 +79,50 @@ assert.throws(
   /duplicate HTML attribute "id"/
 );
 
+function assertSafeInlineAttributes(file, tagSource) {
+  const attrs = attributes(tagSource);
+
+  for (const name of attrs.keys()) {
+    assert.doesNotMatch(
+      name,
+      /^on[a-z]+$/i,
+      `${file}: inline event-handler attributes are forbidden in ${tagSource}`
+    );
+  }
+
+  assert.equal(
+    attrs.has("style"),
+    false,
+    `${file}: inline style attributes are forbidden; use a local stylesheet`
+  );
+
+  for (const attribute of ["href", "src", "action", "formaction"]) {
+    const value = attrs.get(attribute);
+    if (value === undefined) continue;
+    assert.doesNotMatch(
+      value.trim(),
+      /^javascript:/i,
+      `${file}: javascript: URLs are forbidden in ${attribute}`
+    );
+  }
+}
+
+assert.doesNotThrow(() =>
+  assertSafeInlineAttributes("self-test", '<a href="/safe" data-action="open">Safe</a>')
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", "<button onclick=alert(1)>"),
+  /inline event-handler attributes are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", "<div STYLE=color:red>"),
+  /inline style attributes are forbidden/
+);
+assert.throws(
+  () => assertSafeInlineAttributes("self-test", "<a href=javascript:alert(1)>"),
+  /javascript: URLs are forbidden/
+);
+
 function assertDocumentMetadataContract(file, source) {
   const doctypes = [...source.matchAll(/<!doctype\s+html\s*>/gi)];
   assert.equal(doctypes.length, 1, `${file}: must declare exactly one HTML doctype`);
@@ -315,6 +359,7 @@ for (const file of htmlFiles) {
 
   for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
     assertNoDuplicateAttributes(file, match[0]);
+    assertSafeInlineAttributes(file, match[0]);
     const attrs = attributes(match[0]);
 
     for (const attribute of singleIdRefAttributes) {
