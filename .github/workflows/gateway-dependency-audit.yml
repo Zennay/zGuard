@@ -8,6 +8,15 @@ on:
       - "zbrowse/gateway/Dockerfile"
       - "tests/zbrowse.gateway-dependency-audit.test.mjs"
       - ".github/workflows/gateway-dependency-audit.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "zbrowse/gateway/package.json"
+      - "zbrowse/gateway/package-lock.json"
+      - "zbrowse/gateway/Dockerfile"
+      - "tests/zbrowse.gateway-dependency-audit.test.mjs"
+      - ".github/workflows/gateway-dependency-audit.yml"
   workflow_dispatch:
 
 permissions:
