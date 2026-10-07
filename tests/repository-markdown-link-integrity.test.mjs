@@ -18,7 +18,7 @@ const externalScheme = /^(?:https?|mailto):/i;
 
 function assertBalancedCodeFences(file, source) {
   let openFence = null;
-  const lines = source.split("\\n");
+  const lines = source.split("\n");
 
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;
