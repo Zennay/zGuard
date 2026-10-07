@@ -20,7 +20,7 @@ function runScripts(source) {
   const scripts = [];
 
   for (let i = 0; i < lines.length; i += 1) {
-    const blockMatch = lines[i].match(/^(\s*)run:\s*[|>][+-]?\s*(?:#.*)?$/);
+    const blockMatch = lines[i].match(/^(\s*)(?:-\s*)?run:\s*[|>][+-]?\s*(?:#.*)?$/);
     if (blockMatch) {
       const indent = blockMatch[1].length;
       const block = [];
@@ -41,7 +41,7 @@ function runScripts(source) {
       continue;
     }
 
-    const inlineMatch = lines[i].match(/^\s*run:\s*(.+?)\s*$/);
+    const inlineMatch = lines[i].match(/^\s*(?:-\s*)?run:\s*(.+?)\s*$/);
     if (inlineMatch) {
       scripts.push(inlineMatch[1]);
     }
