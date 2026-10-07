@@ -38,6 +38,31 @@ function attributes(source) {
   return attrs;
 }
 
+function assertNoDuplicateAttributes(file, tagSource) {
+  const tag = tagSource.match(/^<([a-z][\w:-]*)\b/i);
+  assert.ok(tag, `${file}: opening tag could not be parsed: ${tagSource}`);
+
+  const attributeSource = tagSource.slice(tag[0].length).replace(/\/?>$/, "");
+  const seen = new Set();
+  const pattern = /([:\w-]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>\x60]+))?/g;
+
+  for (const match of attributeSource.matchAll(pattern)) {
+    const name = match[1].toLowerCase();
+    assert.equal(
+      seen.has(name),
+      false,
+      `${file}: duplicate HTML attribute "${name}" in ${tagSource}`
+    );
+    seen.add(name);
+  }
+}
+
+assert.doesNotThrow(() => assertNoDuplicateAttributes("self-test", '<input id="a" hidden>'));
+assert.throws(
+  () => assertNoDuplicateAttributes("self-test", '<input id="a" ID="b">'),
+  /duplicate HTML attribute "id"/
+);
+
 function resolveLocalAsset(htmlFile, reference) {
   const clean = reference.split(/[?#]/, 1)[0];
   if (clean.startsWith("/")) {
@@ -96,6 +121,7 @@ for (const file of htmlFiles) {
   }
 
   for (const match of source.matchAll(/<[a-z][^>]*>/gi)) {
+    assertNoDuplicateAttributes(file, match[0]);
     const attrs = attributes(match[0]);
 
     for (const attribute of singleIdRefAttributes) {
@@ -140,5 +166,5 @@ for (const file of htmlFiles) {
 }
 
 console.log(
-  `HTML resource and ID-reference integrity passed for ${htmlFiles.length} tracked files`
+  `HTML resource, attribute, and ID-reference integrity passed for ${htmlFiles.length} tracked files`
 );
