@@ -9,7 +9,7 @@ const portalPath = "zbrowse/gateway/public/app.js";
 function quotedLeadingArgumentCalls(source, calleePattern) {
   const matches = [];
   const pattern = new RegExp(
-    `\\b${calleePattern}\\s*\\(\\s*(["'\\`])([^"'\\`]*?)\\1`,
+    "\\b" + calleePattern + "\\s*\\(\\s*([\\\"'])([^\\\"']*?)\\1",
     "g"
   );
 
