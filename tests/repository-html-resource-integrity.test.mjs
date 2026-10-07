@@ -99,12 +99,17 @@ function assertViewportContract(file, source) {
     .split(",")
     .map((part) => part.trim().toLowerCase())
     .filter(Boolean);
-  const directives = new Map(
-    content.map((part) => {
-      const [name, ...rest] = part.split("=");
-      return [name.trim(), rest.join("=").trim()];
-    })
-  );
+  const directives = new Map();
+  for (const part of content) {
+    const [name, ...rest] = part.split("=");
+    const key = name.trim();
+    assert.equal(
+      directives.has(key),
+      false,
+      `${file}: viewport directive "${key}" must not be duplicated`
+    );
+    directives.set(key, rest.join("=").trim());
+  }
 
   assert.equal(
     directives.get("width"),
@@ -116,9 +121,8 @@ function assertViewportContract(file, source) {
     "1",
     `${file}: viewport initial-scale must be 1`
   );
-  assert.notEqual(
-    directives.get("user-scalable"),
-    "no",
+  assert.ok(
+    !["no", "0"].includes(directives.get("user-scalable")),
     `${file}: viewport must not disable user zoom`
   );
 }
@@ -140,6 +144,22 @@ assert.throws(
       '<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">'
     ),
   /must not disable user zoom/
+);
+assert.throws(
+  () =>
+    assertViewportContract(
+      "self-test",
+      '<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">'
+    ),
+  /must not disable user zoom/
+);
+assert.throws(
+  () =>
+    assertViewportContract(
+      "self-test",
+      '<meta name="viewport" content="width=device-width,width=device-width,initial-scale=1">'
+    ),
+  /viewport directive "width" must not be duplicated/
 );
 
 function resolveLocalAsset(htmlFile, reference) {
