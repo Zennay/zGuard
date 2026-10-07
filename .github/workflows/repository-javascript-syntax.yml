@@ -7,6 +7,7 @@ on:
       - "**/*.mjs"
       - "**/*.cjs"
       - "tests/repository-javascript-syntax.test.mjs"
+      - "tests/repository-javascript-runtime-safety.test.mjs"
       - ".github/workflows/repository-javascript-syntax.yml"
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - "**/*.mjs"
       - "**/*.cjs"
       - "tests/repository-javascript-syntax.test.mjs"
+      - "tests/repository-javascript-runtime-safety.test.mjs"
       - ".github/workflows/repository-javascript-syntax.yml"
   workflow_dispatch:
 
@@ -39,3 +41,6 @@ jobs:
 
       - name: Validate tracked JavaScript syntax
         run: node tests/repository-javascript-syntax.test.mjs
+
+      - name: Reject runtime JavaScript code generation
+        run: node tests/repository-javascript-runtime-safety.test.mjs
