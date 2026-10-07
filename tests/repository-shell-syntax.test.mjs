@@ -12,16 +12,12 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
   encoding: 'utf8'
 }).split('\0').filter(Boolean);
 
+function readFile(file) {
+  return fs.readFileSync(path.join(root, file), 'utf8');
+}
+
 function firstLine(file) {
-  const full = path.join(root, file);
-  const fd = fs.openSync(full, 'r');
-  try {
-    const buffer = Buffer.alloc(256);
-    const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytes).toString('utf8').split(/\r?\n/, 1)[0];
-  } finally {
-    fs.closeSync(fd);
-  }
+  return readFile(file).split(/\r?\n/, 1)[0];
 }
 
 const shellFiles = tracked.filter((file) => {
@@ -32,6 +28,26 @@ const shellFiles = tracked.filter((file) => {
 assert.ok(shellFiles.length > 0, 'at least one tracked Bash script must be discovered');
 
 for (const file of shellFiles) {
+  const source = readFile(file);
+  const lines = source.split(/\r?\n/);
+
+  assert.equal(
+    lines[0],
+    '#!/usr/bin/env bash',
+    `${file} must use the portable #!/usr/bin/env bash shebang`
+  );
+
+  const firstStatement = lines
+    .slice(1)
+    .map((line) => line.trim())
+    .find((line) => line !== '' && !line.startsWith('#'));
+
+  assert.equal(
+    firstStatement,
+    'set -euo pipefail',
+    `${file} must enable set -euo pipefail before executing commands`
+  );
+
   const result = spawnSync('bash', ['-n', file], {
     cwd: root,
     encoding: 'utf8'
@@ -44,4 +60,6 @@ for (const file of shellFiles) {
   );
 }
 
-console.log(`Repository shell syntax contract passed for ${shellFiles.length} tracked Bash scripts`);
+console.log(
+  `Repository shell safety contract passed for ${shellFiles.length} tracked Bash scripts`
+);
