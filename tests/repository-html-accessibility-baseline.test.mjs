@@ -10,8 +10,12 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
   encoding: "utf8"
 }).split("\0").filter(Boolean);
 
-const htmlFiles = tracked.filter((file) => file.endsWith(".html")).sort();
+const isHtmlPath = (file) => path.extname(file).toLowerCase() === ".html";
+const htmlFiles = tracked.filter(isHtmlPath).sort();
 assert.ok(htmlFiles.length > 0, "repository must contain tracked HTML files");
+assert.equal(isHtmlPath("index.HTML"), true, "HTML discovery must be case-insensitive");
+assert.equal(isHtmlPath("index.HtMl"), true, "HTML discovery must accept mixed-case extensions");
+assert.equal(isHtmlPath("index.html.txt"), false, "HTML discovery must reject non-HTML suffixes");
 
 function attributes(tagSource) {
   const opening = tagSource.match(/^<[a-z][\w:-]*\b/i);
@@ -333,5 +337,15 @@ for (const file of htmlFiles) {
   validateMainLandmarks(file, source);
   validateHtmlAccessibility(file, source);
 }
+
+const workflow = fs.readFileSync(
+  path.join(root, ".github/workflows/repository-html-accessibility-baseline.yml"),
+  "utf8"
+);
+assert.doesNotMatch(
+  workflow,
+  /^\\s+paths:\\s*$/m,
+  "HTML accessibility workflow must run on every PR/push so extension casing cannot bypass validation"
+);
 
 console.log(`HTML accessibility baseline passed for ${htmlFiles.length} tracked files`);
