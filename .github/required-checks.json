@@ -2,6 +2,10 @@
   "version": 1,
   "checks": [
     {
+      "workflow": ".github/workflows/required-ci-meta-validation.yml",
+      "check": "CI meta-policy bundle"
+    },
+    {
       "workflow": ".github/workflows/repository-shell-syntax.yml",
       "check": "Parse tracked Bash scripts"
     },
