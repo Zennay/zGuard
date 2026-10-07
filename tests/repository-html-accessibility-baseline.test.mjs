@@ -153,6 +153,11 @@ function validateHtmlAccessibility(file, source) {
 
   for (const button of source.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi)) {
     const attrs = attributes(`<button${button[1]}>`);
+    const type = attrs.get("type")?.trim().toLowerCase();
+    assert.ok(
+      ["button", "submit", "reset"].includes(type),
+      `${file}: button must declare an explicit valid type: ${button[0]}`
+    );
     assert.ok(
       hasAriaName(attrs) || textContent(button[2]),
       `${file}: button must have visible text or an ARIA accessible name`
@@ -205,6 +210,10 @@ assert.throws(
 assert.throws(
   () => validateHtmlAccessibility("self-test-button.html", "<button type=\"button\"></button>"),
   /button must have/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-button-type.html", "<button>Save</button>"),
+  /button must declare an explicit valid type/
 );
 assert.throws(
   () => validateHtmlAccessibility("self-test-iframe.html", "<iframe></iframe>"),
