@@ -2,17 +2,9 @@ name: Repository Python syntax validation
 
 on:
   pull_request:
-    paths:
-      - "**/*.py"
-      - "tests/repository-python-syntax.test.py"
-      - ".github/workflows/repository-python-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.py"
-      - "tests/repository-python-syntax.test.py"
-      - ".github/workflows/repository-python-syntax.yml"
   workflow_dispatch:
 
 permissions:

@@ -2,17 +2,9 @@ name: Repository Ruby syntax validation
 
 on:
   pull_request:
-    paths:
-      - "**/*.rb"
-      - "tests/repository-ruby-syntax.test.rb"
-      - ".github/workflows/repository-ruby-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.rb"
-      - "tests/repository-ruby-syntax.test.rb"
-      - ".github/workflows/repository-ruby-syntax.yml"
   workflow_dispatch:
 
 permissions:
