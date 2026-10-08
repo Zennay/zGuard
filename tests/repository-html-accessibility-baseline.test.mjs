@@ -179,12 +179,14 @@ function validateHtmlAccessibility(file, source) {
           documentIds.has(id),
           `${file}: aria-labelledby references missing id "${id}": ${tag[0]}`
         );
-        const idTarget = [...source.matchAll(/<([a-z][\\w:-]*)\\b[^>]*>[\\s\\S]*?<\\/\\1>/gi)]
-          .find((candidate) => attributes(candidate[0].slice(0, candidate[0].indexOf(">") + 1)).get("id") === id);
-        if (idTarget) {
-          const targetAttrs = attributes(idTarget[0].slice(0, idTarget[0].indexOf(">") + 1));
+        const opening = [...source.matchAll(/<[a-z][^>]*>/gi)]
+          .find((candidate) => attributes(candidate[0]).get("id") === id);
+        if (opening) {
+          const tagName = opening[0].match(/^<([a-z][\w:-]*)/i)?.[1];
+          const close = tagName ? source.indexOf(`</${tagName}>`, opening.index + opening[0].length) : -1;
+          const inner = close < 0 ? "" : source.slice(opening.index + opening[0].length, close);
           assert.ok(
-            textContent(idTarget[0]) || targetAttrs.get("aria-label")?.trim(),
+            textContent(inner) || attributes(opening[0]).get("aria-label")?.trim(),
             `${file}: aria-labelledby target "${id}" must provide readable text`
           );
         }
