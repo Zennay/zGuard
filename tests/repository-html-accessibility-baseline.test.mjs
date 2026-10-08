@@ -179,6 +179,15 @@ function validateHtmlAccessibility(file, source) {
           documentIds.has(id),
           `${file}: aria-labelledby references missing id "${id}": ${tag[0]}`
         );
+        const idTarget = [...source.matchAll(/<([a-z][\\w:-]*)\\b[^>]*>[\\s\\S]*?<\\/\\1>/gi)]
+          .find((candidate) => attributes(candidate[0].slice(0, candidate[0].indexOf(">") + 1)).get("id") === id);
+        if (idTarget) {
+          const targetAttrs = attributes(idTarget[0].slice(0, idTarget[0].indexOf(">") + 1));
+          assert.ok(
+            textContent(idTarget[0]) || targetAttrs.get("aria-label")?.trim(),
+            `${file}: aria-labelledby target "${id}" must provide readable text`
+          );
+        }
       }
     }
 
@@ -297,6 +306,13 @@ assert.doesNotThrow(() =>
     "self-test-labelled-by.html",
     '<span id="name-label">Display name</span><input aria-labelledby="name-label">'
   )
+);
+assert.throws(
+  () => validateHtmlAccessibility(
+    "self-test-empty-target.html",
+    '<span id="name-label"></span><input aria-labelledby="name-label">'
+  ),
+  /aria-labelledby target "name-label" must provide readable text/
 );
 assert.throws(
   () => validateHtmlAccessibility("self-test-missing-labelledby.html", '<input aria-labelledby="missing">'),
