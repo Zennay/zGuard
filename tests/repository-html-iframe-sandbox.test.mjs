@@ -10,11 +10,11 @@ function validateFrameBoundary(file, html) {
   const tags = html.replace(/<!--[\s\S]*?-->/g, "").match(/<iframe\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
     const sandbox = tag.match(/\bsandbox\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-    if (!sandbox && file === "zbrowse/gateway/public/index.html" && /\\bid="browserFrame"/.test(tag)) {
-      assert.match(tag, /\\btitle="zBrowse browser session"/, "reviewed browser iframe needs an accessible title");
-      assert.match(tag, /\\breferrerpolicy="no-referrer"/, "reviewed browser iframe must suppress referrers");
-      assert.match(tag, /\\ballow="autoplay; fullscreen"/, "reviewed browser iframe permission boundary changed");
-      assert.doesNotMatch(tag, /\\s(?:src|srcdoc)\\s*=/i, "reviewed browser iframe must not load arbitrary static content");
+    if (!sandbox && file === "zbrowse/gateway/public/index.html" && /\bid="browserFrame"/.test(tag)) {
+      assert.match(tag, /\btitle="zBrowse browser session"/, "reviewed browser iframe needs an accessible title");
+      assert.match(tag, /\breferrerpolicy="no-referrer"/, "reviewed browser iframe must suppress referrers");
+      assert.match(tag, /\ballow="autoplay; fullscreen"/, "reviewed browser iframe permission boundary changed");
+      assert.doesNotMatch(tag, /\s(?:src|srcdoc)\s*=/i, "reviewed browser iframe must not load arbitrary static content");
       continue;
     }
     assert.ok(sandbox, `${file}: iframe must declare an explicit sandbox: ${tag}`);
