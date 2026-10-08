@@ -172,7 +172,7 @@ function validateHtmlAccessibility(file, source) {
     const attrs = attributes(tag[0]);
 
     if (attrs.has("aria-labelledby")) {
-      const references = attrs.get("aria-labelledby").trim().split(/\\s+/).filter(Boolean);
+      const references = attrs.get("aria-labelledby").trim().split(/\s+/).filter(Boolean);
       assert.ok(references.length > 0, `${file}: aria-labelledby must reference at least one id: ${tag[0]}`);
       for (const id of references) {
         assert.ok(
