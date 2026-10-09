@@ -20,6 +20,66 @@ assert.notEqual(jsonStart, -1, 'helmet must be configured before JSON request pa
 
 const helmetBlock = source.slice(helmetStart, jsonStart);
 
+function assertHelmetDefaultsRemainEnabled(block, label) {
+  assert.doesNotMatch(
+    block,
+    /useDefaults\s*:\s*false/,
+    `${label}: Helmet CSP defaults must remain enabled`
+  );
+
+  const protectedOptions = [
+    'contentSecurityPolicy',
+    'crossOriginOpenerPolicy',
+    'crossOriginResourcePolicy',
+    'originAgentCluster',
+    'referrerPolicy',
+    'strictTransportSecurity',
+    'hsts',
+    'xContentTypeOptions',
+    'noSniff',
+    'xDnsPrefetchControl',
+    'dnsPrefetchControl',
+    'xDownloadOptions',
+    'ieNoOpen',
+    'xFrameOptions',
+    'frameguard',
+    'xPermittedCrossDomainPolicies',
+    'permittedCrossDomainPolicies',
+    'xXssProtection',
+    'xssFilter'
+  ];
+
+  for (const option of protectedOptions) {
+    assert.doesNotMatch(
+      block,
+      new RegExp(`\\b${option}\\s*:\\s*false\\b`),
+      `${label}: Helmet security option ${option} must not be disabled`
+    );
+  }
+}
+
+assert.doesNotThrow(() =>
+  assertHelmetDefaultsRemainEnabled(
+    'contentSecurityPolicy: { directives: {} }, crossOriginEmbedderPolicy: false',
+    'self-test enabled defaults'
+  )
+);
+assert.throws(
+  () => assertHelmetDefaultsRemainEnabled('contentSecurityPolicy: { useDefaults: false }', 'self-test CSP defaults'),
+  /CSP defaults must remain enabled/
+);
+assert.throws(
+  () => assertHelmetDefaultsRemainEnabled('xFrameOptions: false', 'self-test frame protection'),
+  /xFrameOptions must not be disabled/
+);
+
+assertHelmetDefaultsRemainEnabled(helmetBlock, 'gateway helmet configuration');
+assert.match(
+  helmetBlock,
+  /crossOriginEmbedderPolicy\s*:\s*false/,
+  'gateway must keep the intentional COEP exception explicit for the proxied browser stream'
+);
+
 for (const [directive, expected] of [
   ['defaultSrc', `["'self'"]`],
   ['scriptSrc', `["'self'"]`],
