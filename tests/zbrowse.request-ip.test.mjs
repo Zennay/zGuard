@@ -97,4 +97,43 @@ assert.equal(
   'valid IPv6 forwarded clients must remain supported'
 );
 
+
+assert.equal(
+  requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': '198.51.100.20:443' } }, 1),
+  '10.0.0.3',
+  'forwarded IPs with an embedded port must not be treated as IP addresses'
+);
+
+assert.equal(
+  requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': '::ffff:203.0.113.10' } }, 1),
+  '::ffff:203.0.113.10',
+  'valid IPv4-mapped IPv6 addresses must retain their exact representation'
+);
+
+assert.equal(
+  requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': ['198.51.100.20, 10.0.0.1', '10.0.0.2'] } }, 2),
+  '10.0.0.1',
+  'multiple header fields containing comma chains must preserve right-to-left proxy trust indexing'
+);
+
+for (const invalidHops of [-1, 0, 1.5, NaN, '1', null]) {
+  assert.equal(
+    requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': '198.51.100.20' } }, invalidHops),
+    '10.0.0.3',
+    'non-positive or non-integer trustedProxyHops must not trust forwarded headers'
+  );
+}
+
+assert.equal(
+  requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': { ip: '198.51.100.20' } } }, 1),
+  '10.0.0.3',
+  'unexpected forwarded-header object values must not be coerced into a client identity'
+);
+
+assert.equal(
+  requestIp({ socket: { remoteAddress: '10.0.0.3' }, headers: { 'x-forwarded-for': '198.51.100.20, 10.0.0.2' } }, 3),
+  '10.0.0.3',
+  'trusted hop counts longer than the forwarded chain must not select an untrusted entry'
+);
+
 console.log('zBrowse request IP tests passed');
