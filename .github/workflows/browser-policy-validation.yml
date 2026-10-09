@@ -1,0 +1,31 @@
+name: zBrowse browser policy validation
+
+on:
+  pull_request:
+    paths:
+      - "zbrowse/browser/policies/policy.json"
+      - "zbrowse/browser/root/usr/local/bin/start-zbrowse"
+      - "tests/zbrowse.browser-policy.test.mjs"
+      - ".github/workflows/browser-policy-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-browser-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-policy:
+    name: Browser kiosk policy contract
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate browser policy contract
+        run: node tests/zbrowse.browser-policy.test.mjs
