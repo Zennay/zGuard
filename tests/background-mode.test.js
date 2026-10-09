@@ -5,9 +5,9 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadBackground(relativePath, mode) {
+async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false } = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
-  const settings = { enabled: true, mode, blockedCount: 0, lastBlocked: null };
+  const settings = { enabled, mode, blockedCount: 0, lastBlocked: null };
   const removed = [];
   let onCreated;
 
@@ -39,7 +39,10 @@ async function loadBackground(relativePath, mode) {
           onCreated = listener;
         }
       },
-      get: async () => ({ url: 'https://origin.test/watch' }),
+      get: async () => {
+        if (openerThrows) throw new Error('opener closed');
+        return { url: 'https://origin.test/watch' };
+      },
       remove: async (tabId) => {
         removed.push(tabId);
       }
@@ -91,6 +94,45 @@ async function verifyBrowser(relativePath) {
     [20],
     `${relativePath}: strict fallback must preserve same-origin tabs`
   );
+
+  await balanced.created({ id: 12, openerTabId: 1, url: 'https://www.nap5k.com/popup' });
+  assert.deepEqual(
+    balanced.removed,
+    [11, 12],
+    relativePath + ': hostile www-prefixed domains must also be closed'
+  );
+  assert.equal(balanced.settings.blockedCount, 2);
+  assert.equal(balanced.settings.lastBlocked?.detail?.url, 'https://www.nap5k.com/popup');
+
+  await balanced.created({ id: 13, openerTabId: 1, url: 'https://nap5k.com.attacker.example/' });
+  assert.deepEqual(
+    balanced.removed,
+    [11, 12],
+    relativePath + ': unrelated suffix lookalikes must not be blocked'
+  );
+
+  await strict.created({ id: 22, url: 'https://ads.al5sm.com/popup' });
+  await strict.created({ id: 23, openerTabId: 1 });
+  assert.deepEqual(
+    strict.removed,
+    [20],
+    relativePath + ': direct navigation and tabs without URLs must not be closed as popups'
+  );
+
+  const disabled = await loadBackground(relativePath, 'strict', { enabled: false });
+  await disabled.created({ id: 30, openerTabId: 1, url: 'https://ads.al5sm.com/popup' });
+  assert.deepEqual(disabled.removed, [], relativePath + ': disabled mode must not close tabs');
+  assert.equal(disabled.settings.blockedCount, 0);
+
+  const missingOpener = await loadBackground(relativePath, 'strict', { openerThrows: true });
+  await missingOpener.created({ id: 31, openerTabId: 999, url: 'https://ads.al5sm.com/popup' });
+  assert.deepEqual(
+    missingOpener.removed,
+    [],
+    relativePath + ': a closed opener must not cause indiscriminate tab removal'
+  );
+  assert.equal(missingOpener.settings.blockedCount, 0);
+
 }
 
 (async () => {
