@@ -45,6 +45,13 @@ function assertHeadingHierarchy(file, source) {
 
     if (openFence) continue;
 
+    const setextUnderline = line.match(/^ {0,3}(?:=+|-+)[ \t]*$/);
+    if (setextUnderline && index > 0 && lines[index - 1].trim() !== "") {
+      assert.fail(
+        `${file}:${lineNumber}: Setext headings are not allowed; use explicit ATX # headings`
+      );
+    }
+
     const heading = line.match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$/);
     if (!heading) continue;
 
@@ -78,6 +85,14 @@ assert.throws(
 assert.throws(
   () => assertHeadingHierarchy("self-test-empty.md", "# Title\n\n##   \n"),
   /must not be empty/
+);
+assert.throws(
+  () => assertHeadingHierarchy("self-test-setext-h1.md", "Title\n===\n"),
+  /Setext headings are not allowed/
+);
+assert.throws(
+  () => assertHeadingHierarchy("self-test-setext-h2.md", "Title\n---\n"),
+  /Setext headings are not allowed/
 );
 
 for (const file of markdownFiles) {
