@@ -20,6 +20,21 @@ function normalizedIpHost(hostname) {
     : hostname;
 }
 
+// URL.hostname preserves the optional absolute DNS root dot. Do not let it
+// bypass local-zone filtering or make equivalent DNS origins appear distinct.
+function canonicalKioskHostname(hostname) {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
+function isLocalDnsName(hostname) {
+  return (
+    hostname === "localhost" ||
+    [".localhost", ".local", ".home.arpa", ".internal"].some(
+      (suffix) => hostname.endsWith(suffix)
+    )
+  );
+}
+
 function isNonPublicIpv4Octets(octets) {
   const [a, b, c] = octets;
   return (
@@ -116,6 +131,26 @@ for (const ip of [
 }
 
 
+for (const [url, expected] of [
+  ["https://localhost./", true],
+  ["https://printer.local./", true],
+  ["https://sub.localhost.", true],
+  ["https://router.home.arpa./", true],
+  ["https://app.internal./", true],
+  ["https://localhost/", true],
+  ["https://www.example.com./", false],
+  ["https://local.example.com./", false],
+  ["https://8.8.8.8/", false]
+]) {
+  const hostname = canonicalKioskHostname(new URL(url).hostname);
+  assert.equal(isLocalDnsName(hostname), expected, `${url}: local-name classification drift`);
+}
+assert.equal(
+  canonicalKioskHostname(new URL("https://example.com./").hostname),
+  canonicalKioskHostname(new URL("https://example.com/").hostname),
+  "DNS root-dot variants must share the same origin identity"
+);
+
 for (const [index, site] of sites.entries()) {
   assert.equal(
     Object.getPrototypeOf(site),
@@ -148,13 +183,11 @@ for (const [index, site] of sites.entries()) {
   assert.equal(url.hash, "", `${site.name}: configured targets must not contain fragments`);
   assert.equal(url.port, "", `${site.name}: configured targets must use the default HTTPS port`);
 
-  const hostname = url.hostname.toLowerCase();
-  assert.notEqual(hostname, "localhost", `${site.name}: localhost is not a valid kiosk target`);
-  assert.ok(!hostname.endsWith(".localhost"), `${site.name}: localhost subdomains are forbidden`);
-  assert.ok(!hostname.endsWith(".local"), `${site.name}: local-network hostnames are forbidden`);
+  const hostname = canonicalKioskHostname(url.hostname);
+  assert.ok(!isLocalDnsName(hostname), `${site.name}: local DNS hostnames are forbidden`);
   assert.ok(!isNonPublicIp(hostname), `${site.name}: non-public/special-use IP targets are forbidden`);
 
-  const origin = url.origin.toLowerCase();
+  const origin = url.protocol + "//" + hostname;
   assert.ok(!seenOrigins.has(origin), `${site.name}: duplicate origin`);
   seenOrigins.add(origin);
 
