@@ -37,6 +37,38 @@ const packages = Object.entries(lock.packages ?? {})
 
 assert.ok(packages.length > 0, 'gateway lockfile must contain resolved dependencies');
 
+function assertCanonicalSha512Integrity(value, label) {
+  assert.equal(typeof value, 'string', `${label} must record Subresource Integrity metadata`);
+  assert.match(
+    value,
+    /^sha512-[A-Za-z0-9+/]+={0,2}$/,
+    `${label} must use a sha512 integrity value`
+  );
+
+  const encoded = value.slice('sha512-'.length);
+  const decoded = Buffer.from(encoded, 'base64');
+  assert.equal(decoded.length, 64, `${label} must encode a full 64-byte SHA-512 digest`);
+  assert.equal(
+    decoded.toString('base64'),
+    encoded,
+    `${label} SHA-512 digest must use canonical base64 encoding`
+  );
+}
+
+const validFixture = 'sha512-' + Buffer.alloc(64, 0x5a).toString('base64');
+assert.doesNotThrow(() => assertCanonicalSha512Integrity(validFixture, 'valid fixture'));
+for (const malformed of [
+  'sha512-YQ==', // valid base64, but only one byte rather than 64
+  validFixture.slice(0, -1), // padding dropped; decodes but is noncanonical
+  'sha512-' + Buffer.alloc(63, 0x5a).toString('base64'),
+  'sha512-$$', 'sha256-' + Buffer.alloc(64).toString('base64')
+]) {
+  assert.throws(
+    () => assertCanonicalSha512Integrity(malformed, 'malformed fixture'),
+    /64-byte SHA-512|canonical base64|sha512 integrity/
+  );
+}
+
 for (const [name, entry] of packages) {
   assert.equal(entry.link, undefined, `${name} must not resolve through a local/link dependency`);
   assert.equal(typeof entry.version, 'string', `${name} must record an exact version`);
@@ -55,12 +87,7 @@ for (const [name, entry] of packages) {
   assert.equal(resolved.search, '', `${name} resolved URL must not contain query parameters`);
   assert.equal(resolved.hash, '', `${name} resolved URL must not contain a fragment`);
 
-  assert.equal(typeof entry.integrity, 'string', `${name} must record Subresource Integrity metadata`);
-  assert.match(
-    entry.integrity,
-    /^sha512-[A-Za-z0-9+/]+={0,2}$/,
-    `${name} must use a sha512 integrity value`
-  );
+  assertCanonicalSha512Integrity(entry.integrity, name);
 }
 
 const approvedInstallScripts = [
