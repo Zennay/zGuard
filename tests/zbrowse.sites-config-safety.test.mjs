@@ -20,15 +20,19 @@ function normalizedIpHost(hostname) {
     : hostname;
 }
 
-function isLocalOrPrivateIpv4Octets(octets) {
-  const [a, b] = octets;
+function isNonPublicIpv4Octets(octets) {
+  const [a, b, c] = octets;
   return (
     a === 0 ||
     a === 10 ||
     a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) || // CGNAT, not a public kiosk endpoint
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
+    (a === 192 && (b === 168 || b === 0)) ||
+    (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224 // multicast and reserved/broadcast destinations
   );
 }
 
@@ -50,12 +54,12 @@ function mappedIpv4Octets(ip) {
   return [high >> 8, high & 0xff, low >> 8, low & 0xff];
 }
 
-function isLocalOrPrivateIp(hostname) {
+function isNonPublicIp(hostname) {
   const ip = normalizedIpHost(hostname);
   const version = net.isIP(ip);
 
   if (version === 4) {
-    return isLocalOrPrivateIpv4Octets(ip.split(".").map(Number));
+    return isNonPublicIpv4Octets(ip.split(".").map(Number));
   }
 
   if (version === 6) {
@@ -67,30 +71,50 @@ function isLocalOrPrivateIp(hostname) {
       lower.startsWith("fc") ||
       lower.startsWith("fd") ||
       /^fe[89ab]/.test(lower) ||
-      (mappedIpv4 !== null && isLocalOrPrivateIpv4Octets(mappedIpv4))
+      lower.startsWith("ff") || // multicast, not a publicly reachable web host
+      lower.startsWith("2001:db8:") || // RFC 3849 documentation-only range
+      lower === "2001:db8::" ||
+      (mappedIpv4 !== null && isNonPublicIpv4Octets(mappedIpv4))
     );
   }
 
   return false;
 }
 
-assert.equal(isLocalOrPrivateIp("127.0.0.1"), true, "IPv4 loopback must be private");
-assert.equal(isLocalOrPrivateIp("::1"), true, "IPv6 loopback must be private");
+assert.equal(isNonPublicIp("127.0.0.1"), true, "IPv4 loopback must be private");
+assert.equal(isNonPublicIp("::1"), true, "IPv6 loopback must be private");
 assert.equal(
-  isLocalOrPrivateIp("::ffff:7f00:1"),
+  isNonPublicIp("::ffff:7f00:1"),
   true,
   "IPv4-mapped IPv6 loopback must be private"
 );
 assert.equal(
-  isLocalOrPrivateIp("::ffff:c0a8:101"),
+  isNonPublicIp("::ffff:c0a8:101"),
   true,
   "IPv4-mapped IPv6 RFC1918 targets must be private"
 );
 assert.equal(
-  isLocalOrPrivateIp("::ffff:808:808"),
+  isNonPublicIp("::ffff:808:808"),
   false,
   "IPv4-mapped public IPv6 targets must remain distinguishable"
 );
+
+for (const ip of [
+  "100.64.0.1", "100.127.255.254", // RFC 6598 carrier-grade NAT
+  "198.18.0.1", "198.19.255.254", // RFC 2544 benchmarking
+  "192.0.2.7", "198.51.100.7", "203.0.113.7", // TEST-NET
+  "224.0.0.1", "239.255.255.250", "240.0.0.1", "255.255.255.255",
+  "::ffff:100.64.0.1", "::ffff:c612:1", "::ffff:cb00:7107",
+  "ff02::1", "ff0e::1", "2001:db8::1"
+]) {
+  assert.equal(isNonPublicIp(ip), true, `${ip}: special-use IP must be rejected`);
+}
+for (const ip of [
+  "8.8.8.8", "1.1.1.1", "::ffff:808:808", "2001:4860:4860::8888"
+]) {
+  assert.equal(isNonPublicIp(ip), false, `${ip}: valid public IP must remain allowed`);
+}
+
 
 for (const [index, site] of sites.entries()) {
   assert.equal(
@@ -128,7 +152,7 @@ for (const [index, site] of sites.entries()) {
   assert.notEqual(hostname, "localhost", `${site.name}: localhost is not a valid kiosk target`);
   assert.ok(!hostname.endsWith(".localhost"), `${site.name}: localhost subdomains are forbidden`);
   assert.ok(!hostname.endsWith(".local"), `${site.name}: local-network hostnames are forbidden`);
-  assert.ok(!isLocalOrPrivateIp(hostname), `${site.name}: local/private IP targets are forbidden`);
+  assert.ok(!isNonPublicIp(hostname), `${site.name}: non-public/special-use IP targets are forbidden`);
 
   const origin = url.origin.toLowerCase();
   assert.ok(!seenOrigins.has(origin), `${site.name}: duplicate origin`);
