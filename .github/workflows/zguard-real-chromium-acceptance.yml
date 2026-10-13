@@ -19,6 +19,10 @@ on:
         description: "Require real native middle-click interception (auxclick)"
         type: boolean
         default: false
+      require_shadow_dom:
+        description: "Require hostile popup interception through Shadow DOM event retargeting"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +41,7 @@ jobs:
       REQUIRE_MAINWORLD: ${{ inputs.require_mainworld || 'false' }}
       REQUIRE_COLDSTART: ${{ inputs.require_coldstart || 'false' }}
       REQUIRE_AUXCLICK: ${{ inputs.require_auxclick || 'false' }}
+      REQUIRE_SHADOW_DOM: ${{ inputs.require_shadow_dom || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -78,4 +83,7 @@ jobs:
           fi
           if [ "$REQUIRE_AUXCLICK" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-auxclick
+          fi
+          if [ "$REQUIRE_SHADOW_DOM" = "true" ]; then
+            node tests/zguard.chromium-real-browser.test.mjs --require-shadow-dom
           fi
