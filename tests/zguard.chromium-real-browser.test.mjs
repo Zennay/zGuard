@@ -1,6 +1,7 @@
 // Real headless Chromium runs the shipped MV3 extension, not a VM mock.
 // This test deliberately does not claim to prove MAIN-world window.open
 // interception until invoked with --require-mainworld.
+// --cold-start intentionally reproduces the kiosk CLI navigation race (#302).
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireMainWorld = process.argv.includes('--require-mainworld');
+const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
   process.env.CHROMIUM_BIN,
@@ -68,7 +70,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     '--disable-extensions-except=' + extensionPath,
     '--load-extension=' + extensionPath,
     '--user-data-dir=' + profilePath,
-    '--remote-debugging-port=0', 'about:blank'
+    '--remote-debugging-port=0', coldStart ? url : 'about:blank'
   ];
   const child = spawn(browser, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -88,7 +90,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     const response = await fetch('http://127.0.0.1:' + port + '/json/list');
     assert.equal(response.ok, true, 'Local CDP targets must be available');
     const targets = await response.json();
-    const page = targets.find((target) => target.type === 'page' && target.url === 'about:blank');
+    const page = targets.find((target) => target.type === 'page' && target.url === (coldStart ? url : 'about:blank'));
     assert.ok(page?.webSocketDebuggerUrl, 'Expected real browser page target');
     socket = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -99,8 +101,9 @@ async function runBrowser(extensionPath, profilePath, url) {
     // unpacked MV3 content scripts are registered. That cold-start ordering
     // intermittently omits injection in the top frame while a later iframe
     // receives it. Warm the extension process first, then navigate explicitly.
-    await sleep(2500);
-    const navigation = await new Promise((resolve, reject) => {
+    if (!coldStart) {
+      await sleep(2500);
+      const navigation = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('CDP Page.navigate timed out')), 10000);
       socket.addEventListener('message', function onNavigation(message) {
         const packet = JSON.parse(message.data);
@@ -112,8 +115,9 @@ async function runBrowser(extensionPath, profilePath, url) {
       socket.send(JSON.stringify({ id: 9, method: 'Page.navigate', params: { url } }));
     });
     assert.equal(navigation.error, undefined, 'real Chromium must navigate to the local fixture');
-    assert.equal(navigation.result?.errorText, undefined,
-      'real Chromium must not fail local fixture navigation');
+      assert.equal(navigation.result?.errorText, undefined,
+        'real Chromium must not fail local fixture navigation');
+    }
     const expression = '(' + (() => {
       function probe(id, context = document) {
         const anchor = context.getElementById(id);
@@ -213,7 +217,8 @@ async function runBrowser(extensionPath, profilePath, url) {
 }
 
 try {
-  for (const variant of variants) {
+  for (const { variant, attempt } of variants.flatMap((name) =>
+    Array.from({ length: coldStart ? 3 : 1 }, (_, index) => ({ variant: name, attempt: index + 1 })))) {
     const extensionPath = path.join(root, variant);
     assert.ok(fs.existsSync(path.join(extensionPath, 'manifest.json')),
       variant + ': MV3 manifest must exist');
@@ -222,7 +227,8 @@ try {
       const url = 'http://127.0.0.1:' + server.address().port + '/';
       const observed = await runBrowser(extensionPath, profile, url);
       // Boolean-only evidence; never include navigated URLs or session tokens.
-      console.log(variant + ': interception probe=' + JSON.stringify(observed));
+      console.log(variant + (coldStart ? ' cold start #' + attempt : '') +
+        ': interception probe=' + JSON.stringify(observed));
       assert.equal(observed.pageReady, true,
         variant + ': real Chrome must finish local fixture navigation before acceptance');
       assert.equal(observed.hostileClickBlocked, true,
@@ -265,4 +271,5 @@ try {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
+  : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
+    : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
