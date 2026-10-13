@@ -13,7 +13,9 @@
 
   function showSite(tabs) {
     try {
-      site.textContent = new URL(tabs?.[0]?.url || '').hostname || 'Deze site';
+      const target = new URL(tabs?.[0]?.url || '');
+      site.textContent = ['https:', 'http:'].includes(target.protocol) && target.hostname
+        ? target.hostname : 'Deze site';
     } catch (_) {
       site.textContent = 'Deze site';
     }
