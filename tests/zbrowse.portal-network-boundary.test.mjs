@@ -19,6 +19,32 @@ function quotedLeadingArgumentCalls(source, calleePattern) {
   return matches;
 }
 
+// Prefix checks alone permit "/api/../other": browsers normalize it to
+// "/other" before any request is sent. Bind each literal to its effective URL.
+function isCanonicalApiLiteral(literal) {
+  if (!literal.startsWith("/api/")) return false;
+  if (/[?#\\]/.test(literal) || /%(?:2e|2f|5c)/i.test(literal)) return false;
+  try {
+    const parsed = new URL(literal, "https://zbrowse.invalid");
+    return parsed.origin === "https://zbrowse.invalid" &&
+      parsed.pathname === literal && parsed.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
+
+for (const pathLiteral of ["/api/health", "/api/session/", "/api/v1/health"]) {
+  assert.equal(isCanonicalApiLiteral(pathLiteral), true, `${pathLiteral}: safe API literal`);
+}
+for (const pathLiteral of [
+  "/api/../private", "/api/%2e%2e/private", "/api/x/../private",
+  "/api/%2f%2fexample.test", "/api/%5cprivate",
+  "/api/health?redirect=other", "/api/health#fragment",
+  "/api/\\\\private", "/private", "//example.test/api/health"
+]) {
+  assert.equal(isCanonicalApiLiteral(pathLiteral), false, `${pathLiteral}: unsafe API literal`);
+}
+
 function validatePortalNetworkBoundary(source, label) {
   const findings = [];
 
@@ -65,9 +91,9 @@ function validatePortalNetworkBoundary(source, label) {
   }
 
   for (const call of requestCalls) {
-    if (!call.argument.startsWith("/api/")) {
+    if (!isCanonicalApiLiteral(call.argument)) {
       findings.push(
-        `${label}: request() target must stay under same-origin /api/; got ${JSON.stringify(call.argument)}`
+        `${label}: request() target must remain a canonical same-origin /api/ path; got ${JSON.stringify(call.argument)}`
       );
     }
   }
@@ -194,6 +220,25 @@ const Socket = window.WebSocket;
 new Socket("wss://example.com/socket");
 `,
     /unreviewed network primitive WebSocket/
+  ],
+  [
+    "normalized traversal request",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/%2e%2e/other");
+`,
+    /canonical same-origin \/api\//
+  ],
+  [
+    "normalized traversal beacon",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/health");
+navigator.sendBeacon("/api/../other", "{}");
+`,
+    /canonical same-origin \/api\//
   ],
   [
     "beacon alias",
