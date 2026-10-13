@@ -42,6 +42,7 @@ const sandbox = {
   requestPath: (req, current) => current || req.url,
   requestIp: () => ip,
   trustProxyHops: 0,
+  config: { idleMs: 300_000 },
   isSessionExpired: () => false,
   console: { error() { throw new Error('unexpected fixture proxy failure'); } },
   createProxyServer() {
