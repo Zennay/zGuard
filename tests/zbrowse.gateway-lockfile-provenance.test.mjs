@@ -69,6 +69,50 @@ for (const malformed of [
   );
 }
 
+// A valid SRI digest and trusted registry host are insufficient if a lock entry
+// resolves a different package or version. Keep the tarball path bound to the
+// exact npm package identity, including nested and scoped dependencies.
+function assertCanonicalTarballIdentity(resolved, packageKey, version) {
+  const marker = 'node_modules/';
+  assert.ok(packageKey.includes(marker), 'tarball identity requires a package key');
+  const npmPackage = packageKey.slice(packageKey.lastIndexOf(marker) + marker.length);
+  const tarballName = npmPackage.split('/').at(-1);
+  const expected = `/${npmPackage}/-/${tarballName}-${version}.tgz`;
+  assert.equal(
+    new URL(resolved).pathname,
+    expected,
+    `${packageKey}: resolved tarball path must match its npm name and exact version`
+  );
+}
+
+for (const [name, version, resolved] of [
+  ['node_modules/express', '5.1.0', 'https://registry.npmjs.org/express/-/express-5.1.0.tgz'],
+  ['node_modules/@grpc/grpc-js', '1.14.5', 'https://registry.npmjs.org/@grpc/grpc-js/-/grpc-js-1.14.5.tgz'],
+  [
+    'node_modules/@grpc/grpc-js/node_modules/@grpc/proto-loader',
+    '0.8.1',
+    'https://registry.npmjs.org/@grpc/proto-loader/-/proto-loader-0.8.1.tgz'
+  ]
+]) {
+  assert.doesNotThrow(
+    () => assertCanonicalTarballIdentity(resolved, name, version),
+    `${name}: valid canonical npm tarball must be accepted`
+  );
+}
+
+for (const [name, version, resolved] of [
+  ['node_modules/express', '5.1.0', 'https://registry.npmjs.org/helmet/-/helmet-5.1.0.tgz'],
+  ['node_modules/express', '5.1.0', 'https://registry.npmjs.org/express/-/express-5.1.1.tgz'],
+  ['node_modules/@grpc/grpc-js', '1.14.5', 'https://registry.npmjs.org/grpc-js/-/grpc-js-1.14.5.tgz'],
+  ['node_modules/express', '5.1.0', 'https://registry.npmjs.org/express/-/different-5.1.0.tgz']
+]) {
+  assert.throws(
+    () => assertCanonicalTarballIdentity(resolved, name, version),
+    /resolved tarball path must match/,
+    `${name}: mismatched tarball identity must fail closed`
+  );
+}
+
 for (const [name, entry] of packages) {
   assert.equal(entry.link, undefined, `${name} must not resolve through a local/link dependency`);
   assert.equal(typeof entry.version, 'string', `${name} must record an exact version`);
@@ -86,6 +130,8 @@ for (const [name, entry] of packages) {
   assert.equal(resolved.password, '', `${name} resolved URL must not contain credentials`);
   assert.equal(resolved.search, '', `${name} resolved URL must not contain query parameters`);
   assert.equal(resolved.hash, '', `${name} resolved URL must not contain a fragment`);
+
+  assertCanonicalTarballIdentity(entry.resolved, name, entry.version);
 
   assertCanonicalSha512Integrity(entry.integrity, name);
 }
