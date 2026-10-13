@@ -40,14 +40,20 @@ function renderSuggestions() {
   }));
 }
 
+let healthRequestSequence = 0;
+
 async function refreshHealth() {
+  const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
     const health = await request("/api/health");
+    // A slower earlier poll cannot overwrite a newer capacity observation.
+    if (sequence !== healthRequestSequence) return;
     const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
+    if (sequence !== healthRequestSequence) return;
     status.className = "status";
     $("capacityText").textContent = "Browser engine offline";
   }
