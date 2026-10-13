@@ -118,7 +118,16 @@ async function runBrowser(extensionPath, profilePath, url) {
         // also reflect cancellation, not merely stop propagation.
         return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
       }
+      // CDP can attach before the top navigation has committed. Until the
+      // fixture DOM exists, return a readiness sentinel rather than throwing:
+      // missing DOM is not evidence that the extension failed interception.
+      if (!document.getElementById('hostile') ||
+          !document.getElementById('ordinary') ||
+          !document.getElementById('childFrame')) {
+        return { pageReady: false };
+      }
       return {
+        pageReady: true,
         hostileClickBlocked: probe('hostile').blocked,
         ordinaryClickBlocked: probe('ordinary').blocked,
         cases: {
@@ -164,7 +173,8 @@ async function runBrowser(extensionPath, profilePath, url) {
       observed = reply.result?.result?.value;
       assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
       if (
-        (observed.hostileClickBlocked && observed.cases?.frameHostile?.blocked) ||
+        (observed.pageReady && observed.hostileClickBlocked &&
+          observed.cases?.frameHostile?.blocked) ||
         Date.now() >= deadline
       ) break;
       await sleep(200);
@@ -195,6 +205,8 @@ try {
       const observed = await runBrowser(extensionPath, profile, url);
       // Boolean-only evidence; never include navigated URLs or session tokens.
       console.log(variant + ': interception probe=' + JSON.stringify(observed));
+      assert.equal(observed.pageReady, true,
+        variant + ': real Chrome must finish local fixture navigation before acceptance');
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
