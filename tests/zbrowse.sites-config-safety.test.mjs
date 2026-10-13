@@ -36,7 +36,7 @@ function isLocalDnsName(hostname) {
 }
 
 function isNonPublicIpv4Octets(octets) {
-  const [a, b, c] = octets;
+  const [a, b, c, d] = octets;
   return (
     a === 0 ||
     a === 10 ||
@@ -44,7 +44,11 @@ function isNonPublicIpv4Octets(octets) {
     (a === 100 && b >= 64 && b <= 127) || // CGNAT, not a public kiosk endpoint
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 168 || b === 0)) ||
+    (a === 192 && (
+      b === 168 ||
+      (b === 0 && (c === 2 || (c === 0 && d !== 9 && d !== 10))) ||
+      (b === 88 && c === 99)
+    )) ||
     (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
     (a === 203 && b === 0 && c === 113) ||
     a >= 224 // multicast and reserved/broadcast destinations
@@ -85,7 +89,10 @@ function isNonPublicIp(hostname) {
       lower === "::1" ||
       lower.startsWith("fc") ||
       lower.startsWith("fd") ||
-      /^fe[89ab]/.test(lower) ||
+      /^fe[89ab]/.test(lower) || // link-local fe80::/10
+      /^fe[cdef]/.test(lower) || // deprecated site-local fec0::/10
+      (lower.split(':')[0] === '3fff' &&
+        Number.parseInt(lower.split(':')[1] || '0', 16) < 0x1000) || // RFC 9637 3fff::/20
       lower.startsWith("ff") || // multicast, not a publicly reachable web host
       lower.startsWith("2001:db8:") || // RFC 3849 documentation-only range
       lower === "2001:db8::" ||
@@ -116,6 +123,10 @@ assert.equal(
 
 for (const ip of [
   "100.64.0.1", "100.127.255.254", // RFC 6598 carrier-grade NAT
+  "192.0.0.8", "192.0.0.170", // IETF protocol assignments (excluding .9/.10 globally reachable anycast)
+  "192.88.99.2", // deprecated 6to4 relay/6a44 anycast
+  "fec0::1", "feff::1", // deprecated IPv6 site-local range
+  "3fff::1", "3fff:fff::1", // RFC 9637 IPv6 documentation-only prefix
   "198.18.0.1", "198.19.255.254", // RFC 2544 benchmarking
   "192.0.2.7", "198.51.100.7", "203.0.113.7", // TEST-NET
   "224.0.0.1", "239.255.255.250", "240.0.0.1", "255.255.255.255",
@@ -125,7 +136,7 @@ for (const ip of [
   assert.equal(isNonPublicIp(ip), true, `${ip}: special-use IP must be rejected`);
 }
 for (const ip of [
-  "8.8.8.8", "1.1.1.1", "::ffff:808:808", "2001:4860:4860::8888"
+  "8.8.8.8", "1.1.1.1", "192.0.0.9", "192.0.0.10", "192.0.32.1", "::ffff:808:808", "2001:4860:4860::8888"
 ]) {
   assert.equal(isNonPublicIp(ip), false, `${ip}: valid public IP must remain allowed`);
 }
