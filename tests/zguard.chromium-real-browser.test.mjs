@@ -26,6 +26,29 @@ assert.ok(browser, 'A real Chrome/Chromium executable is required; do not skip b
 const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <!-- Test targets are synthetic clicks only; CDP target listeners cancel ordinary navigation. -->
 <a id="hostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile</a>
+<script>
+  // Parser-time gesture precedes CDP attachment. The fixture's target
+  // listener cancels navigation if zGuard has not already intercepted it.
+  // This never opens an external URL even when extension injection races.
+  (() => {
+    const anchor = document.getElementById('hostile');
+    let reachedTarget = false;
+    const cancelFixtureNavigation = (event) => {
+      reachedTarget = true;
+      event.preventDefault();
+    };
+    anchor.addEventListener('click', cancelFixtureNavigation, { once: true });
+    const event = new MouseEvent('click', {
+      bubbles: true, cancelable: true, ctrlKey: true
+    });
+    anchor.dispatchEvent(event);
+    anchor.removeEventListener('click', cancelFixtureNavigation);
+    window.__zguardParserTimeClick = {
+      blocked: !reachedTarget,
+      cancelled: event.defaultPrevented
+    };
+  })();
+</script>
 <a id="hostileRootDot" href="https://WWW.NAP5K.COM./popup" target="_blank">DNS root dot</a>
 <a id="hostileNested" href="https://deep.Sub.TMLL7.COM./popup" target="_blank">Nested hostile</a>
 <a id="hostileUserInfo" href="https://user:password@ads.al5sm.com/popup" target="_blank">Hostile authority</a>
@@ -162,6 +185,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       const ordinary = probe('ordinary');
       return {
         pageReady: true,
+        parserTimeClick: window.__zguardParserTimeClick ?? null,
         hostileClickBlocked: hostile.blocked,
         hostileClickCancelled: hostile.cancelled,
         ordinaryClickBlocked: ordinary.blocked,
@@ -256,6 +280,10 @@ try {
       assert.equal(observed.pageReady, true,
         variant + ': real Chrome must finish local fixture navigation before acceptance');
       if (coldStart) {
+        assert.equal(observed.parserTimeClick?.blocked, true,
+          variant + ': parser-time cold-start hostile click reached page target (issue #302)');
+        assert.equal(observed.parserTimeClick?.cancelled, true,
+          variant + ': parser-time gesture must be cancelled before navigation');
         assert.equal(observed.firstObservedTopFrameProtected, true,
           variant + ': first observed cold-start top-frame click was unprotected (issue #302)');
       }
