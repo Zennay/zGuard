@@ -89,6 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           "$CHROMIUM_BIN" --version
+          node tests/zguard.browser-flag-contract.test.mjs
           node tests/zguard.chromium-real-browser.test.mjs
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld

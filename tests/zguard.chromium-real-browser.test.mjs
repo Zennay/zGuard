@@ -9,15 +9,13 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseAcceptanceFlags } from '../tools/real-browser-flags.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const requireMainWorld = process.argv.includes('--require-mainworld');
-const requireAuxclick = process.argv.includes('--require-auxclick');
-const requireShadowDom = process.argv.includes('--require-shadow-dom');
-const requireFormSubmit = process.argv.includes('--require-form-submit');
-const requireImageMap = process.argv.includes('--require-image-map');
-const requireSvgLink = process.argv.includes('--require-svg-link');
-const coldStart = process.argv.includes('--cold-start');
+const {
+  requireMainWorld, requireAuxclick, requireShadowDom,
+  requireFormSubmit, requireImageMap, requireSvgLink, coldStart
+} = parseAcceptanceFlags(process.argv.slice(2));
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
   process.env.CHROMIUM_BIN,
