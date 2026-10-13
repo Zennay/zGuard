@@ -26,6 +26,29 @@ assert.ok(browser, 'A real Chrome/Chromium executable is required; do not skip b
 const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <!-- Test targets are synthetic clicks only; CDP target listeners cancel ordinary navigation. -->
 <a id="hostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile</a>
+<script>
+  // Parser-time gesture precedes CDP attachment. The fixture's target
+  // listener cancels navigation if zGuard has not already intercepted it.
+  // This never opens an external URL even when extension injection races.
+  (() => {
+    const anchor = document.getElementById('hostile');
+    let reachedTarget = false;
+    const cancelFixtureNavigation = (event) => {
+      reachedTarget = true;
+      event.preventDefault();
+    };
+    anchor.addEventListener('click', cancelFixtureNavigation, { once: true });
+    const event = new MouseEvent('click', {
+      bubbles: true, cancelable: true, ctrlKey: true
+    });
+    anchor.dispatchEvent(event);
+    anchor.removeEventListener('click', cancelFixtureNavigation);
+    window.__zguardParserTimeClick = {
+      blocked: !reachedTarget,
+      cancelled: event.defaultPrevented
+    };
+  })();
+</script>
 <a id="hostileRootDot" href="https://WWW.NAP5K.COM./popup" target="_blank">DNS root dot</a>
 <a id="hostileNested" href="https://deep.Sub.TMLL7.COM./popup" target="_blank">Nested hostile</a>
 <a id="hostileUserInfo" href="https://user:password@ads.al5sm.com/popup" target="_blank">Hostile authority</a>
@@ -87,10 +110,20 @@ async function runBrowser(extensionPath, profilePath, url) {
     assert.ok(fs.existsSync(portFile), 'Chromium DevTools did not start (exit=' + child.exitCode + '): ' + stderr.slice(-3000));
     const port = Number(fs.readFileSync(portFile, 'utf8').split('\n')[0]);
     assert.ok(Number.isSafeInteger(port) && port > 0, 'Invalid local CDP port');
-    const response = await fetch('http://127.0.0.1:' + port + '/json/list');
-    assert.equal(response.ok, true, 'Local CDP targets must be available');
-    const targets = await response.json();
-    const page = targets.find((target) => target.type === 'page' && target.url === (coldStart ? url : 'about:blank'));
+    // DevToolsActivePort can appear before Chrome has published the matching
+    // page target. Wait for discovery, not for protection: the earliest page
+    // gesture observed after CDP attaches is still assessed below.
+    let page;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const response = await fetch('http://127.0.0.1:' + port + '/json/list');
+      assert.equal(response.ok, true, 'Local CDP targets must be available');
+      const targets = await response.json();
+      page = targets.find((target) => target.type === 'page' &&
+        target.url === (coldStart ? url : 'about:blank'));
+      if (page?.webSocketDebuggerUrl) break;
+      if (child.exitCode !== null) break;
+      await sleep(100);
+    }
     assert.ok(page?.webSocketDebuggerUrl, 'Expected real browser page target');
     socket = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -148,10 +181,15 @@ async function runBrowser(extensionPath, profilePath, url) {
           !document.getElementById('childFrame')) {
         return { pageReady: false };
       }
+      const hostile = probe('hostile');
+      const ordinary = probe('ordinary');
       return {
         pageReady: true,
-        hostileClickBlocked: probe('hostile').blocked,
-        ordinaryClickBlocked: probe('ordinary').blocked,
+        parserTimeClick: window.__zguardParserTimeClick ?? null,
+        hostileClickBlocked: hostile.blocked,
+        hostileClickCancelled: hostile.cancelled,
+        ordinaryClickBlocked: ordinary.blocked,
+        ordinaryClickCancelled: ordinary.cancelled,
         cases: {
           hostileRootDot: probe('hostileRootDot'),
           hostileNested: probe('hostileNested'),
@@ -173,6 +211,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     // synchronized with the CDP page target. Poll with a bounded deadline,
     // but never accept a false click result as proof of real interception.
     let observed;
+    let firstObservedTopFrameProtected = null;
     const deadline = Date.now() + 16000;
     do {
       const reply = await new Promise((resolve, reject) => {
@@ -194,6 +233,15 @@ async function runBrowser(extensionPath, profilePath, url) {
       }
       observed = reply.result?.result?.value;
       assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
+      // Cold-start acceptance must not forgive an initially unprotected click
+      // simply because an extension subsequently injects and a later retry
+      // succeeds. This observes the earliest fixture click after CDP attach;
+      // it cannot establish that no earlier user gesture was possible.
+      if (coldStart && observed.pageReady && firstObservedTopFrameProtected === null) {
+        firstObservedTopFrameProtected =
+          observed.hostileClickBlocked === true && observed.hostileClickCancelled === true;
+      }
+      if (coldStart && firstObservedTopFrameProtected === false) break;
       if (
         (observed.pageReady && observed.hostileClickBlocked &&
           observed.cases?.frameHostile?.blocked) ||
@@ -201,7 +249,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
-    return observed;
+    return coldStart ? { ...observed, firstObservedTopFrameProtected } : observed;
   } finally {
     socket?.close();
     if (child.exitCode === null) {
@@ -231,10 +279,22 @@ try {
         ': interception probe=' + JSON.stringify(observed));
       assert.equal(observed.pageReady, true,
         variant + ': real Chrome must finish local fixture navigation before acceptance');
+      if (coldStart) {
+        assert.equal(observed.parserTimeClick?.blocked, true,
+          variant + ': parser-time cold-start hostile click reached page target (issue #302)');
+        assert.equal(observed.parserTimeClick?.cancelled, true,
+          variant + ': parser-time gesture must be cancelled before navigation');
+        assert.equal(observed.firstObservedTopFrameProtected, true,
+          variant + ': first observed cold-start top-frame click was unprotected (issue #302)');
+      }
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
+      assert.equal(observed.hostileClickCancelled, true,
+        variant + ': hostile top-frame gesture must cancel default navigation');
       assert.equal(observed.ordinaryClickBlocked, false,
         variant + ': actual injected extension must preserve ordinary external links');
+      assert.equal(observed.ordinaryClickCancelled, true,
+        variant + ': fixture must cancel ordinary external navigation');
       for (const label of ['hostileRootDot', 'hostileNested', 'hostileUserInfo']) {
         assert.equal(observed.cases?.[label]?.blocked, true,
           variant + ': real browser must block hostile authority variant ' + label);
