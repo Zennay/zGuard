@@ -75,8 +75,16 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
     },
     message: (message) => new Promise((resolve, reject) => {
       const result = onMessage(message, {}, resolve);
-      if (result && typeof result.then === 'function') result.then(resolve, reject);
-      else if (result !== true) resolve(undefined);
+      if (result && typeof result.then === 'function') {
+        result.then(resolve, reject);
+      } else if (result !== true && message.type === 'blocked-event') {
+        // Chromium's event listener returns false before its async queue
+        // finishes. A get-settings response is a read barrier.
+        const barrier = onMessage({ type: 'get-settings' }, {}, resolve);
+        if (barrier && typeof barrier.then === 'function') barrier.then(resolve, reject);
+      } else if (result !== true) {
+        resolve(undefined);
+      }
     }),
     removed,
     settings
