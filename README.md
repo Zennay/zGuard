@@ -76,13 +76,26 @@ browser-realistic proof that page-authored JavaScript is intercepted in the page
 MAIN JavaScript world. That integration gap is tracked in
 [issue #3](https://github.com/Zennay/zGuard/issues/3).
 
-The browser-level new-tab fallback also still needs explicit `pendingUrl` coverage
-before it can be treated as complete for pre-commit navigations; that gate is tracked
-in [issue #9](https://github.com/Zennay/zGuard/issues/9).
+The browser-level new-tab fallback now checks the committed `tab.url` and
+falls back to `tab.pendingUrl` when no committed URL exists. Chromium, Firefox
+and the bundled zBrowse extension have behavior regressions for early hostile
+navigation, same-origin precedence, internal schemes and malformed URLs.
+[Issue #9](https://github.com/Zennay/zGuard/issues/9) was closed by
+[PR #289](https://github.com/Zennay/zGuard/pull/289); these are **VM and
+repository CI results**, not real-browser interception evidence.
 
-Until those gates are closed with real-browser evidence, zGuard should be described as
-a popup-blocking prototype with tested decision logic rather than a complete bypass-proof
-popup blocker.
+Concurrent settings updates and blocked-event counters now share a serialized
+background storage queue ([PR #290](https://github.com/Zennay/zGuard/pull/290),
+closing [#4](https://github.com/Zennay/zGuard/issues/4) and
+[#6](https://github.com/Zennay/zGuard/issues/6)). Corrupt settings are
+normalized, user patches are limited to `enabled` and `mode`, and newly stored
+blocked URL telemetry retains only a web origin or `[redacted]`. Existing
+legacy telemetry is migrated when an updated extension runs its installation
+handler; an unupgraded browser has not executed that migration.
+
+Until the MAIN-world integration gate in issue #3 passes on actual browsers,
+zGuard remains a popup-blocking prototype with tested decision logic rather
+than a complete bypass-proof popup blocker.
 
 For zBrowse runtime validation and deployment checks, see [`zbrowse/README.md`](zbrowse/README.md).
 
