@@ -208,6 +208,29 @@ async function verifyBrowser(relativePath) {
   assert.match(broken.settings.lastBlocked.at, /^\d{4}-\d\d-\d\dT/,
     relativePath + ': invalid legacy timestamp must be replaced');
 
+  // A browser-created popup may expose its destination only as pendingUrl.
+  // Evaluate the committed URL first, falling back only when it is empty.
+  const pending = await loadBackground(relativePath, 'balanced');
+  await pending.created({ id: 101, openerTabId: 1, url: '', pendingUrl: 'https://ads.al5sm.com/hidden?secret=1' });
+  await pending.created({ id: 102, openerTabId: 1, pendingUrl: 'https://WWW.NAP5K.COM./popup' });
+  await pending.created({ id: 103, openerTabId: 1, url: 'https://example.org/safe', pendingUrl: 'https://ads.al5sm.com/bait' });
+  await pending.created({ id: 104, openerTabId: 1, url: '', pendingUrl: 'about:blank' });
+  await pending.created({ id: 105, openerTabId: 1, url: '', pendingUrl: 'file:///etc/passwd' });
+  await pending.created({ id: 106, openerTabId: 1, url: '', pendingUrl: 'not a URL' });
+  await pending.created({ id: 107, openerTabId: 1, url: '', pendingUrl: '' });
+  assert.deepEqual(pending.removed, [101, 102],
+    relativePath + ': pending hostile URLs must close; safe/opaque/incomplete tabs must remain open');
+  assert.equal(pending.settings.blockedCount, 2);
+  assert.equal(pending.settings.lastBlocked.detail.url, 'https://www.nap5k.com.',
+    relativePath + ': telemetry must retain origin of evaluated pending destination');
+  const strictPending = await loadBackground(relativePath, 'strict');
+  await strictPending.created({ id: 108, openerTabId: 1, url: '', pendingUrl: 'https://external.example/new' });
+  await strictPending.created({ id: 109, openerTabId: 1, url: '', pendingUrl: 'https://origin.test/allowed' });
+  await strictPending.created({ id: 110, openerTabId: 1, url: 'about:blank', pendingUrl: 'https://external.example/later' });
+  assert.deepEqual(strictPending.removed, [108],
+    relativePath + ': strict pending external tabs close, same-origin/internal tabs remain open');
+  assert.equal(strictPending.settings.lastBlocked.detail.url, 'https://external.example');
+
   const originPort = await loadBackground(relativePath, 'strict');
   for (const [id, url] of [
     [50, 'https://origin.test:443/next'],

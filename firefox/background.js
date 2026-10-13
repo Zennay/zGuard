@@ -46,11 +46,17 @@ api.runtime.onMessage.addListener((message, sender) => {
 
 api.tabs.onCreated.addListener(async (tab) => {
   const settings = await getSettings();
-  if (!settings.enabled || !tab.url || !tab.openerTabId) return;
+  const targetUrl = tab.url || tab.pendingUrl;
+  if (!settings.enabled || !targetUrl || !tab.openerTabId) return;
+  // Browser-internal/opaque targets are not web popup destinations.
+  // In particular, do not interpret about:blank as foreign in Strict mode.
+  try {
+    if (!['https:', 'http:'].includes(new URL(targetUrl).protocol)) return;
+  } catch (_) { return; }
   let opener; try { opener = await api.tabs.get(tab.openerTabId); } catch (_) { return; }
-  if (!(hostile(tab.url) || (settings.mode === 'strict' && external(tab.url, opener.url || '')))) return;
+  if (!(hostile(targetUrl) || (settings.mode === 'strict' && external(targetUrl, opener.url || '')))) return;
   try {
     await api.tabs.remove(tab.id);
-    await set({ blockedCount: settings.blockedCount + 1, lastBlocked: { event: 'new-tab', detail: safeBlockedDetail({ url: tab.url }), at: new Date().toISOString() } });
+    await set({ blockedCount: settings.blockedCount + 1, lastBlocked: { event: 'new-tab', detail: safeBlockedDetail({ url: targetUrl }), at: new Date().toISOString() } });
   } catch (_) {}
 });
