@@ -1,0 +1,49 @@
+name: zBrowse token-bearing session response policy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_no_store:
+        description: "Require Cache-Control no-store on new and reused token-bearing session responses (issue #284)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-session-cache-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  session-response:
+    name: Gateway session response cache boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_NO_STORE: ${{ inputs.require_no_store || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Execute real session route handlers
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.session-cache-privacy.test.mjs
+          if [ "$REQUIRE_NO_STORE" = "true" ]; then
+            node tests/zbrowse.session-cache-privacy.test.mjs --require-no-store
+          fi
