@@ -119,6 +119,47 @@ const packageCorpus = tracked
 
 const executableCorpus = [workflowCorpus, shellCorpus, packageCorpus].join('\n');
 
+// A filename in a comment, echo, syntax-check or documentation string is not
+// evidence that CI executes the test. Inspect command positions, not substrings.
+function shellExecutesTest(corpus, test) {
+  for (const line of corpus.split(/\r?\n/)) {
+    if (/^\s*(?:#|\/\/)/.test(line)) continue;
+    for (const fragment of line.split(/&&|\|\||[;|]/)) {
+      let command = fragment.trim().replace(/^(?:(?:do|then)\s+)?/, '');
+      command = command.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*/, '');
+      command = command.replace(/^env\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*/, '');
+      const words = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+      const executable = words[0];
+      if (!/^(?:node|nodejs|python|python2|python3|ruby|pytest)$/.test(executable)) continue;
+      // Syntax-only compilation and inline eval do not run a test module.
+      if ((/^(?:node|nodejs)$/.test(executable) &&
+           /^(?:--check|-c|--eval|-e)$/.test(words[1] ?? '')) ||
+          (/^python/.test(executable) && (words[1] === '-c' ||
+            (words[1] === '-m' && words[2] === 'py_compile'))) ||
+          (executable === 'ruby' && words[1] === '-c')) continue;
+      if (words.slice(1).some((word) => word.includes(test))) return true;
+    }
+  }
+  return false;
+}
+for (const [script, expected] of [
+  ['node tests/child.test.js', true],
+  ['node ../tests/child.test.js', true],
+  ['node --test tests/child.test.js', true],
+  ['node --check tests/child.test.js', false],
+  ['node -e "console.log(\\'tests/child.test.js\\')"', false],
+  ['python3 -m py_compile tests/child.test.js', false],
+  ['ruby -c tests/child.test.js', false],
+  ['echo node tests/child.test.js', false],
+  ['# node tests/child.test.js', false],
+  ['echo "tests/child.test.js"', false],
+  ['some_other_command tests/child.test.js', false],
+  ['cd tests && node ../tests/child.test.js', true]
+]) {
+  assert.equal(shellExecutesTest(script, 'tests/child.test.js'), expected,
+    script + ': registration requires real test execution');
+}
+
 const testSources = new Map(tests.map((file) => [file, read(file)]));
 function isUniqueBasename(counts, basename) {
   return counts.get(basename) === 1;
@@ -284,7 +325,7 @@ const unregistered = [];
 
 for (const test of tests) {
   const basename = path.basename(test);
-  const directlyExecuted = executableCorpus.includes(test);
+  const directlyExecuted = shellExecutesTest(executableCorpus, test);
   const uniqueBasename = isUniqueBasename(basenameCounts, basename);
 
   const executedByAnotherTest = [...testSources.entries()].some(([other, source]) => (
