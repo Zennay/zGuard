@@ -22,29 +22,16 @@ const browser = browserCandidates.find((candidate) =>
 assert.ok(browser, 'A real Chrome/Chromium executable is required; do not skip browser acceptance');
 
 const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
+<!-- Test targets are synthetic clicks only; CDP target listeners cancel ordinary navigation. -->
 <a id="hostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile</a>
+<a id="hostileRootDot" href="https://WWW.NAP5K.COM./popup" target="_blank">DNS root dot</a>
+<a id="hostileNested" href="https://deep.Sub.TMLL7.COM./popup" target="_blank">Nested hostile</a>
+<a id="hostileUserInfo" href="https://user:password@ads.al5sm.com/popup" target="_blank">Hostile authority</a>
 <a id="ordinary" href="https://example.org/video" target="_blank">Ordinary</a>
-<output id="zguard-probe"></output>
-<script>
-setTimeout(() => {
-  const evaluate = (id) => {
-    const target = document.getElementById(id);
-    const event = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
-    target.dispatchEvent(event);
-    const blocked = event.defaultPrevented;
-    // A programmatic event is not a user gesture. Explicitly suppress any
-    // browser navigation after measuring whether zGuard handled the click.
-    if (!blocked) event.preventDefault();
-    return blocked;
-  };
-  const result = {
-    hostileClickBlocked: evaluate('hostile'),
-    ordinaryClickBlocked: evaluate('ordinary'),
-    mainWorldOpenWrapped: window.open.name === 'zGuardWindowOpen'
-  };
-  document.getElementById('zguard-probe').textContent = JSON.stringify(result);
-}, 1200);
-</script></body></html>`;
+<a id="lookalikeUserInfo" href="https://ads.al5sm.com@safe.example/watch" target="_blank">Safe authority</a>
+<a id="lookalikeSuffix" href="https://al5sm.com.attacker.example./watch" target="_blank">Safe suffix</a>
+<a id="sameOrigin" href="/watch" target="_blank">Same origin</a>
+</body></html>`;
 
 const server = http.createServer((request, response) => {
   response.writeHead(200, {
@@ -107,17 +94,35 @@ async function runBrowser(extensionPath, profilePath, url) {
       function probe(id) {
         const anchor = document.getElementById(id);
         if (!anchor) throw new Error('Missing fixture anchor ' + id);
-        const click = new MouseEvent('click', {
+        // The browser's real extension runs first at document capture.
+        // For allowed links, our target listener prevents navigation so this
+        // test never opens/fetches the external destination.
+        let reachedTarget = false;
+        const cancelAllowedNavigation = (event) => {
+          reachedTarget = true;
+          event.preventDefault();
+        };
+        anchor.addEventListener('click', cancelAllowedNavigation, { once: true });
+        const event = new MouseEvent('click', {
           bubbles: true, cancelable: true, ctrlKey: true
         });
-        anchor.dispatchEvent(click);
-        const blocked = click.defaultPrevented;
-        if (!blocked) click.preventDefault();
-        return blocked;
+        anchor.dispatchEvent(event);
+        anchor.removeEventListener('click', cancelAllowedNavigation);
+        // A blocked link never reaches the target listener. The browser must
+        // also reflect cancellation, not merely stop propagation.
+        return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
       }
       return {
-        hostileClickBlocked: probe('hostile'),
-        ordinaryClickBlocked: probe('ordinary'),
+        hostileClickBlocked: probe('hostile').blocked,
+        ordinaryClickBlocked: probe('ordinary').blocked,
+        cases: {
+          hostileRootDot: probe('hostileRootDot'),
+          hostileNested: probe('hostileNested'),
+          hostileUserInfo: probe('hostileUserInfo'),
+          lookalikeUserInfo: probe('lookalikeUserInfo'),
+          lookalikeSuffix: probe('lookalikeSuffix'),
+          sameOrigin: probe('sameOrigin')
+        },
         mainWorldOpenWrapped: window.open.name === 'zGuardWindowOpen'
       };
     }).toString() + ')()';
@@ -176,13 +181,26 @@ try {
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
-        variant + ': actual injected extension must preserve ordinary external links');
+        variant + ': actual injected extension must preserve ordinary external links'); 
+      for (const label of ['hostileRootDot', 'hostileNested', 'hostileUserInfo']) {
+        assert.equal(observed.cases?.[label]?.blocked, true,
+          variant + ': real browser must block hostile authority variant ' + label);
+        assert.equal(observed.cases[label].cancelled, true,
+          variant + ': hostile variant must cancel the original click ' + label);
+      }
+      for (const label of ['lookalikeUserInfo', 'lookalikeSuffix', 'sameOrigin']) {
+        assert.equal(observed.cases?.[label]?.blocked, false,
+          variant + ': real browser must not block a harmless authority ' + label);
+        assert.equal(observed.cases[label].cancelled, true,
+          variant + ': fixture must prevent external navigation for ' + label);
+      }
+
       if (requireMainWorld) {
         assert.equal(observed.mainWorldOpenWrapped, true,
           variant + ': page window.open is NOT intercepted in MAIN world (issue #3)');
       }
       console.log(variant + ': real Chromium hostile click blocked; ordinary click allowed; ' +
-        'MAIN-world window.open interception=' + observed.mainWorldOpenWrapped);
+        'authority-matrix=6/6; MAIN-world window.open interception=' + observed.mainWorldOpenWrapped);
     } finally {
       fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
