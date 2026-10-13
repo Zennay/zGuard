@@ -286,7 +286,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       if (
         (observed.pageReady && observed.hostileClickBlocked &&
           observed.cases?.frameHostile?.blocked &&
-          (!coldStart || observed.startupStages?.load !== null)) ||
+          (!coldStart || observed.startupStages?.load?.cancelled === true)) ||
         Date.now() >= deadline
       ) break;
       await sleep(200);
