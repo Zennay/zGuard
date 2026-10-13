@@ -27,6 +27,10 @@ on:
         description: "Require hostile form target=_blank submission to be intercepted"
         type: boolean
         default: false
+      require_image_map:
+        description: "Require hostile image-map area target=_blank interception with native clicks"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +51,7 @@ jobs:
       REQUIRE_AUXCLICK: ${{ inputs.require_auxclick || 'false' }}
       REQUIRE_SHADOW_DOM: ${{ inputs.require_shadow_dom || 'false' }}
       REQUIRE_FORM_SUBMIT: ${{ inputs.require_form_submit || 'false' }}
+      REQUIRE_IMAGE_MAP: ${{ inputs.require_image_map || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -94,4 +99,7 @@ jobs:
           fi
           if [ "$REQUIRE_FORM_SUBMIT" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-form-submit
+          fi
+          if [ "$REQUIRE_IMAGE_MAP" = "true" ]; then
+            node tests/zguard.chromium-real-browser.test.mjs --require-image-map
           fi
