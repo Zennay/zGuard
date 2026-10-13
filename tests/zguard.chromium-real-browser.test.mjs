@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireMainWorld = process.argv.includes('--require-mainworld');
 const requireAuxclick = process.argv.includes('--require-auxclick');
+const requireShadowDom = process.argv.includes('--require-shadow-dom');
 const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
@@ -291,6 +292,54 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
+    if (requireShadowDom) {
+      // The browser, not our VM, retargets composed clicks from a real
+      // shadow root to its host at document capture. A target-only fixture
+      // handler cancels missed clicks, so no external site can be opened.
+      const evaluated = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function shadowClick(href) {
+            const host = document.createElement('div');
+            document.body.append(host);
+            const shadow = host.attachShadow({ mode: 'open' });
+            const anchor = document.createElement('a');
+            anchor.href = href;
+            anchor.target = '_blank';
+            anchor.textContent = 'Fixture shadow anchor';
+            shadow.append(anchor);
+            let targetReached = false;
+            let retargeted = false;
+            function cancelFixtureNavigation(event) {
+              targetReached = true;
+              event.preventDefault();
+            }
+            function documentObserver(event) {
+              retargeted = event.target === host &&
+                event.composedPath()[0] === anchor;
+            }
+            document.addEventListener('click', documentObserver, true);
+            anchor.addEventListener('click', cancelFixtureNavigation, { once: true });
+            const event = new MouseEvent('click', {
+              bubbles: true, composed: true, cancelable: true, ctrlKey: true
+            });
+            anchor.dispatchEvent(event);
+            document.removeEventListener('click', documentObserver, true);
+            anchor.removeEventListener('click', cancelFixtureNavigation);
+            host.remove();
+            return { blocked: !targetReached, cancelled: event.defaultPrevented,
+              retargeted, composed: event.composed };
+          }
+          return {
+            hostile: shadowClick('https://ads.al5sm.com/popup'),
+            ordinary: shadowClick('https://example.org/video')
+          };
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(evaluated.exceptionDetails, undefined,
+        'Real shadow-root click fixture must evaluate');
+      observed.shadowDom = evaluated.result?.value;
+    }
     if (requireAuxclick) {
       // This uses Chrome DevTools' *native* middle-button press/release, not
       // an invented click event with button=1. The page target suppresses
@@ -420,6 +469,20 @@ try {
         variant + ': injected child frame must preserve ordinary navigation');
       assert.equal(observed.cases.frameOrdinary.cancelled, true,
         variant + ': fixture must prevent any outgoing navigation from child frames');
+      if (requireShadowDom) {
+        assert.equal(observed.shadowDom?.ordinary?.composed, true,
+          variant + ': ordinary shadow click must be a composed DOM event');
+        assert.equal(observed.shadowDom?.ordinary?.retargeted, true,
+          variant + ': Chromium must retarget shadow click to the host at document capture');
+        assert.equal(observed.shadowDom?.ordinary?.blocked, false,
+          variant + ': normal shadow link should remain available');
+        assert.equal(observed.shadowDom?.ordinary?.cancelled, true,
+          variant + ': fixture must cancel normal external navigation');
+        assert.equal(observed.shadowDom?.hostile?.blocked, true,
+          variant + ': hostile shadow-root anchor escaped the popup click guard');
+        assert.equal(observed.shadowDom?.hostile?.cancelled, true,
+          variant + ': hostile shadow-root anchor must cancel navigation');
+      }
       if (requireAuxclick) {
         for (const name of ['nativeMiddleHostile', 'nativeMiddleOrdinary']) {
           assert.equal(observed[name]?.downs, 1, variant + ': native middle mousedown missing');
@@ -456,6 +519,7 @@ if (coldStart) {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
+  : requireShadowDom ? 'Real-browser shadow DOM click acceptance passed'
+    : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
     : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
       : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
