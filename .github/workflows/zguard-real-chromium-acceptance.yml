@@ -47,7 +47,7 @@ jobs:
           curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 150 \
             "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
             -o "$RUNNER_TEMP/chrome-for-testing.zip"
-          printf '%s  %s\\n' \
+          printf '%s  %s\n' \
             '55672d1f392fd3e7b7a08621b6e804e6bcb39d40cf155504abb74b3a021ea8ea' \
             "$RUNNER_TEMP/chrome-for-testing.zip" | sha256sum --check --status
           unzip -q "$RUNNER_TEMP/chrome-for-testing.zip" -d "$RUNNER_TEMP"
