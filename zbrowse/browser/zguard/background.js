@@ -17,6 +17,21 @@ function hostile(value) {
 function external(value, opener) {
   try { return new URL(value).origin !== new URL(opener).origin; } catch (_) { return true; }
 }
+function safeBlockedDetail(detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  const safe = {};
+  if (detail.mode === 'balanced' || detail.mode === 'strict') safe.mode = detail.mode;
+  if (typeof detail.url === 'string') {
+    try {
+      const parsed = new URL(detail.url);
+      safe.url = parsed.protocol === 'https:' || parsed.protocol === 'http:'
+        ? parsed.origin : '[redacted]';
+    } catch (_) {
+      safe.url = '[redacted]';
+    }
+  }
+  return safe;
+}
 function getSettings() {
   return new Promise((resolve) => api.storage.local.get(DEFAULTS, (r) => resolve({ ...DEFAULTS, ...r })));
 }
@@ -32,7 +47,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'blocked-event') {
     getSettings().then((settings) => set({
       blockedCount: settings.blockedCount + 1,
-      lastBlocked: { event: message.event, detail: message.detail || null, at: new Date().toISOString() }
+      lastBlocked: { event: message.event, detail: safeBlockedDetail(message.detail), at: new Date().toISOString() }
     }));
     return false;
   }
@@ -58,7 +73,7 @@ api.tabs.onCreated.addListener(async (tab) => {
     await api.tabs.remove(tab.id);
     await set({
       blockedCount: settings.blockedCount + 1,
-      lastBlocked: { event: 'new-tab', detail: { url: tab.url }, at: new Date().toISOString() }
+      lastBlocked: { event: 'new-tab', detail: safeBlockedDetail({ url: tab.url }), at: new Date().toISOString() }
     });
   } catch (_) {}
 });
