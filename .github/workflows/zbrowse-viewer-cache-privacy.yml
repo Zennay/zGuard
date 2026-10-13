@@ -1,0 +1,49 @@
+name: zBrowse authenticated viewer cache boundary
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_no_store:
+        description: "Reject publicly cacheable upstream browser content on authenticated viewer routes"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-viewer-cache-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  viewer-cache:
+    name: Gateway viewer proxy privacy boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_NO_STORE: ${{ inputs.require_no_store || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Exercise actual authenticated viewer handlers
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.viewer-cache-privacy.test.mjs
+          if [ "$REQUIRE_NO_STORE" = "true" ]; then
+            node tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store
+          fi
