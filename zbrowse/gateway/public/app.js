@@ -182,10 +182,12 @@ $("fullscreenButton").addEventListener("click", async () => {
 
 window.addEventListener("pagehide", () => {
   if (state.session) {
-    navigator.sendBeacon(
-      "/api/session/" + state.session.token + "/heartbeat",
-      new Blob(["{}"], { type: "application/json" })
-    );
+    // Page exit must release capacity, not extend the now-abandoned session.
+    // A keepalive DELETE can be dispatched during document teardown.
+    request("/api/session/" + state.session.token, {
+      method: "DELETE",
+      keepalive: true
+    }).catch(() => {});
   }
 });
 
