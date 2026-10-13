@@ -10,11 +10,12 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
   const settings = { enabled, mode, blockedCount: 0, lastBlocked: null };
   const removed = [];
   let onCreated;
+  let onMessage;
 
   const api = {
     runtime: {
       onInstalled: { addListener() {} },
-      onMessage: { addListener() {} }
+      onMessage: { addListener(listener) { onMessage = listener; } }
     },
     storage: {
       local: {
@@ -58,6 +59,10 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
 
   return {
     created: (tab) => onCreated(tab),
+    message: async (message) => {
+      await Promise.resolve(onMessage(message, {}, () => {}));
+      await new Promise((resolve) => setImmediate(resolve));
+    },
     removed,
     settings
   };
@@ -102,7 +107,7 @@ async function verifyBrowser(relativePath) {
     relativePath + ': hostile www-prefixed domains must also be closed'
   );
   assert.equal(balanced.settings.blockedCount, 2);
-  assert.equal(balanced.settings.lastBlocked?.detail?.url, 'https://www.nap5k.com/popup');
+  assert.equal(balanced.settings.lastBlocked?.detail?.url, 'https://www.nap5k.com');
 
   await balanced.created({ id: 13, openerTabId: 1, url: 'https://nap5k.com.attacker.example/' });
   assert.deepEqual(
@@ -138,6 +143,34 @@ async function verifyBrowser(relativePath) {
     relativePath + ': balanced fallback must distinguish real hostile hosts from URL lookalikes');
   assert.equal(authority.settings.blockedCount, 5,
     relativePath + ': only genuinely hostile tabs increment the blocked counter');
+
+  // Blocked-event telemetry must never persist credentials, URL paths,
+  // query tokens, fragments, arbitrary message detail keys or raw junk URLs.
+  const privateTab = await loadBackground(relativePath, 'balanced');
+  const secretTarget = 'https://user:secret@ads.al5sm.com/private?api_token=sensitive#fragment';
+  await privateTab.created({ id: 60, openerTabId: 1, url: secretTarget });
+  assert.deepEqual(privateTab.removed, [60], relativePath + ': secret URL is blocked');
+  assert.equal(privateTab.settings.lastBlocked.detail.url, 'https://ads.al5sm.com',
+    relativePath + ': new-tab telemetry must persist only the URL origin');
+  await privateTab.message({
+    type: 'blocked-event', event: 'window-open',
+    detail: { url: secretTarget, mode: 'balanced', privateNote: 'never persist me' }
+  });
+  assert.equal(privateTab.settings.lastBlocked.event, 'window-open');
+  assert.equal(privateTab.settings.blockedCount, 2,
+    relativePath + ': content-script message must still increment blocked count');
+  assert.deepEqual(Object.keys(privateTab.settings.lastBlocked.detail).sort(),
+    ['mode', 'url'], relativePath + ': only reviewed telemetry fields may persist');
+  assert.equal(privateTab.settings.lastBlocked.detail.url, 'https://ads.al5sm.com');
+  assert.equal(privateTab.settings.lastBlocked.detail.mode, 'balanced');
+  await privateTab.message({ type: 'blocked-event', event: 'external-link',
+    detail: { url: 'data:text/plain,sensitive', mode: 'strict', other: 'private' } });
+  assert.equal(privateTab.settings.lastBlocked.detail.url, '[redacted]',
+    relativePath + ': opaque/non-web schemes must be redacted');
+  await privateTab.message({ type: 'blocked-event', event: 'external-link',
+    detail: { url: 'not a parseable URL', mode: 'strict' } });
+  assert.equal(privateTab.settings.lastBlocked.detail.url, '[redacted]',
+    relativePath + ': malformed URLs must be redacted');
 
   const originPort = await loadBackground(relativePath, 'strict');
   for (const [id, url] of [
