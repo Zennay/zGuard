@@ -43,38 +43,66 @@ function safeBlockedHistory(history) {
       ? history.at : new Date().toISOString()
   };
 }
+function normalizeSettings(value) {
+  const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    enabled: typeof v.enabled === 'boolean' ? v.enabled : DEFAULTS.enabled,
+    mode: v.mode === 'strict' || v.mode === 'balanced' ? v.mode : DEFAULTS.mode,
+    blockedCount: Number.isSafeInteger(v.blockedCount) && v.blockedCount >= 0
+      ? v.blockedCount : DEFAULTS.blockedCount,
+    lastBlocked: safeBlockedHistory(v.lastBlocked)
+  };
+}
+function applySettingsPatch(settings, input) {
+  const next = { ...settings };
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    if (typeof input.enabled === 'boolean') next.enabled = input.enabled;
+    if (input.mode === 'balanced' || input.mode === 'strict') next.mode = input.mode;
+  }
+  return next;
+}
+let storageQueue = Promise.resolve();
+function mutateSettings(update) {
+  const operation = storageQueue.then(async () => {
+    const settings = await getSettings();
+    const next = normalizeSettings(update(settings));
+    await set(next);
+    return next;
+  });
+  storageQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
 function getSettings() {
-  return new Promise((resolve) => api.storage.local.get(DEFAULTS, (r) => resolve({ ...DEFAULTS, ...r })));
+  return new Promise((resolve) => api.storage.local.get(DEFAULTS, (r) => resolve(normalizeSettings(r))));
 }
 function set(data) {
   return new Promise((resolve) => api.storage.local.set(data, resolve));
 }
 
-api.runtime.onInstalled.addListener(() => api.storage.local.get(DEFAULTS, (current) => {
-  api.storage.local.set({ ...DEFAULTS, ...current, lastBlocked: safeBlockedHistory(current.lastBlocked) });
-}));
+api.runtime.onInstalled.addListener(() => mutateSettings((settings) => settings));
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'blocked-event') {
-    getSettings().then((settings) => set({
+    void mutateSettings((settings) => ({
+      ...settings,
       blockedCount: settings.blockedCount + 1,
       lastBlocked: { event: message.event, detail: safeBlockedDetail(message.detail), at: new Date().toISOString() }
     }));
     return false;
   }
   if (message?.type === 'get-settings') {
-    getSettings().then(sendResponse);
+    storageQueue.then(getSettings).then(sendResponse);
     return true;
   }
   if (message?.type === 'set-settings') {
-    set(message.settings || {}).then(() => getSettings().then(sendResponse));
+    mutateSettings((settings) => applySettingsPatch(settings, message.settings)).then(sendResponse);
     return true;
   }
   return false;
 });
 
 api.tabs.onCreated.addListener(async (tab) => {
-  const settings = await getSettings();
+  const settings = await storageQueue.then(getSettings);
   const targetUrl = tab.url || tab.pendingUrl;
   if (!settings.enabled || !targetUrl || !tab.openerTabId) return;
   // Browser-internal/opaque targets are not web popup destinations.
@@ -88,9 +116,10 @@ api.tabs.onCreated.addListener(async (tab) => {
   if (!shouldClose) return;
   try {
     await api.tabs.remove(tab.id);
-    await set({
-      blockedCount: settings.blockedCount + 1,
+    await mutateSettings((current) => ({
+      ...current,
+      blockedCount: current.blockedCount + 1,
       lastBlocked: { event: 'new-tab', detail: safeBlockedDetail({ url: targetUrl }), at: new Date().toISOString() }
-    });
+    }));
   } catch (_) {}
 });

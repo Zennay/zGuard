@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false, lastBlocked = null, blockedCount = 0 } = {}) {
+async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false, lastBlocked = null, blockedCount = 0, delayMs = 0 } = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const settings = { enabled, mode, blockedCount, lastBlocked };
   const removed = [];
@@ -21,16 +21,25 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
     storage: {
       local: {
         get(defaults, callback) {
-          const value = { ...defaults, ...settings };
-          if (typeof callback === 'function') {
-            callback(value);
-            return undefined;
-          }
-          return Promise.resolve(value);
+          const read = () => {
+            const value = { ...defaults, ...settings };
+            if (typeof callback === 'function') callback(value);
+            return value;
+          };
+          if (delayMs) return new Promise((resolve) => setTimeout(() => resolve(read()), delayMs));
+          const value = read();
+          return typeof callback === 'function' ? undefined : Promise.resolve(value);
         },
         set(patch, callback) {
-          Object.assign(settings, patch);
-          if (typeof callback === 'function') callback();
+          const write = () => {
+            Object.assign(settings, patch);
+            if (typeof callback === 'function') callback();
+          };
+          if (delayMs) return new Promise((resolve) => setTimeout(() => {
+            write();
+            resolve();
+          }, delayMs));
+          write();
           return Promise.resolve();
         }
       }
@@ -64,10 +73,19 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
       await Promise.resolve(onInstalled());
       await new Promise((resolve) => setImmediate(resolve));
     },
-    message: async (message) => {
-      await Promise.resolve(onMessage(message, {}, () => {}));
-      await new Promise((resolve) => setImmediate(resolve));
-    },
+    message: (message) => new Promise((resolve, reject) => {
+      const result = onMessage(message, {}, resolve);
+      if (result && typeof result.then === 'function') {
+        result.then(resolve, reject);
+      } else if (result !== true && message.type === 'blocked-event') {
+        // Chromium's event listener returns false before its async queue
+        // finishes. A get-settings response is a read barrier.
+        const barrier = onMessage({ type: 'get-settings' }, {}, resolve);
+        if (barrier && typeof barrier.then === 'function') barrier.then(resolve, reject);
+      } else if (result !== true) {
+        resolve(undefined);
+      }
+    }),
     removed,
     settings
   };
@@ -230,6 +248,41 @@ async function verifyBrowser(relativePath) {
   assert.deepEqual(strictPending.removed, [108],
     relativePath + ': strict pending external tabs close, same-origin/internal tabs remain open');
   assert.equal(strictPending.settings.lastBlocked.detail.url, 'https://external.example');
+
+  // Deliberately delayed storage operations recreate the lost-update race.
+  // Independent overlapping user changes must both survive completion.
+  const concurrent = await loadBackground(relativePath, 'balanced', { delayMs: 4 });
+  const [disableResponse, strictResponse] = await Promise.all([
+    concurrent.message({ type: 'set-settings', settings: { enabled: false, blockedCount: 900, lastBlocked: { detail: { url: 'https://secret.test/?token=1' } } } }),
+    concurrent.message({ type: 'set-settings', settings: { mode: 'strict', injected: true } })
+  ]);
+  assert.equal(concurrent.settings.enabled, false, relativePath + ': disable setting survived overlap');
+  assert.equal(concurrent.settings.mode, 'strict', relativePath + ': strict setting survived overlap');
+  assert.equal(concurrent.settings.blockedCount, 0, relativePath + ': user settings may not alter telemetry counter');
+  assert.equal(concurrent.settings.lastBlocked, null, relativePath + ': user settings may not inject blocked history');
+  const settingsReply = await concurrent.message({ type: 'get-settings' });
+  assert.equal(settingsReply.enabled, false);
+  assert.equal(settingsReply.mode, 'strict');
+  assert.equal(strictResponse.mode, 'strict');
+  assert.equal(disableResponse.enabled, false);
+  // Two separate event producers previously read the same count, losing
+  // increments when delayed writes eventually overwrote each other.
+  const events = await loadBackground(relativePath, 'balanced', { delayMs: 4 });
+  const incoming = Array.from({ length: 6 }, (_, index) => events.message({
+    type: 'blocked-event', event: 'window-open',
+    detail: { url: 'https://user:password@ads.al5sm.com/private?token=' + index }
+  }));
+  const tabs = Array.from({ length: 4 }, (_, index) => events.created({
+    id: 200 + index, openerTabId: 1, pendingUrl: 'https://ads.al5sm.com/popup/' + index
+  }));
+  await Promise.all([...incoming, ...tabs]);
+  const afterEvents = await events.message({ type: 'get-settings' });
+  assert.equal(afterEvents.blockedCount, 10,
+    relativePath + ': six message events and four new tabs must produce ten counted blocks');
+  assert.equal(events.settings.blockedCount, 10);
+  assert.equal(events.removed.length, 4);
+  assert.equal(afterEvents.lastBlocked.detail.url, 'https://ads.al5sm.com',
+    relativePath + ': serialized telemetry must preserve only sanitized URL origins');
 
   const originPort = await loadBackground(relativePath, 'strict');
   for (const [id, url] of [
