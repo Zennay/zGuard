@@ -15,6 +15,7 @@ const requireMainWorld = process.argv.includes('--require-mainworld');
 const requireAuxclick = process.argv.includes('--require-auxclick');
 const requireShadowDom = process.argv.includes('--require-shadow-dom');
 const requireFormSubmit = process.argv.includes('--require-form-submit');
+const requireImageMap = process.argv.includes('--require-image-map');
 const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
@@ -293,6 +294,91 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
+    if (requireImageMap) {
+      // Actual Chrome mouse input activates HTML <area> map hotspots, not
+      // synthetic anchor MouseEvents. Fixture document capture cancels every
+      // external navigation if the extension fails to intercept.
+      async function imageMapProbe(kind, href) {
+        const prepare = await cdp('Runtime.evaluate', {
+          expression: '(' + ((variant, url) => {
+            const mapName = 'zguard-qa-map-' + variant;
+            const map = document.createElement('map');
+            map.name = mapName;
+            const area = document.createElement('area');
+            area.alt = variant;
+            area.shape = 'rect';
+            area.coords = '0,0,120,60';
+            area.href = url;
+            area.target = '_blank';
+            map.append(area);
+            const img = document.createElement('img');
+            img.alt = 'Local test image map';
+            img.width = 120;
+            img.height = 60;
+            img.useMap = '#' + mapName;
+            img.src = 'data:image/svg+xml,' +
+              encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60">' +
+                '<rect width="120" height="60" fill="lightgray"/></svg>');
+            document.body.append(map, img);
+            const state = {
+              reachedArea: false, eventTrusted: false, seenAreaAtCapture: false,
+              cancelledByFixture: false
+            };
+            window.__zguardImageMapState = state;
+            function safety(event) {
+              if (!event.composedPath().includes(area)) return;
+              state.seenAreaAtCapture = event.target === area;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            function target(event) {
+              state.reachedArea = true;
+              state.eventTrusted = event.isTrusted;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            document.addEventListener('click', safety, true);
+            area.addEventListener('click', target, { once: true });
+            window.__zguardImageMapCleanup = () => {
+              document.removeEventListener('click', safety, true);
+              area.removeEventListener('click', target);
+              img.remove();
+              map.remove();
+            };
+            img.scrollIntoView({ block: 'center' });
+            const rect = img.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          }).toString() + ')(' + JSON.stringify(kind) + ',' + JSON.stringify(href) + ')',
+          returnByValue: true
+        });
+        assert.equal(prepare.exceptionDetails, undefined,
+          'Image-map fixture must load');
+        const position = prepare.result?.value;
+        assert.ok(Number.isFinite(position?.x) && Number.isFinite(position?.y),
+          'Image-map hotspot must have visible coordinates');
+        // Browser-native mouse events are trusted; the real image-map hit
+        // testing must dispatch a click targeting <area>, not <img>.
+        for (const params of [
+          { type: 'mouseMoved', button: 'none', buttons: 0 },
+          { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1 },
+          { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1 }
+        ]) {
+          await cdp('Input.dispatchMouseEvent', { ...position, ...params });
+        }
+        const checked = await cdp('Runtime.evaluate', {
+          expression: '(() => { const observed = window.__zguardImageMapState; ' +
+            'window.__zguardImageMapCleanup(); return observed; })()',
+          returnByValue: true
+        });
+        assert.equal(checked.exceptionDetails, undefined,
+          'Image-map fixture must remain accessible');
+        return checked.result?.value;
+      }
+      observed.imageMap = {
+        hostile: await imageMapProbe('hostile', 'https://ads.al5sm.com/popup'),
+        ordinary: await imageMapProbe('ordinary', 'https://example.org/watch')
+      };
+    }
     if (requireFormSubmit) {
       // Real DOM form.requestSubmit creates an HTML submit event; unlike an
       // anchor click, zGuard's current capture listener does not watch submit.
@@ -518,6 +604,18 @@ try {
         variant + ': injected child frame must preserve ordinary navigation');
       assert.equal(observed.cases.frameOrdinary.cancelled, true,
         variant + ': fixture must prevent any outgoing navigation from child frames');
+      if (requireImageMap) {
+        assert.equal(observed.imageMap?.ordinary?.seenAreaAtCapture, true,
+          variant + ': real image-map hit-testing must target an HTML area');
+        assert.equal(observed.imageMap?.ordinary?.reachedArea, true,
+          variant + ': ordinary image-map navigation must be allowed');
+        assert.equal(observed.imageMap?.ordinary?.eventTrusted, true,
+          variant + ': image-map fixture must use trusted real mouse events');
+        assert.equal(observed.imageMap?.ordinary?.cancelledByFixture, true,
+          variant + ': ordinary external image-map navigation must be cancelled safely');
+        assert.equal(observed.imageMap?.hostile?.reachedArea, false,
+          variant + ': hostile image-map area click escaped popup guard');
+      }
       if (requireFormSubmit) {
         assert.equal(observed.formSubmit?.ordinary?.seenOnDocument, true,
           variant + ': ordinary form submission must reach document capture');
@@ -578,7 +676,8 @@ if (coldStart) {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : requireFormSubmit ? 'Real-browser form target=_blank acceptance passed'
+  : requireImageMap ? 'Real-browser HTML image-map popup acceptance passed'
+    : requireFormSubmit ? 'Real-browser form target=_blank acceptance passed'
     : requireShadowDom ? 'Real-browser shadow DOM click acceptance passed'
     : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
     : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
