@@ -11,6 +11,10 @@ on:
         description: "Require real page MAIN-world window.open interception (issue #3)"
         type: boolean
         default: false
+      require_coldstart:
+        description: "Require three actual browser cold starts per package (issue #302)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +31,7 @@ jobs:
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       REQUIRE_MAINWORLD: ${{ inputs.require_mainworld || 'false' }}
+      REQUIRE_COLDSTART: ${{ inputs.require_coldstart || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -62,4 +67,7 @@ jobs:
           node tests/zguard.chromium-real-browser.test.mjs
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
+          fi
+          if [ "$REQUIRE_COLDSTART" = "true" ]; then
+            node tests/zguard.chromium-real-browser.test.mjs --cold-start
           fi
