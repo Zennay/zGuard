@@ -124,29 +124,95 @@ function isUniqueBasename(counts, basename) {
   return counts.get(basename) === 1;
 }
 
+// Preserve original positions but mask comments, and optionally string bodies.
+// This lets us find actual JS child-process invocations while keeping their
+// quoted test path arguments visible for registration.
+function maskedSource(source, maskStrings) {
+  const result = source.split('');
+  let state = 'code';
+  let quote = '';
+  let escaped = false;
+  const blank = (index) => {
+    if (source[index] !== '\n' && source[index] !== '\r') result[index] = ' ';
+  };
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (state === 'line') {
+      if (char === '\n' || char === '\r') state = 'code';
+      else blank(index);
+      continue;
+    }
+    if (state === 'block') {
+      blank(index);
+      if (char === '*' && next === '/') {
+        blank(index + 1);
+        index += 1;
+        state = 'code';
+      }
+      continue;
+    }
+    if (state === 'string') {
+      if (maskStrings) blank(index);
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        state = 'code';
+      }
+      continue;
+    }
+    if (char === '/' && next === '/') {
+      blank(index);
+      blank(index + 1);
+      index += 1;
+      state = 'line';
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      blank(index);
+      blank(index + 1);
+      index += 1;
+      state = 'block';
+      continue;
+    }
+    if (char === "'" || char === '"' || char === String.fromCharCode(96)) {
+      quote = char;
+      state = 'string';
+      if (maskStrings) blank(index);
+    }
+  }
+  return result.join('');
+}
+
+// Cache executable invocation arguments once per source, not once per test.
+// A nearby comment or unrelated string literal can never claim execution.
+const invocationCache = new Map();
+function executableInvocations(source) {
+  if (invocationCache.has(source)) return invocationCache.get(source);
+  const code = maskedSource(source, true);
+  const argumentsSource = maskedSource(source, false);
+  const calls = [];
+  const matcher = /\b(?:execFileSync|spawnSync|execSync|spawn)\s*\(/g;
+  for (const match of code.matchAll(matcher)) {
+    let depth = 1;
+    for (let index = match.index + match[0].length; index < code.length; index += 1) {
+      if (code[index] === '(') depth += 1;
+      else if (code[index] === ')') depth -= 1;
+      if (depth === 0) {
+        calls.push(argumentsSource.slice(match.index, index + 1));
+        break;
+      }
+    }
+  }
+  invocationCache.set(source, calls);
+  return calls;
+}
 function sourceExecutesTest(source, test, basename, uniqueBasename) {
   const references = uniqueBasename ? [test, basename] : [test];
-  const lines = source.split(/\r?\n/);
-  const childProcessCall = /\b(?:execFileSync|spawnSync|execSync|spawn)\s*\(/;
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*')) continue;
-    if (!references.some((reference) => line.includes(reference))) continue;
-
-    const window = lines
-      .slice(Math.max(0, index - 2), Math.min(lines.length, index + 3))
-      .filter((candidate) => {
-        const value = candidate.trim();
-        return !value.startsWith('//') && !value.startsWith('#') && !value.startsWith('*');
-      })
-      .join(' ');
-
-    if (childProcessCall.test(window)) return true;
-  }
-
-  return false;
+  return executableInvocations(source).some((call) =>
+    references.some((reference) => call.includes(reference)));
 }
 
 assert.equal(
@@ -179,6 +245,28 @@ assert.equal(
   false,
   'a commented-out child-process call must not register a nested test'
 );
+
+// Comments, documentation strings and adjacent non-execution text must not
+// register an orphaned test by accidentally looking like a process invocation.
+for (const nonExecution of [
+  "/*\nexecFileSync(process.execPath, ['tests/child.test.js']);\n*/",
+  "const note = \"execFileSync(process.execPath, ['tests/child.test.js']);\";",
+  "execFileSync('git', ['status']);\nconst note = 'tests/child.test.js';",
+  "execFileSync('git', ['status']); // tests/child.test.js",
+  "/* ignored */ const note = 'tests/child.test.js';",
+  "const url = 'https://example.test'; // execFileSync('node',['tests/child.test.js'])"
+]) {
+  assert.equal(sourceExecutesTest(nonExecution, 'tests/child.test.js', 'child.test.js', true), false,
+    'only executable child-process call arguments may register a test');
+}
+assert.equal(sourceExecutesTest(
+  "execFileSync(\n  process.execPath,\n  [path.join(__dirname, 'child.test.js')]\n);",
+  'tests/child.test.js', 'child.test.js', true
+), true, 'nested multiline executable call arguments must register');
+assert.equal(sourceExecutesTest(
+  "/* misleading */ execFileSync(process.execPath, ['tests/child.test.js']);",
+  'tests/child.test.js', 'child.test.js', true
+), true, 'a real call after a completed block comment must register');
 
 const basenameFixture = new Map([
   ['unique.test.mjs', 1],
