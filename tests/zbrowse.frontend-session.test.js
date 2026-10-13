@@ -39,6 +39,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
+  const windowEvents = new Map();
   let nextInterval = 1;
 
   function element(id) {
@@ -64,7 +65,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     exitFullscreen: async () => {}
   };
   const window = {
-    addEventListener() {},
+    addEventListener(name, callback) { windowEvents.set(name, callback); },
     setInterval(callback, milliseconds) {
       const id = nextInterval++;
       intervals.set(id, { callback, milliseconds });
@@ -80,6 +81,9 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     if (url === '/api/health') {
       if (healthRequest) return healthRequest();
       return response(health || { activeSessions: 0, startingSessions: 0, capacity: 1 });
+    }
+    if (/^\\/api\\/session\\/[A-Za-z0-9_-]{32}$/.test(url) && options.method === 'DELETE') {
+      return response(null, 204);
     }
     if (url === '/api/session' && options.method === 'POST') {
       if (!sessionRequest) throw new Error('unexpected session start request');
@@ -98,6 +102,11 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     element,
     requests,
     intervals,
+    pagehide() {
+      const callback = windowEvents.get('pagehide');
+      assert.equal(typeof callback, 'function', 'portal must register pagehide cleanup');
+      callback();
+    },
     submit() {
       const listener = element('browserForm').listeners.submit;
       assert.equal(typeof listener, 'function', 'real portal must install form submit listener');
@@ -209,6 +218,24 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     'an active session must not allocate another session'
   );
 
+  portal.pagehide();
+  await settle();
+  const pageExitRequests = portal.requests.filter(({ url }) => url === '/api/session/' + validToken);
+  assert.equal(pageExitRequests.length, 1, 'page exit must attempt exactly one session teardown');
+  assert.equal(pageExitRequests[0].options.method, 'DELETE', 'page exit must not send a heartbeat');
+  assert.equal(pageExitRequests[0].options.keepalive, true, 'page exit teardown must survive document unload');
+  assert.equal(
+    portal.requests.filter(({ url }) => url.endsWith('/heartbeat')).length,
+    0,
+    'page exit must not extend the abandoned session lease'
+  );
+
+  const noSession = await bootPortal();
+  noSession.pagehide();
+  await settle();
+  assert.equal(noSession.requests.filter(({ url }) => url.startsWith('/api/session')).length, 0,
+    'leaving without an active session must never send a teardown');
+
   const failed = deferred();
   const retry = await bootPortal({ sessionRequest: () => failed.promise });
   retry.submit();
@@ -254,7 +281,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     assert.equal(candidate.element('startButton').disabled, false, label + ': retry remains available');
   }
 
-  console.log('zBrowse portal capacity, ordered health polls, concurrent admission and session-response validation passed');
+  console.log('zBrowse portal capacity, ordered health polls, admission, payload and page-exit teardown validated');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
