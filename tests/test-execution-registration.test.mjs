@@ -147,7 +147,7 @@ for (const [script, expected] of [
   ['node ../tests/child.test.js', true],
   ['node --test tests/child.test.js', true],
   ['node --check tests/child.test.js', false],
-  ['node -e "console.log(\\'tests/child.test.js\\')"', false],
+  ["node -e \"console.log(\'tests/child.test.js\')\"", false],
   ['python3 -m py_compile tests/child.test.js', false],
   ['ruby -c tests/child.test.js', false],
   ['echo node tests/child.test.js', false],
