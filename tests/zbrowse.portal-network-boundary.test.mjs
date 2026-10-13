@@ -23,7 +23,9 @@ function quotedLeadingArgumentCalls(source, calleePattern) {
 // "/other" before any request is sent. Bind each literal to its effective URL.
 function isCanonicalApiLiteral(literal) {
   if (!literal.startsWith("/api/")) return false;
-  if (/[?#\\]/.test(literal) || /%(?:2e|2f|5c)/i.test(literal)) return false;
+  // No current portal API endpoint needs encoded path syntax. Fail closed on
+  // percent escapes (including double-encoded traversal and encoded controls).
+  if (/[?#\\]/.test(literal) || literal.includes("%")) return false;
   try {
     const parsed = new URL(literal, "https://zbrowse.invalid");
     return parsed.origin === "https://zbrowse.invalid" &&
@@ -40,6 +42,7 @@ for (const pathLiteral of [
   "/api/../private", "/api/%2e%2e/private", "/api/x/../private",
   "/api/%2f%2fexample.test", "/api/%5cprivate",
   "/api/health?redirect=other", "/api/health#fragment",
+  "/api/%00", "/api/%3fadmin", "/api/%252e%252e/private", "/api/%25",
   "/api/\\\\private", "/private", "//example.test/api/health"
 ]) {
   assert.equal(isCanonicalApiLiteral(pathLiteral), false, `${pathLiteral}: unsafe API literal`);
@@ -83,6 +86,13 @@ function validatePortalNetworkBoundary(source, label) {
     [...source.matchAll(/\brequest\s*\(/g)].length -
     [...source.matchAll(/\bfunction\s+request\s*\(/g)].length;
   const requestCalls = quotedLeadingArgumentCalls(source, "request");
+  const requestDefinitionCount = [...source.matchAll(/\bfunction\s+request\s*\(/g)].length;
+  const requestReferences = [...source.matchAll(/\brequest\b/g)].length;
+  if (requestReferences !== requestInvocationCount + requestDefinitionCount) {
+    findings.push(
+      `${label}: indirect request() references, aliases and computed calls are forbidden`
+    );
+  }
 
   if (requestCalls.length !== requestInvocationCount) {
     findings.push(
@@ -239,6 +249,43 @@ request("/api/health");
 navigator.sendBeacon("/api/../other", "{}");
 `,
     /canonical same-origin \/api\//
+  ],
+  [
+    "request variable alias",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+const outbound = request;
+outbound("https://example.com/collect");
+`,
+    /indirect request/
+  ],
+  [
+    "computed request call",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+window["request"]("https://example.com/collect");
+`,
+    /indirect request/
+  ],
+  [
+    "optional request call",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request?.("https://example.com/collect");
+`,
+    /indirect request/
+  ],
+  [
+    "double encoded API traversal",
+    `async function request(url, options = {}) {
+  return fetch(url, options);
+}
+request("/api/%252e%252e/private");
+`,
+    /canonical same-origin/
   ],
   [
     "beacon alias",
