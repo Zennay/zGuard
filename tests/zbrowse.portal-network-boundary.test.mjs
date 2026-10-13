@@ -115,7 +115,7 @@ function validatePortalNetworkBoundary(source, label) {
   }
 
   for (const call of beaconCalls) {
-    if (!call.argument.startsWith("/api/")) {
+    if (!isCanonicalApiLiteral(call.argument)) {
       findings.push(
         `${label}: sendBeacon target must stay under same-origin /api/; got ${JSON.stringify(call.argument)}`
       );
