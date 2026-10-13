@@ -62,20 +62,21 @@ function mutateSettings(update) {
 const getSettings = () => api.storage.local.get(DEFAULTS).then(normalizeSettings);
 const set = (data) => api.storage.local.set(data);
 
-api.runtime.onInstalled.addListener(() => mutateSettings((settings) => settings));
+api.runtime.onInstalled.addListener(() => mutateSettings((settings) => settings).catch(() => null));
 api.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'blocked-event') return mutateSettings((settings) => ({
     ...settings,
     blockedCount: settings.blockedCount + 1,
     lastBlocked: { event: message.event, detail: safeBlockedDetail(message.detail), at: new Date().toISOString() }
-  }));
-  if (message?.type === 'get-settings') return storageQueue.then(getSettings);
-  if (message?.type === 'set-settings') return mutateSettings((settings) => applySettingsPatch(settings, message.settings));
+  })).catch(() => null);
+  if (message?.type === 'get-settings') return storageQueue.then(getSettings).catch(() => null);
+  if (message?.type === 'set-settings') return mutateSettings((settings) => applySettingsPatch(settings, message.settings)).catch(() => null);
   return false;
 });
 
 api.tabs.onCreated.addListener(async (tab) => {
-  const settings = await storageQueue.then(getSettings);
+  let settings;
+  try { settings = await storageQueue.then(getSettings); } catch (_) { return; }
   const targetUrl = tab.url || tab.pendingUrl;
   if (!settings.enabled || !targetUrl || !tab.openerTabId) return;
   // Browser-internal/opaque targets are not web popup destinations.

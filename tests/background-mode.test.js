@@ -5,10 +5,12 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false, lastBlocked = null, blockedCount = 0, delayMs = 0 } = {}) {
+async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false, lastBlocked = null, blockedCount = 0, delayMs = 0, failReads = 0, failWrites = 0 } = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const settings = { enabled, mode, blockedCount, lastBlocked };
   const removed = [];
+  let remainingReadFailures = failReads;
+  let remainingWriteFailures = failWrites;
   let onCreated;
   let onMessage;
   let onInstalled;
@@ -22,22 +24,43 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
       local: {
         get(defaults, callback) {
           const read = () => {
+            if (remainingReadFailures > 0) {
+              remainingReadFailures -= 1;
+              if (typeof callback === 'function') {
+                api.runtime.lastError = { message: 'mock read failure' };
+                callback(undefined);
+                delete api.runtime.lastError;
+                return undefined;
+              }
+              throw new Error('mock storage read failure');
+            }
             const value = { ...defaults, ...settings };
             if (typeof callback === 'function') callback(value);
             return value;
           };
-          if (delayMs) return new Promise((resolve) => setTimeout(() => resolve(read()), delayMs));
+          if (delayMs) return new Promise((resolve, reject) => setTimeout(() => {
+            try { resolve(read()); } catch (error) { reject(error); }
+          }, delayMs));
           const value = read();
           return typeof callback === 'function' ? undefined : Promise.resolve(value);
         },
         set(patch, callback) {
           const write = () => {
+            if (remainingWriteFailures > 0) {
+              remainingWriteFailures -= 1;
+              if (typeof callback === 'function') {
+                api.runtime.lastError = { message: 'mock write failure' };
+                callback();
+                delete api.runtime.lastError;
+                return;
+              }
+              throw new Error('mock storage write failure');
+            }
             Object.assign(settings, patch);
             if (typeof callback === 'function') callback();
           };
-          if (delayMs) return new Promise((resolve) => setTimeout(() => {
-            write();
-            resolve();
+          if (delayMs) return new Promise((resolve, reject) => setTimeout(() => {
+            try { write(); resolve(); } catch (error) { reject(error); }
           }, delayMs));
           write();
           return Promise.resolve();
@@ -283,6 +306,31 @@ async function verifyBrowser(relativePath) {
   assert.equal(events.removed.length, 4);
   assert.equal(afterEvents.lastBlocked.detail.url, 'https://ads.al5sm.com',
     relativePath + ': serialized telemetry must preserve only sanitized URL origins');
+
+  // A failed async storage read/write must yield a recoverable null UI
+  // response and leave later queued changes functional, not permanently stuck.
+  const failedWrite = await loadBackground(relativePath, 'balanced', { failWrites: 1, delayMs: 2 });
+  const refused = await failedWrite.message({ type: 'set-settings', settings: { enabled: false } });
+  assert.equal(refused, null, relativePath + ': failed save must respond with null');
+  assert.equal(failedWrite.settings.enabled, true, relativePath + ': failing write must leave storage unchanged');
+  const recovered = await failedWrite.message({ type: 'set-settings', settings: { mode: 'strict' } });
+  assert.equal(recovered.mode, 'strict', relativePath + ': mutation queue must recover after write failure');
+  const failedRead = await loadBackground(relativePath, 'balanced', { failReads: 1, delayMs: 2 });
+  assert.equal(await failedRead.message({ type: 'get-settings' }), null,
+    relativePath + ': failed settings read must return an explicit empty result');
+  assert.equal((await failedRead.message({ type: 'get-settings' })).enabled, true,
+    relativePath + ': future reads must recover');
+  const blockedFailure = await loadBackground(relativePath, 'balanced', { failWrites: 1, delayMs: 2 });
+  await blockedFailure.message({ type: 'blocked-event', event: 'window-open',
+    detail: { url: 'https://ads.al5sm.com/private?token=hidden' } });
+  const afterFailedBlock = await blockedFailure.message({ type: 'get-settings' });
+  assert.equal(afterFailedBlock.blockedCount, 0,
+    relativePath + ': failed telemetry write must not count an event that was not persisted');
+  await blockedFailure.message({ type: 'blocked-event', event: 'window-open',
+    detail: { url: 'https://ads.al5sm.com/private?token=hidden' } });
+  const afterRecoveredBlock = await blockedFailure.message({ type: 'get-settings' });
+  assert.equal(afterRecoveredBlock.blockedCount, 1,
+    relativePath + ': later telemetry must still commit once');
 
   const originPort = await loadBackground(relativePath, 'strict');
   for (const [id, url] of [
