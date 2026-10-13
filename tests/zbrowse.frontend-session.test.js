@@ -232,6 +232,82 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     'page exit must not extend the abandoned session lease'
   );
 
+  // The explicit End control must free the viewer immediately, keep the
+  // ordinary capacity poller alive, and never double-release on unload.
+  const manual = await bootPortal({ sessionRequest: async () => response(validSession) });
+  manual.submit();
+  await settle();
+  assert.equal(manual.element('browserView').hidden, false, 'manual-close fixture must mount a viewer');
+  const close = manual.element('endButton').listeners.click;
+  assert.equal(typeof close, 'function', 'End control must be wired to session teardown');
+  await close();
+  await settle();
+  assert.equal(manual.element('browserView').hidden, true, 'End must return to home view');
+  assert.equal(manual.element('homeView').hidden, false, 'End must restore the start form');
+  assert.equal(manual.element('browserFrame').src, 'about:blank', 'End must clear viewer content');
+  assert.deepEqual(
+    [...manual.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'End must clear countdown and heartbeat but preserve health polling'
+  );
+  assert.equal(
+    manual.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'End must release gateway capacity exactly once'
+  );
+  await close();
+  manual.pagehide();
+  await settle();
+  assert.equal(
+    manual.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'repeated End and later pagehide must not double-release the same session'
+  );
+
+  // A lost heartbeat must invalidate the portal session. The viewer cannot
+  // continue displaying an orphaned session when the gateway rejects renewal.
+  const heartbeatLost = await bootPortal({ sessionRequest: async () => response(validSession) });
+  heartbeatLost.submit();
+  await settle();
+  const heartbeat = [...heartbeatLost.intervals.values()].find(({ milliseconds }) =>
+    milliseconds === 30000
+  );
+  assert.ok(heartbeat, 'session must register a heartbeat timer');
+  heartbeat.callback();
+  await settle();
+  assert.equal(heartbeatLost.element('browserFrame').src, 'about:blank',
+    'heartbeat failure must clear the viewer');
+  assert.equal(heartbeatLost.element('browserView').hidden, true,
+    'heartbeat failure must return to home');
+  assert.deepEqual(
+    [...heartbeatLost.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'heartbeat failure must tear down session-owned timers'
+  );
+  assert.equal(
+    heartbeatLost.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'heartbeat failure must attempt one capacity release'
+  );
+
+  // The server-provided absolute expiry is enforced immediately, without
+  // waiting for the first countdown tick or starting a lingering heartbeat.
+  const expired = await bootPortal({
+    sessionRequest: async () => response({ ...validSession, expiresAt: Date.now() - 1000 })
+  });
+  expired.submit();
+  await settle();
+  assert.equal(expired.element('browserFrame').src, 'about:blank',
+    'already-expired session must not leave a viewer mounted');
+  assert.equal(expired.element('browserView').hidden, true);
+  assert.deepEqual(
+    [...expired.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'expired session must not leave a heartbeat/countdown running'
+  );
+  assert.equal(
+    expired.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'already-expired session must immediately release capacity'
+  );
+
   const noSession = await bootPortal();
   noSession.pagehide();
   await settle();
