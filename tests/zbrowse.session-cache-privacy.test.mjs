@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { requireExactCachePrivacyFlag } from '../tools/cache-privacy-flags.mjs';
+
+const requireNoStore = requireExactCachePrivacyFlag(process.argv.slice(2));
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const gateway = fs.readFileSync(path.join(root, 'zbrowse/gateway/server.js'), 'utf8');
@@ -100,7 +103,6 @@ function assertNotStorable(res, label) {
   assert.ok(directives.includes('no-store'),
     label + ': session-bearing API response needs explicit Cache-Control: no-store (issue #284)');
 }
-const requireNoStore = process.argv.includes('--require-no-store');
 
 sessions.set(fakeToken, fixture);
 sessionsByIp.set(ip, fakeToken);
