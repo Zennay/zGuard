@@ -92,6 +92,24 @@ async function verifyBrowser(relativePath) {
   );
   assert.equal(balanced.events.at(-1)?.event, 'window-open');
 
+  // Hostile host classification must use the parsed URL authority, not text
+  // before '@', a deceptive suffix, or a noncanonical spelling of the port.
+  for (const hostile of [
+    'https://user:secret@ads.al5sm.com/popup',
+    'https://ads.al5sm.com:443/popup',
+    'https://Sub.TMLL7.COM/popup'
+  ]) {
+    assert.equal(balanced.open(hostile), null,
+      relativePath + ': balanced must still block actual hostile authority ' + hostile);
+  }
+  for (const harmless of [
+    'https://ads.al5sm.com@safe.example/popup',
+    'https://al5sm.com.attacker.example/path'
+  ]) {
+    assert.notEqual(balanced.open(harmless), null,
+      relativePath + ': a hostname-lookalike must not be blocked ' + harmless);
+  }
+
   const strict = await loadContentScript(relativePath, 'strict');
   assert.equal(
     strict.open('https://example.org/movie'),
@@ -153,6 +171,27 @@ async function verifyBrowser(relativePath) {
     4,
     relativePath + ': each blocked click must be recorded once'
   );
+
+  // Strict mode isolates origins rather than visual URL prefixes.
+  for (const local of [
+    '/next',
+    'https://origin.test:443/next',
+    'https://origin.test/watch?next=1'
+  ]) {
+    assert.notEqual(strict.open(local), null,
+      relativePath + ': strict must retain canonical same-origin navigation ' + local);
+  }
+  for (const foreign of [
+    'https://origin.test:8443/next',
+    'https://origin.test@attacker.example/popup',
+    'https://sub.origin.test/next'
+  ]) {
+    assert.equal(strict.open(foreign), null,
+      relativePath + ': strict must reject deceptive/different-origin navigation ' + foreign);
+    assert.deepEqual(strict.click(foreign, { target: '_blank' }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': strict click handler must enforce the same origin boundary');
+  }
 
   const disabled = await loadContentScript(relativePath, 'strict', false);
   assert.notEqual(
