@@ -1,6 +1,7 @@
 // Read-only production routing acceptance for issue #293.
 // Never creates browser sessions, requests /s/ tokens, or exports session state.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 
 const PUBLIC_ORIGIN = 'https://zbrowse-tv.lizellay.chatgpt.site/';
 
@@ -28,6 +29,8 @@ async function getJson(origin, route, fetcher) {
   const response = await fetcher(url.href, {
     method: 'GET',
     redirect: 'error',
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
     cache: 'no-store',
     headers: { accept: 'application/json' },
     signal: AbortSignal.timeout(7000)
@@ -100,7 +103,12 @@ function response(value, status = 200, contentType = 'application/json; charset=
 async function selfTest() {
   const requested = [];
   const healthy = async (url, options) => {
-    requested.push({ url, method: options.method, redirect: options.redirect });
+    requested.push({
+      url, method: options.method, redirect: options.redirect,
+      credentials: options.credentials, referrerPolicy: options.referrerPolicy,
+      cache: options.cache, hasAuth: Object.keys(options.headers ?? {})
+        .some((name) => /authorization|cookie/i.test(name))
+    });
     if (url.endsWith('/api/health')) return response(sampleHealth);
     if (url.endsWith('/api/sites')) return response(sampleSites);
     throw new Error('unexpected endpoint');
@@ -110,8 +118,10 @@ async function selfTest() {
   assert.equal(normal.available, true);
   assert.equal(normal.siteCount, 1);
   assert.deepEqual(requested.map(({ url }) => new URL(url).pathname), ['/api/health', '/api/sites']);
-  assert.ok(requested.every(({ method, redirect }) => method === 'GET' && redirect === 'error'),
-    'readiness must be read-only and reject redirects');
+  assert.ok(requested.every(({ method, redirect, credentials, referrerPolicy, cache, hasAuth }) =>
+    method === 'GET' && redirect === 'error' && credentials === 'omit' &&
+    referrerPolicy === 'no-referrer' && cache === 'no-store' && !hasAuth),
+    'readiness must be GET-only, uncached, redirect-free and credential/referrer-free');
 
   const busy = await checkPublicReadiness(async (url) =>
     url.endsWith('/api/health')
@@ -141,14 +151,42 @@ async function selfTest() {
   console.log('zBrowse public-origin read-only readiness contract passed');
 }
 
-if (process.argv.includes('--self-test')) {
+function readOnlyMode(argv) {
+  if (argv.length !== 1 || !['--self-test', '--live'].includes(argv[0])) {
+    throw new Error('Exactly one readiness mode is required: --self-test or --live');
+  }
+  return argv[0];
+}
+
+// Self-tests must not be allowed to stand in for a requested live probe.
+// Negative CLI probes are subprocesses with only invalid arguments: never
+// invoke a live public endpoint when proving the fail-closed mode contract.
+if (process.argv[2] === '--self-test' && process.argv.length === 3) {
+  for (const bad of [
+    [], ['--self-tset'], ['--live', '--self-test'], ['--self-test', '--live'],
+    ['--self-test', '--self-test'], ['--live', '--live'],
+    ['--self-test=true'], ['--self-test', '--unknown']
+  ]) {
+    assert.throws(() => readOnlyMode(bad), /Exactly one readiness mode/,
+      'invalid readiness arguments must not select an ordinary green path');
+    const child = spawnSync(process.execPath, [process.argv[1], ...bad], {
+      encoding: 'utf8', timeout: 5000
+    });
+    assert.equal(child.status, 1, 'actual CLI must reject invalid readiness flags');
+    assert.match(child.stderr, /Exactly one readiness mode/,
+      'invalid real CLI must fail before a network probe');
+    assert.doesNotMatch(child.stdout, /connected|Read-only proof/,
+      'an invalid CLI must not print any successful live readiness result');
+  }
+}
+
+const mode = readOnlyMode(process.argv.slice(2));
+if (mode === '--self-test') {
   await selfTest();
-} else if (process.argv.includes('--live')) {
+} else {
   const health = await checkPublicReadiness();
   console.log('zBrowse public origin: ' + (health.available ? 'connected / capacity available' : 'connected / capacity busy'));
   console.log('Read-only proof: sites=' + health.siteCount + ', capacity=' + health.capacity +
     ', active=' + health.activeSessions + ', starting=' + health.startingSessions +
     ', maxMinutes=' + health.maxSessionMinutes);
-} else {
-  throw new Error('Specify --self-test or --live; never allocate sessions during readiness');
 }
