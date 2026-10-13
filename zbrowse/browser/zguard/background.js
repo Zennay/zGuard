@@ -73,13 +73,23 @@ function mutateSettings(update) {
   return operation;
 }
 function getSettings() {
-  return new Promise((resolve) => api.storage.local.get(DEFAULTS, (r) => resolve(normalizeSettings(r))));
+  return new Promise((resolve, reject) => {
+    api.storage.local.get(DEFAULTS, (value) => {
+      if (api.runtime.lastError) return reject(new Error('Storage read unavailable'));
+      resolve(normalizeSettings(value));
+    });
+  });
 }
 function set(data) {
-  return new Promise((resolve) => api.storage.local.set(data, resolve));
+  return new Promise((resolve, reject) => {
+    api.storage.local.set(data, () => {
+      if (api.runtime.lastError) return reject(new Error('Storage write unavailable'));
+      resolve();
+    });
+  });
 }
 
-api.runtime.onInstalled.addListener(() => mutateSettings((settings) => settings));
+api.runtime.onInstalled.addListener(() => mutateSettings((settings) => settings).catch(() => null));
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'blocked-event') {
@@ -87,22 +97,23 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ...settings,
       blockedCount: settings.blockedCount + 1,
       lastBlocked: { event: message.event, detail: safeBlockedDetail(message.detail), at: new Date().toISOString() }
-    }));
+    })).catch(() => null);
     return false;
   }
   if (message?.type === 'get-settings') {
-    storageQueue.then(getSettings).then(sendResponse);
+    storageQueue.then(getSettings).then(sendResponse, () => sendResponse(null));
     return true;
   }
   if (message?.type === 'set-settings') {
-    mutateSettings((settings) => applySettingsPatch(settings, message.settings)).then(sendResponse);
+    mutateSettings((settings) => applySettingsPatch(settings, message.settings)).then(sendResponse, () => sendResponse(null));
     return true;
   }
   return false;
 });
 
 api.tabs.onCreated.addListener(async (tab) => {
-  const settings = await storageQueue.then(getSettings);
+  let settings;
+  try { settings = await storageQueue.then(getSettings); } catch (_) { return; }
   const targetUrl = tab.url || tab.pendingUrl;
   if (!settings.enabled || !targetUrl || !tab.openerTabId) return;
   // Browser-internal/opaque targets are not web popup destinations.
