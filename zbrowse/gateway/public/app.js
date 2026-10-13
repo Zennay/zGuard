@@ -44,7 +44,7 @@ async function refreshHealth() {
   const status = $("capacityText").parentElement;
   try {
     const health = await request("/api/health");
-    const available = health.activeSessions < health.capacity;
+    const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
@@ -53,7 +53,13 @@ async function refreshHealth() {
   }
 }
 
+let sessionStarting = false;
+
 async function startSession(url) {
+  // A disabled button does not prevent a second form submit or scripted event.
+  // Never allocate two gateway sessions for the same portal while one is starting.
+  if (sessionStarting || state.session) return;
+  sessionStarting = true;
   setMessage();
   startButton.disabled = true;
   startButton.textContent = "Starting…";
@@ -68,6 +74,7 @@ async function startSession(url) {
     setMessage(error.message);
     await refreshHealth();
   } finally {
+    sessionStarting = false;
     startButton.disabled = false;
     startButton.textContent = "Open";
   }
