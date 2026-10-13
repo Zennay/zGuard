@@ -143,7 +143,15 @@ async function runBrowser(extensionPath, profilePath, url) {
     return observed;
   } finally {
     socket?.close();
-    child.kill('SIGTERM');
+    if (child.exitCode === null) {
+      const stopped = new Promise((resolve) => child.once('close', resolve));
+      child.kill('SIGTERM');
+      await Promise.race([stopped, sleep(3000)]);
+      if (child.exitCode === null) {
+        child.kill('SIGKILL');
+        await Promise.race([stopped, sleep(2000)]);
+      }
+    }
   }
 }
 
@@ -167,7 +175,7 @@ try {
       console.log(variant + ': real Chromium hostile click blocked; ordinary click allowed; ' +
         'MAIN-world window.open interception=' + observed.mainWorldOpenWrapped);
     } finally {
-      fs.rmSync(profile, { recursive: true, force: true });
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   }
 } finally {
