@@ -16,6 +16,7 @@ const requireAuxclick = process.argv.includes('--require-auxclick');
 const requireShadowDom = process.argv.includes('--require-shadow-dom');
 const requireFormSubmit = process.argv.includes('--require-form-submit');
 const requireImageMap = process.argv.includes('--require-image-map');
+const requireSvgLink = process.argv.includes('--require-svg-link');
 const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
@@ -364,6 +365,89 @@ async function runBrowser(extensionPath, profilePath, url) {
         ordinary: await nativeKeyboardProbe('ordinary')
       };
     }
+    if (requireSvgLink) {
+      // Real SVG <a> links expose SVGAnimatedString href/target properties
+      // instead of the HTMLAnchorElement strings handled by content.js.
+      // Actual mouse input exercises hit-testing on a visible nested rect.
+      async function svgLinkProbe(kind, href) {
+        const setup = await cdp('Runtime.evaluate', {
+          expression: '(' + ((variant, url) => {
+            const ns = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(ns, 'svg');
+            svg.setAttribute('width', '120');
+            svg.setAttribute('height', '60');
+            const link = document.createElementNS(ns, 'a');
+            link.setAttribute('href', url);
+            link.setAttribute('target', '_blank');
+            const rect = document.createElementNS(ns, 'rect');
+            rect.setAttribute('width', '120');
+            rect.setAttribute('height', '60');
+            rect.setAttribute('fill', 'lightgray');
+            link.append(rect);
+            svg.append(link);
+            document.body.append(svg);
+            const state = {
+              reachedLink: false, trusted: false,
+              seenSvgAtCapture: false, cancelledByFixture: false,
+              closestIsSvgLink: false,
+              hrefIsAnimated: typeof link.href === 'object' &&
+                typeof link.href.baseVal === 'string',
+              targetIsAnimated: typeof link.target === 'object' &&
+                typeof link.target.baseVal === 'string'
+            };
+            window.__zguardSvgState = state;
+            function safeCapture(event) {
+              if (!event.composedPath().includes(link)) return;
+              state.seenSvgAtCapture = true;
+              state.closestIsSvgLink = event.target.closest('a') === link;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            function onTarget(event) {
+              state.reachedLink = true;
+              state.trusted = event.isTrusted;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            document.addEventListener('click', safeCapture, true);
+            link.addEventListener('click', onTarget);
+            window.__zguardSvgCleanup = () => {
+              document.removeEventListener('click', safeCapture, true);
+              link.removeEventListener('click', onTarget);
+              svg.remove();
+            };
+            svg.scrollIntoView({ block: 'center' });
+            const bounds = rect.getBoundingClientRect();
+            return { x: bounds.left + bounds.width / 2,
+              y: bounds.top + bounds.height / 2 };
+          }).toString() + ')(' + JSON.stringify(kind) + ',' + JSON.stringify(href) + ')',
+          returnByValue: true
+        });
+        assert.equal(setup.exceptionDetails, undefined, 'SVG fixture setup must run');
+        const pos = setup.result?.value;
+        assert.ok(Number.isFinite(pos?.x) && Number.isFinite(pos?.y),
+          'SVG hyperlink hit target must be onscreen');
+        for (const params of [
+          { type: 'mouseMoved', button: 'none', buttons: 0 },
+          { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1 },
+          { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1 }
+        ]) {
+          await cdp('Input.dispatchMouseEvent', { ...pos, ...params });
+        }
+        const response = await cdp('Runtime.evaluate', {
+          expression: '(() => { const state = window.__zguardSvgState; ' +
+            'window.__zguardSvgCleanup(); return state; })()',
+          returnByValue: true
+        });
+        assert.equal(response.exceptionDetails, undefined,
+          'SVG click fixture must remain accessible');
+        return response.result?.value;
+      }
+      observed.svgLink = {
+        hostile: await svgLinkProbe('hostile', 'https://ads.al5sm.com/popup'),
+        ordinary: await svgLinkProbe('ordinary', 'https://example.org/video')
+      };
+    }
     if (requireImageMap) {
       // Actual Chrome mouse input activates HTML <area> map hotspots, not
       // synthetic anchor MouseEvents. Fixture document capture cancels every
@@ -694,6 +778,20 @@ try {
         assert.equal(observed.keyboard.hostile.clickReachedTarget, false,
           variant + ': hostile keyboard-activated target=_blank link escaped popup guard');
       }
+      if (requireSvgLink) {
+        assert.equal(observed.svgLink?.ordinary?.seenSvgAtCapture, true,
+          variant + ': real SVG link click must be observed in document capture');
+        assert.equal(observed.svgLink.ordinary.closestIsSvgLink, true,
+          variant + ': browser must resolve SVG link via closest(a)');
+        assert.equal(observed.svgLink.ordinary.reachedLink, true,
+          variant + ': ordinary SVG target=_blank navigation must remain available');
+        assert.equal(observed.svgLink.ordinary.trusted, true,
+          variant + ': ordinary SVG click must be a real browser event');
+        assert.equal(observed.svgLink.ordinary.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary SVG external navigation');
+        assert.equal(observed.svgLink.hostile.reachedLink, false,
+          variant + ': hostile SVG target=_blank link escaped popup guard');
+      }
       if (requireImageMap) {
         assert.equal(observed.imageMap?.ordinary?.seenAreaAtCapture, true,
           variant + ': real image-map hit-testing must target an HTML area');
@@ -766,7 +864,8 @@ if (coldStart) {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : requireImageMap ? 'Real-browser HTML image-map popup acceptance passed'
+  : requireSvgLink ? 'Real-browser SVG hyperlink popup acceptance passed'
+    : requireImageMap ? 'Real-browser HTML image-map popup acceptance passed'
     : requireFormSubmit ? 'Real-browser form target=_blank acceptance passed'
     : requireShadowDom ? 'Real-browser shadow DOM click acceptance passed'
     : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
