@@ -127,6 +127,15 @@ async function bootPortal({ health, sessionRequest } = {}) {
   });
   assert.equal(active.element('capacityText').textContent, 'Browser currently in use');
 
+  const validToken = 'A'.repeat(32);
+  const validViewer = '/s/' + validToken + '/';
+  const validSession = {
+    token: validToken,
+    viewerUrl: validViewer,
+    expiresAt: Date.now() + 60_000,
+    maxMinutes: 15
+  };
+
   const pending = deferred();
   const portal = await bootPortal({ sessionRequest: () => pending.promise });
   portal.submit();
@@ -138,13 +147,9 @@ async function bootPortal({ health, sessionRequest } = {}) {
   );
   assert.equal(portal.element('startButton').disabled, true, 'start must remain disabled while pending');
 
-  pending.resolve(response({
-    token: 'safe-token',
-    viewerUrl: '/session/safe-token/viewer',
-    expiresAt: Date.now() + 60_000
-  }));
+  pending.resolve(response(validSession));
   await settle();
-  assert.equal(portal.element('browserFrame').src, '/session/safe-token/viewer');
+  assert.equal(portal.element('browserFrame').src, validViewer);
   assert.equal(portal.element('browserView').hidden, false);
   assert.equal(portal.element('startButton').disabled, false);
   assert.deepEqual(
@@ -173,7 +178,38 @@ async function bootPortal({ health, sessionRequest } = {}) {
     'failed session start must permit a subsequent retry'
   );
 
-  console.log('zBrowse portal capacity, concurrent start, retry and session lifecycle regressions passed');
+  const invalidSessions = [
+    ['absolute viewer', { ...validSession, viewerUrl: 'https://untrusted.example/viewer' }],
+    ['javascript viewer', { ...validSession, viewerUrl: 'javascript:alert(1)' }],
+    ['path traversal viewer', { ...validSession, viewerUrl: '/s/' + validToken + '/../other/' }],
+    ['other session viewer', { ...validSession, viewerUrl: '/s/' + 'B'.repeat(32) + '/' }],
+    ['traversal token', { ...validSession, token: '../other' }],
+    ['short token', { ...validSession, token: 'short' }],
+    ['missing token', { ...validSession, token: undefined }],
+    ['string expiry', { ...validSession, expiresAt: String(validSession.expiresAt) }],
+    ['nonsafe expiry', { ...validSession, expiresAt: Number.MAX_SAFE_INTEGER + 1 }],
+    ['invalid duration', { ...validSession, maxMinutes: 0 }],
+    ['missing duration', { ...validSession, maxMinutes: undefined }],
+    ['null payload', null]
+  ];
+
+  for (const [label, payload] of invalidSessions) {
+    const candidate = await bootPortal({ sessionRequest: async () => response(payload) });
+    candidate.element('browserView').hidden = true;
+    candidate.submit();
+    await settle();
+    assert.equal(candidate.element('browserFrame').src, '', label + ': no iframe navigation');
+    assert.equal(candidate.element('browserView').hidden, true, label + ': no session mounted');
+    assert.equal(candidate.element('formMessage').textContent,
+      'Invalid browser session response.', label + ': generic error shown');
+    assert.deepEqual(
+      [...candidate.intervals.values()].map(({ milliseconds }) => milliseconds),
+      [20000], label + ': rejected payload must not start heartbeats or countdowns'
+    );
+    assert.equal(candidate.element('startButton').disabled, false, label + ': retry remains available');
+  }
+
+  console.log('zBrowse portal capacity, concurrent admission and session-response validation passed');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
