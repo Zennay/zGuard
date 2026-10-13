@@ -82,7 +82,9 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
       if (healthRequest) return healthRequest();
       return response(health || { activeSessions: 0, startingSessions: 0, capacity: 1 });
     }
-    if (/^\\/api\\/session\\/[A-Za-z0-9_-]{32}$/.test(url) && options.method === 'DELETE') {
+    if (url.startsWith('/api/session/') &&
+        /^[A-Za-z0-9_-]{32}$/.test(url.slice('/api/session/'.length)) &&
+        options.method === 'DELETE') {
       return response(null, 204);
     }
     if (url === '/api/session' && options.method === 'POST') {
