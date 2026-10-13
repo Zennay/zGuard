@@ -181,7 +181,7 @@ try {
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
-        variant + ': actual injected extension must preserve ordinary external links'); 
+        variant + ': actual injected extension must preserve ordinary external links');
       for (const label of ['hostileRootDot', 'hostileNested', 'hostileUserInfo']) {
         assert.equal(observed.cases?.[label]?.blocked, true,
           variant + ': real browser must block hostile authority variant ' + label);
