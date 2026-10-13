@@ -14,6 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireMainWorld = process.argv.includes('--require-mainworld');
 const requireAuxclick = process.argv.includes('--require-auxclick');
 const requireShadowDom = process.argv.includes('--require-shadow-dom');
+const requireFormSubmit = process.argv.includes('--require-form-submit');
 const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
@@ -292,6 +293,54 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
+    if (requireFormSubmit) {
+      // Real DOM form.requestSubmit creates an HTML submit event; unlike an
+      // anchor click, zGuard's current capture listener does not watch submit.
+      // The fixture's form-target listener cancels navigation on a miss.
+      const evaluated = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function submitForm(action) {
+            const form = document.createElement('form');
+            form.action = action;
+            form.method = 'GET';
+            form.target = '_blank';
+            document.body.append(form);
+            let reachedTarget = false;
+            let cancelledByFixture = false;
+            let seenOnDocument = false;
+            let trustedAtTarget = false;
+            function observe(event) {
+              if (event.target === form) seenOnDocument = true;
+            }
+            function cancel(event) {
+              reachedTarget = true;
+              trustedAtTarget = event.isTrusted;
+              event.preventDefault();
+              cancelledByFixture = event.defaultPrevented;
+            }
+            document.addEventListener('submit', observe, true);
+            form.addEventListener('submit', cancel, { once: true });
+            try {
+              form.requestSubmit();
+            } finally {
+              document.removeEventListener('submit', observe, true);
+              form.removeEventListener('submit', cancel);
+              form.remove();
+            }
+            return { blocked: !reachedTarget, cancelledByFixture,
+              seenOnDocument, trustedAtTarget };
+          }
+          return {
+            hostile: submitForm('https://ads.al5sm.com/popup'),
+            ordinary: submitForm('https://example.org/video')
+          };
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(evaluated.exceptionDetails, undefined,
+        'Real HTML form submission fixture must evaluate');
+      observed.formSubmit = evaluated.result?.value;
+    }
     if (requireShadowDom) {
       // The browser, not our VM, retargets composed clicks from a real
       // shadow root to its host at document capture. A target-only fixture
@@ -469,6 +518,16 @@ try {
         variant + ': injected child frame must preserve ordinary navigation');
       assert.equal(observed.cases.frameOrdinary.cancelled, true,
         variant + ': fixture must prevent any outgoing navigation from child frames');
+      if (requireFormSubmit) {
+        assert.equal(observed.formSubmit?.ordinary?.seenOnDocument, true,
+          variant + ': ordinary form submission must reach document capture');
+        assert.equal(observed.formSubmit?.ordinary?.blocked, false,
+          variant + ': ordinary external target=_blank form must remain available');
+        assert.equal(observed.formSubmit?.ordinary?.cancelledByFixture, true,
+          variant + ': fixture must prevent any external form navigation');
+        assert.equal(observed.formSubmit?.hostile?.blocked, true,
+          variant + ': hostile target=_blank form escaped extension submit guard');
+      }
       if (requireShadowDom) {
         assert.equal(observed.shadowDom?.ordinary?.composed, true,
           variant + ': ordinary shadow click must be a composed DOM event');
@@ -519,7 +578,8 @@ if (coldStart) {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : requireShadowDom ? 'Real-browser shadow DOM click acceptance passed'
+  : requireFormSubmit ? 'Real-browser form target=_blank acceptance passed'
+    : requireShadowDom ? 'Real-browser shadow DOM click acceptance passed'
     : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
     : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
       : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
