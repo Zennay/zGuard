@@ -66,6 +66,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function runBrowser(extensionPath, profilePath, url) {
   const args = [
     '--headless=new', '--disable-gpu', '--disable-dev-shm-usage',
+    // GitHub-hosted ephemeral CI does not expose Chrome's user-namespace
+    // sandbox. This flag is limited to the test Chrome process only; it does
+    // NOT relax the separately managed production zBrowse browser container.
+    '--no-sandbox',
     '--no-first-run', '--no-default-browser-check',
     '--disable-background-networking', '--disable-sync',
     '--disable-extensions-except=' + extensionPath,
@@ -73,7 +77,6 @@ async function runBrowser(extensionPath, profilePath, url) {
     '--user-data-dir=' + profilePath,
     '--remote-debugging-port=0', url
   ];
-  if (process.getuid?.() === 0) args.unshift('--no-sandbox');
   const child = spawn(browser, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (chunk) => {
@@ -86,7 +89,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       if (child.exitCode !== null) break;
       await sleep(100);
     }
-    assert.ok(fs.existsSync(portFile), 'Chromium DevTools did not start: ' + stderr.slice(-900));
+    assert.ok(fs.existsSync(portFile), 'Chromium DevTools did not start (exit=' + child.exitCode + '): ' + stderr.slice(-3000));
     const port = Number(fs.readFileSync(portFile, 'utf8').split('\n')[0]);
     assert.ok(Number.isSafeInteger(port) && port > 0, 'Invalid local CDP port');
     const response = await fetch('http://127.0.0.1:' + port + '/json/list');
