@@ -31,6 +31,12 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <a id="lookalikeUserInfo" href="https://ads.al5sm.com@safe.example/watch" target="_blank">Safe authority</a>
 <a id="lookalikeSuffix" href="https://al5sm.com.attacker.example./watch" target="_blank">Safe suffix</a>
 <a id="sameOrigin" href="/watch" target="_blank">Same origin</a>
+<iframe id="childFrame" src="/child" title="Browser interception test frame"></iframe>
+</body></html>`;
+
+const childFixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
+<a id="frameHostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile in frame</a>
+<a id="frameOrdinary" href="https://example.org/video" target="_blank">Ordinary in frame</a>
 </body></html>`;
 
 const server = http.createServer((request, response) => {
@@ -39,7 +45,7 @@ const server = http.createServer((request, response) => {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff'
   });
-  response.end(fixture);
+  response.end(request.url === '/child' ? childFixture : fixture);
 });
 await new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -91,8 +97,8 @@ async function runBrowser(extensionPath, profilePath, url) {
     });
     await sleep(500);
     const expression = '(' + (() => {
-      function probe(id) {
-        const anchor = document.getElementById(id);
+      function probe(id, context = document) {
+        const anchor = context.getElementById(id);
         if (!anchor) throw new Error('Missing fixture anchor ' + id);
         // The browser's real extension runs first at document capture.
         // For allowed links, our target listener prevents navigation so this
@@ -121,7 +127,13 @@ async function runBrowser(extensionPath, profilePath, url) {
           hostileUserInfo: probe('hostileUserInfo'),
           lookalikeUserInfo: probe('lookalikeUserInfo'),
           lookalikeSuffix: probe('lookalikeSuffix'),
-          sameOrigin: probe('sameOrigin')
+          sameOrigin: probe('sameOrigin'),
+          frameHostile: document.getElementById('childFrame')?.contentDocument?.getElementById('frameHostile')
+            ? probe('frameHostile', document.getElementById('childFrame').contentDocument)
+            : null,
+          frameOrdinary: document.getElementById('childFrame')?.contentDocument?.getElementById('frameOrdinary')
+            ? probe('frameOrdinary', document.getElementById('childFrame').contentDocument)
+            : null
         },
         mainWorldOpenWrapped: window.open.name === 'zGuardWindowOpen'
       };
@@ -130,7 +142,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     // synchronized with the CDP page target. Poll with a bounded deadline,
     // but never accept a false click result as proof of real interception.
     let observed;
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 16000;
     do {
       const reply = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('CDP evaluation timed out')), 10000);
@@ -151,7 +163,10 @@ async function runBrowser(extensionPath, profilePath, url) {
       }
       observed = reply.result?.result?.value;
       assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
-      if (observed.hostileClickBlocked || Date.now() >= deadline) break;
+      if (
+        (observed.hostileClickBlocked && observed.cases?.frameHostile?.blocked) ||
+        Date.now() >= deadline
+      ) break;
       await sleep(200);
     } while (true);
     return observed;
@@ -178,6 +193,8 @@ try {
     try {
       const url = 'http://127.0.0.1:' + server.address().port + '/';
       const observed = await runBrowser(extensionPath, profile, url);
+      // Boolean-only evidence; never include navigated URLs or session tokens.
+      console.log(variant + ': interception probe=' + JSON.stringify(observed));
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
@@ -195,12 +212,20 @@ try {
           variant + ': fixture must prevent external navigation for ' + label);
       }
 
+      assert.equal(observed.cases?.frameHostile?.blocked, true,
+        variant + ': all_frames must inject zGuard into a genuine same-origin child frame');
+      assert.equal(observed.cases.frameHostile.cancelled, true,
+        variant + ': hostile frame click must be cancelled before target dispatch');
+      assert.equal(observed.cases?.frameOrdinary?.blocked, false,
+        variant + ': injected child frame must preserve ordinary navigation');
+      assert.equal(observed.cases.frameOrdinary.cancelled, true,
+        variant + ': fixture must prevent any outgoing navigation from child frames');
       if (requireMainWorld) {
         assert.equal(observed.mainWorldOpenWrapped, true,
           variant + ': page window.open is NOT intercepted in MAIN world (issue #3)');
       }
       console.log(variant + ': real Chromium hostile click blocked; ordinary click allowed; ' +
-        'authority-matrix=6/6; MAIN-world window.open interception=' + observed.mainWorldOpenWrapped);
+        'authority-matrix=6/6; iframe=2/2; MAIN-world window.open interception=' + observed.mainWorldOpenWrapped);
     } finally {
       fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
