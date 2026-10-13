@@ -19,10 +19,21 @@ function safeBlockedDetail(detail) {
   }
   return safe;
 }
+function safeBlockedHistory(history) {
+  if (!history || typeof history !== 'object') return null;
+  const allowed = ['new-tab', 'window-open', 'external-link'];
+  return {
+    event: allowed.includes(history.event) ? history.event : 'blocked',
+    detail: safeBlockedDetail(history.detail),
+    at: typeof history.at === 'string' &&
+      /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(history.at)
+      ? history.at : new Date().toISOString()
+  };
+}
 const getSettings = () => api.storage.local.get(DEFAULTS).then((r) => ({ ...DEFAULTS, ...r }));
 const set = (data) => api.storage.local.set(data);
 
-api.runtime.onInstalled.addListener(() => api.storage.local.get(DEFAULTS).then((current) => set({ ...DEFAULTS, ...current })));
+api.runtime.onInstalled.addListener(() => api.storage.local.get(DEFAULTS).then((current) => set({ ...DEFAULTS, ...current, lastBlocked: safeBlockedHistory(current.lastBlocked) })));
 api.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'blocked-event') return getSettings().then((settings) => set({
     blockedCount: settings.blockedCount + 1,

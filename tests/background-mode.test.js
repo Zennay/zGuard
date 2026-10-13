@@ -5,16 +5,17 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false } = {}) {
+async function loadBackground(relativePath, mode, { enabled = true, openerThrows = false, lastBlocked = null, blockedCount = 0 } = {}) {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
-  const settings = { enabled, mode, blockedCount: 0, lastBlocked: null };
+  const settings = { enabled, mode, blockedCount, lastBlocked };
   const removed = [];
   let onCreated;
   let onMessage;
+  let onInstalled;
 
   const api = {
     runtime: {
-      onInstalled: { addListener() {} },
+      onInstalled: { addListener(listener) { onInstalled = listener; } },
       onMessage: { addListener(listener) { onMessage = listener; } }
     },
     storage: {
@@ -59,6 +60,10 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
 
   return {
     created: (tab) => onCreated(tab),
+    installed: async () => {
+      await Promise.resolve(onInstalled());
+      await new Promise((resolve) => setImmediate(resolve));
+    },
     message: async (message) => {
       await Promise.resolve(onMessage(message, {}, () => {}));
       await new Promise((resolve) => setImmediate(resolve));
@@ -171,6 +176,37 @@ async function verifyBrowser(relativePath) {
     detail: { url: 'not a parseable URL', mode: 'strict' } });
   assert.equal(privateTab.settings.lastBlocked.detail.url, '[redacted]',
     relativePath + ': malformed URLs must be redacted');
+
+  // Real extension update events must migrate legacy telemetry that
+  // previously persisted complete userinfo, path, query and custom fields.
+  const historic = await loadBackground(relativePath, 'strict', {
+    blockedCount: 7,
+    lastBlocked: {
+      event: 'new-tab', at: '2026-10-13T12:34:56.000Z',
+      detail: { url: 'https://user:password@ads.al5sm.com/private?token=secret#frag',
+        unknown: 'do not preserve' },
+      privateValue: 'discard this'
+    }
+  });
+  await historic.installed();
+  assert.equal(historic.settings.blockedCount, 7,
+    relativePath + ': migrating telemetry must preserve block totals');
+  assert.deepEqual(Object.keys(historic.settings.lastBlocked).sort(),
+    ['at', 'detail', 'event'], relativePath + ': old custom history fields removed');
+  assert.equal(historic.settings.lastBlocked.event, 'new-tab');
+  assert.equal(historic.settings.lastBlocked.at, '2026-10-13T12:34:56.000Z');
+  assert.equal(historic.settings.lastBlocked.detail.url, 'https://ads.al5sm.com');
+  assert.deepEqual(Object.keys(historic.settings.lastBlocked.detail), ['url'],
+    relativePath + ': legacy details must not retain private keys');
+  const broken = await loadBackground(relativePath, 'balanced', {
+    lastBlocked: { event: 'untrusted-sensitive-event', at: 'secret',
+      detail: { url: 'not a URL', private: 'token' } }
+  });
+  await broken.installed();
+  assert.equal(broken.settings.lastBlocked.event, 'blocked');
+  assert.equal(broken.settings.lastBlocked.detail.url, '[redacted]');
+  assert.match(broken.settings.lastBlocked.at, /^\d{4}-\d\d-\d\dT/,
+    relativePath + ': invalid legacy timestamp must be replaced');
 
   const originPort = await loadBackground(relativePath, 'strict');
   for (const [id, url] of [
