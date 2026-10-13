@@ -35,7 +35,7 @@ async function settle() {
 
 // Execute the real browser script with deterministic DOM, HTTP and timer fakes.
 // No network requests, browser installation or gateway containers are required.
-async function bootPortal({ health, sessionRequest } = {}) {
+async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
@@ -78,6 +78,7 @@ async function bootPortal({ health, sessionRequest } = {}) {
       return response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] });
     }
     if (url === '/api/health') {
+      if (healthRequest) return healthRequest();
       return response(health || { activeSessions: 0, startingSessions: 0, capacity: 1 });
     }
     if (url === '/api/session' && options.method === 'POST') {
@@ -135,6 +136,50 @@ async function bootPortal({ health, sessionRequest } = {}) {
     expiresAt: Date.now() + 60_000,
     maxMinutes: 15
   };
+
+  // Reproduce network reordering: a slow stale healthy result must never
+  // override a newer busy observation, even when both requests succeeded.
+  const slowReady = deferred();
+  const fastBusy = deferred();
+  let healthCount = 0;
+  const racing = await bootPortal({
+    healthRequest() {
+      healthCount += 1;
+      if (healthCount === 1) return response({ activeSessions: 0, startingSessions: 0, capacity: 1 });
+      return healthCount === 2 ? slowReady.promise : fastBusy.promise;
+    }
+  });
+  const healthPoll = [...racing.intervals.values()].find(({ milliseconds }) => milliseconds === 20000);
+  assert.ok(healthPoll, 'live portal must retain its periodic capacity refresh');
+  healthPoll.callback();
+  healthPoll.callback();
+  fastBusy.resolve(response({ activeSessions: 0, startingSessions: 1, capacity: 1 }));
+  await settle();
+  assert.equal(racing.element('capacityText').textContent, 'Browser currently in use');
+  slowReady.resolve(response({ activeSessions: 0, startingSessions: 0, capacity: 1 }));
+  await settle();
+  assert.equal(racing.element('capacityText').textContent, 'Browser currently in use',
+    'late stale health success must not overwrite a newer busy state');
+
+  const slowOffline = deferred();
+  const fastReady = deferred();
+  let checks = 0;
+  const recovery = await bootPortal({
+    healthRequest() {
+      checks += 1;
+      if (checks === 1) return response({ activeSessions: 1, startingSessions: 0, capacity: 1 });
+      return checks === 2 ? slowOffline.promise : fastReady.promise;
+    }
+  });
+  const recoveryPoll = [...recovery.intervals.values()].find(({ milliseconds }) => milliseconds === 20000);
+  recoveryPoll.callback();
+  recoveryPoll.callback();
+  fastReady.resolve(response({ activeSessions: 0, startingSessions: 0, capacity: 1 }));
+  await settle();
+  slowOffline.reject(new Error('old connection timed out'));
+  await settle();
+  assert.equal(recovery.element('capacityText').textContent, 'Ready to browse',
+    'late stale health error must not mask newer healthy state');
 
   const pending = deferred();
   const portal = await bootPortal({ sessionRequest: () => pending.promise });
@@ -209,7 +254,7 @@ async function bootPortal({ health, sessionRequest } = {}) {
     assert.equal(candidate.element('startButton').disabled, false, label + ': retry remains available');
   }
 
-  console.log('zBrowse portal capacity, concurrent admission and session-response validation passed');
+  console.log('zBrowse portal capacity, ordered health polls, concurrent admission and session-response validation passed');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
