@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireMainWorld = process.argv.includes('--require-mainworld');
+const requireAuxclick = process.argv.includes('--require-auxclick');
 const coldStart = process.argv.includes('--cold-start');
 const variants = ['chromium', 'zbrowse/browser/zguard'];
 const browserCandidates = [
@@ -53,6 +54,8 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <a id="hostileNested" href="https://deep.Sub.TMLL7.COM./popup" target="_blank">Nested hostile</a>
 <a id="hostileUserInfo" href="https://user:password@ads.al5sm.com/popup" target="_blank">Hostile authority</a>
 <a id="ordinary" href="https://example.org/video" target="_blank">Ordinary</a>
+<a id="nativeMiddleHostile" href="https://ads.al5sm.com/popup" target="_blank">Middle hostile</a>
+<a id="nativeMiddleOrdinary" href="https://example.org/video" target="_blank">Middle ordinary</a>
 <a id="lookalikeUserInfo" href="https://ads.al5sm.com@safe.example/watch" target="_blank">Safe authority</a>
 <a id="lookalikeSuffix" href="https://al5sm.com.attacker.example./watch" target="_blank">Safe suffix</a>
 <a id="sameOrigin" href="/watch" target="_blank">Same origin</a>
@@ -130,6 +133,27 @@ async function runBrowser(extensionPath, profilePath, url) {
       socket.addEventListener('open', resolve, { once: true });
       socket.addEventListener('error', () => reject(new Error('CDP socket failed')), { once: true });
     });
+    let nextCdpRequestId = 100;
+    async function cdp(method, params = {}) {
+      const id = nextCdpRequestId++;
+      const result = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          socket.removeEventListener('message', onMessage);
+          reject(new Error('CDP ' + method + ' timed out'));
+        }, 10000);
+        function onMessage(message) {
+          const packet = JSON.parse(message.data);
+          if (packet.id !== id) return;
+          socket.removeEventListener('message', onMessage);
+          clearTimeout(timer);
+          resolve(packet);
+        }
+        socket.addEventListener('message', onMessage);
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+      assert.equal(result.error, undefined, 'CDP ' + method + ' failed');
+      return result.result;
+    }
     // A URL provided on Chrome's command line can start navigating before
     // unpacked MV3 content scripts are registered. That cold-start ordering
     // intermittently omits injection in the top frame while a later iframe
@@ -249,6 +273,61 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
+    if (requireAuxclick) {
+      // This uses Chrome DevTools' *native* middle-button press/release, not
+      // an invented click event with button=1. The page target suppresses
+      // external navigation if zGuard misses auxclick, while a harmless
+      // ordinary middle-click proves Chromium actually emitted auxclick.
+      async function nativeMiddleProbe(anchorId) {
+        const expression = '(' + ((id) => {
+          const anchor = document.getElementById(id);
+          if (!anchor) throw new Error('Missing native middle-click anchor');
+          anchor.scrollIntoView({ block: 'center', inline: 'center' });
+          const rect = anchor.getBoundingClientRect();
+          const state = {
+            downs: 0, ups: 0, auxclickReached: false,
+            trusted: false, cancelledByFixture: false
+          };
+          window.__zguardNativeMiddleProbe = state;
+          anchor.addEventListener('mousedown', (event) => {
+            if (event.button === 1) state.downs += 1;
+          });
+          anchor.addEventListener('mouseup', (event) => {
+            if (event.button === 1) state.ups += 1;
+          });
+          anchor.addEventListener('auxclick', (event) => {
+            if (event.button !== 1) return;
+            state.auxclickReached = true;
+            state.trusted = event.isTrusted;
+            event.preventDefault();
+            state.cancelledByFixture = event.defaultPrevented;
+          }, { once: true });
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }).toString() + ')(' + JSON.stringify(anchorId) + ')';
+        const setup = await cdp('Runtime.evaluate', { expression, returnByValue: true });
+        assert.equal(setup.exceptionDetails, undefined,
+          'Native middle-click fixture setup must succeed');
+        const position = setup.result?.value;
+        assert.ok(Number.isFinite(position?.x) && Number.isFinite(position?.y),
+          'Native middle-click target must have visible coordinates');
+        for (const params of [
+          { type: 'mouseMoved', button: 'none', buttons: 0 },
+          { type: 'mousePressed', button: 'middle', buttons: 4, clickCount: 1 },
+          { type: 'mouseReleased', button: 'middle', buttons: 0, clickCount: 1 }
+        ]) {
+          await cdp('Input.dispatchMouseEvent', { ...position, ...params });
+        }
+        await sleep(150);
+        const observedClick = await cdp('Runtime.evaluate', {
+          expression: 'window.__zguardNativeMiddleProbe', returnByValue: true
+        });
+        assert.equal(observedClick.exceptionDetails, undefined,
+          'Native middle-click fixture must remain accessible');
+        return observedClick.result?.value;
+      }
+      observed.nativeMiddleHostile = await nativeMiddleProbe('nativeMiddleHostile');
+      observed.nativeMiddleOrdinary = await nativeMiddleProbe('nativeMiddleOrdinary');
+    }
     return coldStart ? { ...observed, firstObservedTopFrameProtected } : observed;
   } finally {
     socket?.close();
@@ -316,6 +395,20 @@ try {
         variant + ': injected child frame must preserve ordinary navigation');
       assert.equal(observed.cases.frameOrdinary.cancelled, true,
         variant + ': fixture must prevent any outgoing navigation from child frames');
+      if (requireAuxclick) {
+        for (const name of ['nativeMiddleHostile', 'nativeMiddleOrdinary']) {
+          assert.equal(observed[name]?.downs, 1, variant + ': native middle mousedown missing');
+          assert.equal(observed[name]?.ups, 1, variant + ': native middle mouseup missing');
+        }
+        assert.equal(observed.nativeMiddleOrdinary.auxclickReached, true,
+          variant + ': harmless native middle-click must reach target listener');
+        assert.equal(observed.nativeMiddleOrdinary.trusted, true,
+          variant + ': harmless middle-click must be a trusted browser event');
+        assert.equal(observed.nativeMiddleOrdinary.cancelledByFixture, true,
+          variant + ': harmless native middle-click must not navigate externally');
+        assert.equal(observed.nativeMiddleHostile.auxclickReached, false,
+          variant + ': hostile native middle-click escaped zGuard auxclick guard');
+      }
       if (requireMainWorld) {
         assert.equal(observed.mainWorldOpenWrapped, true,
           variant + ': page window.open is NOT intercepted in MAIN world (issue #3)');
@@ -331,5 +424,6 @@ try {
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
-  : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
-    : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
+  : requireAuxclick ? 'Real-browser native middle-click acceptance passed'
+    : coldStart ? 'Three actual cold starts per package passed (kiosk race gate)'
+      : 'Real-browser click acceptance passed; MAIN-world proof still requires --require-mainworld');
