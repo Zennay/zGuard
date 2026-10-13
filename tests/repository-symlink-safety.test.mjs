@@ -55,7 +55,7 @@ function validateResolvedSymlink(file, checkoutRoot, trackedRegularFiles) {
   }
 
   assert.ok(
-    canonicalTarget.startsWith(canonicalRoot + path.sep),
+    canonicalTarget === canonicalRoot || canonicalTarget.startsWith(canonicalRoot + path.sep),
     `tracked symlink chain escapes checkout: ${file} -> ${target}`
   );
   const relative = path.relative(canonicalRoot, canonicalTarget);
@@ -86,6 +86,7 @@ try {
   fs.writeFileSync(path.join(sandbox, "outside.txt"), "outside\n");
 
   fs.symlinkSync("tracked.txt", path.join(fixtureRoot, "safe"));
+  fs.symlinkSync("safe", path.join(fixtureRoot, "safe-chain"));
   fs.symlinkSync("nested/external", path.join(fixtureRoot, "escape"));
   fs.symlinkSync("../../outside.txt", path.join(fixtureRoot, "nested", "external"));
   fs.symlinkSync(".git/config", path.join(fixtureRoot, "metadata"));
@@ -93,9 +94,12 @@ try {
   fs.symlinkSync("untracked.txt", path.join(fixtureRoot, "untracked"));
   fs.symlinkSync("missing.txt", path.join(fixtureRoot, "dangling"));
   fs.symlinkSync(".", path.join(fixtureRoot, "directory"));
+  fs.symlinkSync("cycle-b", path.join(fixtureRoot, "cycle-a"));
+  fs.symlinkSync("cycle-a", path.join(fixtureRoot, "cycle-b"));
 
   const trackedFixture = new Set(["tracked.txt"]);
   assert.doesNotThrow(() => validateResolvedSymlink("safe", fixtureRoot, trackedFixture));
+  assert.doesNotThrow(() => validateResolvedSymlink("safe-chain", fixtureRoot, trackedFixture));
   assert.throws(
     () => validateResolvedSymlink("escape", fixtureRoot, trackedFixture),
     /symlink chain escapes checkout/
@@ -115,6 +119,10 @@ try {
   assert.throws(
     () => validateResolvedSymlink("directory", fixtureRoot, trackedFixture),
     /regular file/
+  );
+  assert.throws(
+    () => validateResolvedSymlink("cycle-a", fixtureRoot, trackedFixture),
+    /existing target/
   );
 } finally {
   fs.rmSync(sandbox, { recursive: true, force: true });
