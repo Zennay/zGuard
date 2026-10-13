@@ -294,6 +294,76 @@ async function runBrowser(extensionPath, profilePath, url) {
       ) break;
       await sleep(200);
     } while (true);
+    if (!coldStart) {
+      // Keyboard Enter is a distinct trusted activation path: Chromium
+      // synthesizes a click (detail=0) on the focused HTML anchor. Testing
+      // it in the actual loaded MV3 extension protects keyboard users.
+      async function nativeKeyboardProbe(anchorId) {
+        const setup = await cdp('Runtime.evaluate', {
+          expression: '(' + ((id) => {
+            const anchor = document.getElementById(id);
+            if (!anchor) throw new Error('Missing keyboard-activation anchor');
+            const state = {
+              keydownSeen: false, keyTrusted: false,
+              clickReachedTarget: false, clickTrusted: false,
+              clickDetail: null, cancelledByFixture: false,
+              clickSeenInCapture: false
+            };
+            window.__zguardKeyboardState = state;
+            function onKey(event) {
+              if (event.key === 'Enter') {
+                state.keydownSeen = true;
+                state.keyTrusted = event.isTrusted;
+              }
+            }
+            function onDocumentClick(event) {
+              if (event.target === anchor) state.clickSeenInCapture = true;
+            }
+            function onTargetClick(event) {
+              state.clickReachedTarget = true;
+              state.clickTrusted = event.isTrusted;
+              state.clickDetail = event.detail;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            anchor.addEventListener('keydown', onKey);
+            document.addEventListener('click', onDocumentClick, true);
+            anchor.addEventListener('click', onTargetClick);
+            window.__zguardKeyboardCleanup = () => {
+              anchor.removeEventListener('keydown', onKey);
+              document.removeEventListener('click', onDocumentClick, true);
+              anchor.removeEventListener('click', onTargetClick);
+            };
+            anchor.focus();
+            return { focused: document.activeElement === anchor };
+          }).toString() + ')(' + JSON.stringify(anchorId) + ')',
+          returnByValue: true
+        });
+        assert.equal(setup.exceptionDetails, undefined,
+          'Real keyboard activation setup must evaluate');
+        assert.equal(setup.result?.value?.focused, true,
+          'Real keyboard activation must target a focused link');
+        for (const type of ['keyDown', 'keyUp']) {
+          await cdp('Input.dispatchKeyEvent', {
+            type, key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+          });
+        }
+        await sleep(80);
+        const observedKey = await cdp('Runtime.evaluate', {
+          expression: '(() => { const result = window.__zguardKeyboardState; ' +
+            'window.__zguardKeyboardCleanup(); return result; })()',
+          returnByValue: true
+        });
+        assert.equal(observedKey.exceptionDetails, undefined,
+          'Real keyboard probe must remain accessible');
+        return observedKey.result?.value;
+      }
+      observed.keyboard = {
+        hostile: await nativeKeyboardProbe('hostile'),
+        ordinary: await nativeKeyboardProbe('ordinary')
+      };
+    }
     if (requireImageMap) {
       // Actual Chrome mouse input activates HTML <area> map hotspots, not
       // synthetic anchor MouseEvents. Fixture document capture cancels every
@@ -604,6 +674,26 @@ try {
         variant + ': injected child frame must preserve ordinary navigation');
       assert.equal(observed.cases.frameOrdinary.cancelled, true,
         variant + ': fixture must prevent any outgoing navigation from child frames');
+      if (!coldStart) {
+        for (const role of ['hostile', 'ordinary']) {
+          assert.equal(observed.keyboard?.[role]?.keydownSeen, true,
+            variant + ': native keyboard Enter must deliver a real keydown for ' + role);
+          assert.equal(observed.keyboard[role].keyTrusted, true,
+            variant + ': keyboard Enter must be trusted for ' + role);
+        }
+        assert.equal(observed.keyboard.ordinary.clickSeenInCapture, true,
+          variant + ': ordinary keyboard Enter must create a click seen at document capture');
+        assert.equal(observed.keyboard.ordinary.clickReachedTarget, true,
+          variant + ': ordinary keyboard link must remain operable');
+        assert.equal(observed.keyboard.ordinary.clickTrusted, true,
+          variant + ': keyboard activation click must be browser-trusted');
+        assert.equal(observed.keyboard.ordinary.clickDetail, 0,
+          variant + ': keyboard activation must be distinguishable from pointer clicks');
+        assert.equal(observed.keyboard.ordinary.cancelledByFixture, true,
+          variant + ': fixture must cancel allowed keyboard external navigation');
+        assert.equal(observed.keyboard.hostile.clickReachedTarget, false,
+          variant + ': hostile keyboard-activated target=_blank link escaped popup guard');
+      }
       if (requireImageMap) {
         assert.equal(observed.imageMap?.ordinary?.seenAreaAtCapture, true,
           variant + ': real image-map hit-testing must target an HTML area');
