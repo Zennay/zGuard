@@ -23,6 +23,10 @@ on:
         description: "Require hostile popup interception through Shadow DOM event retargeting"
         type: boolean
         default: false
+      require_form_submit:
+        description: "Require hostile form target=_blank submission to be intercepted"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,6 +46,7 @@ jobs:
       REQUIRE_COLDSTART: ${{ inputs.require_coldstart || 'false' }}
       REQUIRE_AUXCLICK: ${{ inputs.require_auxclick || 'false' }}
       REQUIRE_SHADOW_DOM: ${{ inputs.require_shadow_dom || 'false' }}
+      REQUIRE_FORM_SUBMIT: ${{ inputs.require_form_submit || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -86,4 +91,7 @@ jobs:
           fi
           if [ "$REQUIRE_SHADOW_DOM" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-shadow-dom
+          fi
+          if [ "$REQUIRE_FORM_SUBMIT" = "true" ]; then
+            node tests/zguard.chromium-real-browser.test.mjs --require-form-submit
           fi
