@@ -119,6 +119,33 @@ async function verifyBrowser(relativePath) {
     relativePath + ': direct navigation and tabs without URLs must not be closed as popups'
   );
 
+  // A tab URL's actual authority determines hostile classification.
+  // Deceptive userinfo and canonical default ports cannot disguise the host.
+  const authority = await loadBackground(relativePath, 'balanced');
+  for (const [id, url] of [
+    [40, 'https://user:secret@ADS.AL5SM.COM/popup'],
+    [41, 'https://ads.al5sm.com@safe.example/popup'],
+    [42, 'https://sub.tmll7.com:443/popup'],
+    [43, 'https://al5sm.com.attacker.example/']
+  ]) {
+    await authority.created({ id, openerTabId: 1, url });
+  }
+  assert.deepEqual(authority.removed, [40, 42],
+    relativePath + ': balanced fallback must distinguish real hostile hosts from URL lookalikes');
+  assert.equal(authority.settings.blockedCount, 2,
+    relativePath + ': only genuinely hostile tabs increment the blocked counter');
+
+  const originPort = await loadBackground(relativePath, 'strict');
+  for (const [id, url] of [
+    [50, 'https://origin.test:443/next'],
+    [51, 'https://origin.test:8443/next'],
+    [52, 'https://sub.origin.test/next']
+  ]) {
+    await originPort.created({ id, openerTabId: 1, url });
+  }
+  assert.deepEqual(originPort.removed, [51, 52],
+    relativePath + ': strict fallback must preserve same-origin default ports only');
+
   const disabled = await loadBackground(relativePath, 'strict', { enabled: false });
   await disabled.created({ id: 30, openerTabId: 1, url: 'https://ads.al5sm.com/popup' });
   assert.deepEqual(disabled.removed, [], relativePath + ': disabled mode must not close tabs');
