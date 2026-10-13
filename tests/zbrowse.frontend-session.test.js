@@ -147,7 +147,11 @@ async function bootPortal({ health, sessionRequest } = {}) {
   assert.equal(portal.element('browserFrame').src, '/session/safe-token/viewer');
   assert.equal(portal.element('browserView').hidden, false);
   assert.equal(portal.element('startButton').disabled, false);
-  assert.equal(portal.intervals.size, 2, 'one session must create one heartbeat and countdown');
+  assert.deepEqual(
+    [...portal.intervals.values()].map(({ milliseconds }) => milliseconds).sort((a, b) => a - b),
+    [1000, 20000, 30000],
+    'one session must add only one heartbeat and countdown to the baseline health poller'
+  );
   portal.submit();
   assert.equal(
     portal.requests.filter(({ url }) => url === '/api/session').length,
