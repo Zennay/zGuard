@@ -49,9 +49,8 @@ for (const invalid of [
 assert.throws(() => parseAcceptanceFlags('--require-auxclick'), TypeError,
   'one string is not an argv array');
 
-// Every opt-in gate must remain reachable through the manually dispatched
-// workflow. This prevents a typo in the dispatch wiring from producing a
-// default green result while silently omitting the requested strict probe.
+// Every opt-in gate must remain reachable through manual workflow dispatch.
+// Typos in YAML must not silently turn a strict gate into ordinary green CI.
 const workflow = fs.readFileSync(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)),
     '../.github/workflows/zguard-real-chromium-acceptance.yml'),
@@ -71,30 +70,9 @@ const bindings = new Map([
 assert.deepEqual(dispatchNames, [...bindings.values()].map(([name]) => name),
   'every manual strict input must map to exactly one accepted browser gate');
 for (const [flag, [input, envName]] of bindings) {
-  assert.ok(workflow.includes(envName + ": ${{ inputs." + input + " || 'false' }}"),
+  assert.ok(workflow.includes(envName + ': ' + '$' + '{{ inputs.' + input + " || 'false' }}"),
     flag + ': workflow must bind dispatch input to strict gate environment');
-  assert.ok(workflow.includes('if [ "
-// browser executable. This is a lightweight source-wired negative test, not
-// a substitute for the real Chromium acceptance on the normal CI path.
-const entry = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
-  'zguard.chromium-real-browser.test.mjs');
-for (const args of [
-  ['--require-auxclik'],
-  ['--require-form-submit', '--require-form-submit'],
-  ['--require-svg-link=1']
-]) {
-  const child = spawnSync(process.execPath, [entry, ...args], {
-    encoding: 'utf8', timeout: 5000,
-    env: { ...process.env, CHROMIUM_BIN: '/nonexistent-test-browser' }
-  });
-  assert.equal(child.status, 1, 'real-browser CLI must reject invalid arguments');
-  assert.match(child.stderr, /Unsupported real-browser acceptance argument|Duplicate real-browser acceptance argument/,
-    'real-browser CLI must actually execute the strict parser');
-  assert.doesNotMatch(child.stderr, /A real Chrome\/Chromium executable is required/,
-    'argument errors must fail before browser-dependent acceptance');
-}
-console.log('Real-browser acceptance argument contract passed (7 gates, invalid/duplicate fail-closed)');
- + envName + '" = "true" ]; then\\n' +
+  assert.ok(workflow.includes('if [ "$' + envName + '" = "true" ]; then\n' +
     '            node tests/zguard.chromium-real-browser.test.mjs ' + flag),
     flag + ': workflow must execute exact strict browser gate when requested');
 }
