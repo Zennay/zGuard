@@ -28,7 +28,11 @@ const forbidden = [
   { name: 'innerHTML sink', pattern: /\.\s*innerHTML\b/ },
   { name: 'outerHTML sink', pattern: /\.\s*outerHTML\b/ },
   { name: 'insertAdjacentHTML sink', pattern: /\.\s*insertAdjacentHTML\s*\(/ },
-  { name: 'document.write sink', pattern: /\bdocument\s*\.\s*write(?:ln)?\s*\(/ }
+  { name: 'document.write sink', pattern: /\bdocument\s*\.\s*write(?:ln)?\s*\(/ },
+  { name: 'computed HTML injection sink', pattern: /\[\s*(['"`])(?:innerHTML|outerHTML|insertAdjacentHTML)\1\s*\]/ },
+  { name: 'computed document.write sink', pattern: /\bdocument\s*(?:\?\.)?\s*\[\s*(['"`])write(?:ln)?\1\s*\]/ },
+  { name: 'string-based timer', pattern: /\b(?:setTimeout|setInterval)\s*\(\s*['"`]/ },
+  { name: 'computed string-based timer', pattern: /\[\s*(['"`])(?:setTimeout|setInterval)\1\s*\]\s*\(\s*['"`]/ }
 ];
 
 function violationsFor(source) {
@@ -50,7 +54,18 @@ for (const [source, expected] of [
   ['node.outerHTML = html;', ['outerHTML sink']],
   ['node.insertAdjacentHTML("beforeend", html);', ['insertAdjacentHTML sink']],
   ['document.write(html);', ['document.write sink']],
-  ['document.writeln(html);', ['document.write sink']]
+  ['document.writeln(html);', ['document.write sink']],
+  ["element['innerHTML'] = markup;", ["computed HTML injection sink"]],
+  ["element?.[\"outerHTML\"] = markup;", ["computed HTML injection sink"]],
+  ["element[`insertAdjacentHTML`]('beforeend', html);", ["computed HTML injection sink"]],
+  ["document['write'](markup);", ["computed document.write sink"]],
+  ["document?.[`writeln`](markup);", ["computed document.write sink"]],
+  ["setTimeout('runCode()', 100);", ["string-based timer"]],
+  ["setInterval(`runCode()`, 100);", ["string-based timer"]],
+  ["window['setTimeout']('runCode()', 10);", ["computed string-based timer"]],
+  ["setTimeout(() => doWork(), 100);", []],
+  ["setInterval(doWork, 100);", []],
+  ["element.textContent = safe;", []]
 ]) {
   assert.deepEqual(
     violationsFor(source),
