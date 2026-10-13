@@ -31,8 +31,8 @@ const forbidden = [
   { name: 'document.write sink', pattern: /\bdocument\s*\.\s*write(?:ln)?\s*\(/ },
   { name: 'computed HTML injection sink', pattern: /\[\s*(['"`])(?:innerHTML|outerHTML|insertAdjacentHTML)\1\s*\]/ },
   { name: 'computed document.write sink', pattern: /\bdocument\s*(?:\?\.)?\s*\[\s*(['"`])write(?:ln)?\1\s*\]/ },
-  { name: 'string-based timer', pattern: /\b(?:setTimeout|setInterval)\s*\(\s*['"`]/ },
-  { name: 'computed string-based timer', pattern: /\[\s*(['"`])(?:setTimeout|setInterval)\1\s*\]\s*\(\s*['"`]/ }
+  { name: 'string-based timer', pattern: /\b(?:setTimeout|setInterval)\s*(?:\?\.)?\s*\(\s*['"`]/ },
+  { name: 'computed string-based timer', pattern: /\[\s*(['"`])(?:setTimeout|setInterval)\1\s*\]\s*(?:\?\.)?\s*\(\s*['"`]/ }
 ];
 
 function violationsFor(source) {
@@ -63,6 +63,12 @@ for (const [source, expected] of [
   ["setTimeout('runCode()', 100);", ["string-based timer"]],
   ["setInterval(`runCode()`, 100);", ["string-based timer"]],
   ["window['setTimeout']('runCode()', 10);", ["computed string-based timer"]],
+  ["setTimeout?.('runCode()', 10);", ['string-based timer']],
+  ["globalThis.setInterval?.(`runCode()`, 10);", ['string-based timer']],
+  ["window['setTimeout']?.('runCode()', 10);", ['computed string-based timer']],
+  ["window[\"setInterval\"]?.(`runCode()`, 10);", ['computed string-based timer']],
+  ["setTimeout?.(() => doWork(), 100);", []],
+  ["window['setTimeout']?.(() => doWork(), 100);", []],
   ["setTimeout(() => doWork(), 100);", []],
   ["setInterval(doWork, 100);", []],
   ["element.textContent = safe;", []]
