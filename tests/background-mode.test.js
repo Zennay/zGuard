@@ -126,13 +126,17 @@ async function verifyBrowser(relativePath) {
     [40, 'https://user:secret@ADS.AL5SM.COM/popup'],
     [41, 'https://ads.al5sm.com@safe.example/popup'],
     [42, 'https://sub.tmll7.com:443/popup'],
-    [43, 'https://al5sm.com.attacker.example/']
+    [43, 'https://al5sm.com.attacker.example/'],
+    [44, 'https://ads.al5sm.com./popup'],
+    [45, 'https://WWW.NAP5K.COM./popup'],
+    [46, 'https://nested.Sub.TMLL7.COM./popup'],
+    [47, 'https://al5sm.com.attacker.example./popup']
   ]) {
     await authority.created({ id, openerTabId: 1, url });
   }
-  assert.deepEqual(authority.removed, [40, 42],
+  assert.deepEqual(authority.removed, [40, 42, 44, 45, 46],
     relativePath + ': balanced fallback must distinguish real hostile hosts from URL lookalikes');
-  assert.equal(authority.settings.blockedCount, 2,
+  assert.equal(authority.settings.blockedCount, 5,
     relativePath + ': only genuinely hostile tabs increment the blocked counter');
 
   const originPort = await loadBackground(relativePath, 'strict');
@@ -149,6 +153,8 @@ async function verifyBrowser(relativePath) {
   const disabled = await loadBackground(relativePath, 'strict', { enabled: false });
   await disabled.created({ id: 30, openerTabId: 1, url: 'https://ads.al5sm.com/popup' });
   assert.deepEqual(disabled.removed, [], relativePath + ': disabled mode must not close tabs');
+  await disabled.created({ id: 32, openerTabId: 1, url: 'https://ads.al5sm.com./popup' });
+  assert.deepEqual(disabled.removed, [], relativePath + ': disabled mode must allow DNS-root-dot hosts');
   assert.equal(disabled.settings.blockedCount, 0);
 
   const missingOpener = await loadBackground(relativePath, 'strict', { openerThrows: true });
@@ -165,6 +171,7 @@ async function verifyBrowser(relativePath) {
 (async () => {
   await verifyBrowser('chromium/background.js');
   await verifyBrowser('firefox/background.js');
+  await verifyBrowser('zbrowse/browser/zguard/background.js');
   console.log('zGuard background mode behavior tests passed');
 })().catch((error) => {
   console.error(error);

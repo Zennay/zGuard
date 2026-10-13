@@ -1,7 +1,7 @@
 const api = globalThis.browser || globalThis.chrome;
 const DEFAULTS = { enabled: true, mode: 'balanced', blockedCount: 0, lastBlocked: null };
 const HOSTILE_HOSTS = ['al5sm.com', 'nap5k.com', 'tmll7.com'];
-const hostOf = (value) => { try { return new URL(value).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return ''; } };
+const hostOf = (value) => { try { return new URL(value).hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, ''); } catch (_) { return ''; } };
 const hostile = (value) => { const host = hostOf(value); return HOSTILE_HOSTS.some((known) => host === known || host.endsWith(`.${known}`)); };
 const external = (value, opener) => { try { return new URL(value).origin !== new URL(opener).origin; } catch (_) { return true; } };
 const getSettings = () => api.storage.local.get(DEFAULTS).then((r) => ({ ...DEFAULTS, ...r }));
