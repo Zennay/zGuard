@@ -53,6 +53,24 @@ async function refreshHealth() {
   }
 }
 
+function checkedSessionPayload(payload) {
+  // Only mount the exact same-origin viewer route minted by this gateway.
+  // The gateway creates a 24-byte random base64url token (32 characters).
+  const token = payload?.token;
+  if (
+    typeof token !== "string" ||
+    !/^[A-Za-z0-9_-]{32}$/.test(token) ||
+    payload.viewerUrl !== "/s/" + token + "/" ||
+    !Number.isSafeInteger(payload.expiresAt) ||
+    payload.expiresAt <= 0 ||
+    !Number.isSafeInteger(payload.maxMinutes) ||
+    payload.maxMinutes < 1
+  ) {
+    throw new Error("Invalid browser session response.");
+  }
+  return payload;
+}
+
 let sessionStarting = false;
 
 async function startSession(url) {
@@ -64,10 +82,10 @@ async function startSession(url) {
   startButton.disabled = true;
   startButton.textContent = "Starting…";
   try {
-    const session = await request("/api/session", {
+    const session = checkedSessionPayload(await request("/api/session", {
       method: "POST",
       body: JSON.stringify({ url })
-    });
+    }));
     state.session = session;
     showBrowser();
   } catch (error) {
