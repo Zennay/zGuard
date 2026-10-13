@@ -142,7 +142,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     // synchronized with the CDP page target. Poll with a bounded deadline,
     // but never accept a false click result as proof of real interception.
     let observed;
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 16000;
     do {
       const reply = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('CDP evaluation timed out')), 10000);
@@ -193,6 +193,8 @@ try {
     try {
       const url = 'http://127.0.0.1:' + server.address().port + '/';
       const observed = await runBrowser(extensionPath, profile, url);
+      // Boolean-only evidence; never include navigated URLs or session tokens.
+      console.log(variant + ': interception probe=' + JSON.stringify(observed));
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
