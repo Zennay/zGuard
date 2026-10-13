@@ -15,7 +15,7 @@
 
   function hostOf(value) {
     try {
-      return new URL(value, location.href).hostname.toLowerCase().replace(/^www\./, '');
+      return new URL(value, location.href).hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
     } catch (_) {
       return '';
     }

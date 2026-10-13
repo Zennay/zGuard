@@ -97,14 +97,18 @@ async function verifyBrowser(relativePath) {
   for (const hostile of [
     'https://user:secret@ads.al5sm.com/popup',
     'https://ads.al5sm.com:443/popup',
-    'https://Sub.TMLL7.COM/popup'
+    'https://Sub.TMLL7.COM/popup',
+    'https://ads.al5sm.com./popup',
+    'https://WWW.NAP5K.COM./popup',
+    'https://deep.Sub.TMLL7.COM./popup'
   ]) {
     assert.equal(balanced.open(hostile), null,
       relativePath + ': balanced must still block actual hostile authority ' + hostile);
   }
   for (const harmless of [
     'https://ads.al5sm.com@safe.example/popup',
-    'https://al5sm.com.attacker.example/path'
+    'https://al5sm.com.attacker.example/path',
+    'https://al5sm.com.attacker.example./path'
   ]) {
     assert.notEqual(balanced.open(harmless), null,
       relativePath + ': a hostname-lookalike must not be blocked ' + harmless);
@@ -133,6 +137,16 @@ async function verifyBrowser(relativePath) {
     relativePath + ': hostile Ctrl-click must be intercepted'
   );
   assert.equal(balanced.events.at(-1)?.event, 'external-link');
+  assert.deepEqual(
+    balanced.click('https://WWW.NAP5K.COM./popup', { target: '_self', ctrlKey: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile DNS-root-dot control click must be intercepted'
+  );
+  assert.deepEqual(
+    balanced.click('https://al5sm.com.attacker.example./popup', { target: '_blank' }),
+    [],
+    relativePath + ': root-dot suffix lookalike click must remain allowed'
+  );
   assert.deepEqual(
     balanced.click('https://al5sm.com.attacker.example/'),
     [],
@@ -199,6 +213,11 @@ async function verifyBrowser(relativePath) {
     null,
     relativePath + ': disabled mode must preserve native window.open'
   );
+  assert.notEqual(
+    disabled.open('https://ads.al5sm.com./popup'),
+    null,
+    relativePath + ': disabled mode must not filter DNS-root-dot hosts'
+  );
   assert.deepEqual(disabled.click('https://ads.al5sm.com/popup'), []);
   assert.equal(disabled.events.length, 0);
 }
@@ -206,6 +225,7 @@ async function verifyBrowser(relativePath) {
 (async () => {
   await verifyBrowser('chromium/content.js');
   await verifyBrowser('firefox/content.js');
+  await verifyBrowser('zbrowse/browser/zguard/content.js');
   console.log('zGuard content mode behavior tests passed');
 })().catch((error) => {
   console.error(error);

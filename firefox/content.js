@@ -9,7 +9,7 @@
     try { api.runtime.sendMessage({ type: 'blocked-event', event, detail }); } catch (_) {}
   }
   function hostOf(value) {
-    try { return new URL(value, location.href).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return ''; }
+    try { return new URL(value, location.href).hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, ''); } catch (_) { return ''; }
   }
   function isHostile(host) {
     return [...HOSTILE_HOSTS].some((known) => host === known || host.endsWith(`.${known}`));

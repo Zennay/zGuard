@@ -8,7 +8,7 @@ const DEFAULTS = {
 const HOSTILE_HOSTS = ['al5sm.com', 'nap5k.com', 'tmll7.com'];
 
 function hostOf(value) {
-  try { return new URL(value).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return ''; }
+  try { return new URL(value).hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, ''); } catch (_) { return ''; }
 }
 function hostile(value) {
   const host = hostOf(value);
