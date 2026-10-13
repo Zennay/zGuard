@@ -68,7 +68,7 @@ async function runBrowser(extensionPath, profilePath, url) {
     '--disable-extensions-except=' + extensionPath,
     '--load-extension=' + extensionPath,
     '--user-data-dir=' + profilePath,
-    '--remote-debugging-port=0', url
+    '--remote-debugging-port=0', 'about:blank'
   ];
   const child = spawn(browser, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -88,14 +88,32 @@ async function runBrowser(extensionPath, profilePath, url) {
     const response = await fetch('http://127.0.0.1:' + port + '/json/list');
     assert.equal(response.ok, true, 'Local CDP targets must be available');
     const targets = await response.json();
-    const page = targets.find((target) => target.type === 'page' && target.url === url);
+    const page = targets.find((target) => target.type === 'page' && target.url === 'about:blank');
     assert.ok(page?.webSocketDebuggerUrl, 'Expected real browser page target');
     socket = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
       socket.addEventListener('open', resolve, { once: true });
       socket.addEventListener('error', () => reject(new Error('CDP socket failed')), { once: true });
     });
-    await sleep(500);
+    // A URL provided on Chrome's command line can start navigating before
+    // unpacked MV3 content scripts are registered. That cold-start ordering
+    // intermittently omits injection in the top frame while a later iframe
+    // receives it. Warm the extension process first, then navigate explicitly.
+    await sleep(2500);
+    const navigation = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('CDP Page.navigate timed out')), 10000);
+      socket.addEventListener('message', function onNavigation(message) {
+        const packet = JSON.parse(message.data);
+        if (packet.id !== 9) return;
+        socket.removeEventListener('message', onNavigation);
+        clearTimeout(timer);
+        resolve(packet);
+      });
+      socket.send(JSON.stringify({ id: 9, method: 'Page.navigate', params: { url } }));
+    });
+    assert.equal(navigation.error, undefined, 'real Chromium must navigate to the local fixture');
+    assert.equal(navigation.result?.errorText, undefined,
+      'real Chromium must not fail local fixture navigation');
     const expression = '(' + (() => {
       function probe(id, context = document) {
         const anchor = context.getElementById(id);
