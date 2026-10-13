@@ -136,4 +136,79 @@ assert.equal(
   'trusted hop counts longer than the forwarded chain must not select an untrusted entry'
 );
 
+// Exhaustively exercise trusted-hop selection over longer proxy chains.
+// Malicious entries on the untrusted LEFT side must not change the client
+// selected from the configured RIGHT-side trust boundary.
+const socketAddress = '10.0.0.250';
+const addresses = [
+  '203.0.113.10',
+  '198.51.100.21',
+  '192.0.2.32',
+  '2001:db8::43',
+  '10.1.2.4',
+  '::ffff:198.51.100.55',
+  '172.20.0.6'
+];
+for (let length = 1; length <= addresses.length; length += 1) {
+  const chain = addresses.slice(0, length);
+  for (let hops = 1; hops <= length + 2; hops += 1) {
+    const header = chain.join(', ');
+    const req = { socket: { remoteAddress: socketAddress }, headers: { 'x-forwarded-for': header } };
+    const expected = hops <= chain.length ? chain[chain.length - hops] : socketAddress;
+    assert.equal(
+      requestIp(req, hops),
+      expected,
+      `length ${length}, hops ${hops}: resolver must select the correct right-side boundary`
+    );
+
+    if (hops <= length) {
+      for (const prefix of [
+        '8.8.8.8',
+        '8.8.8.8, 1.1.1.1',
+        '8.8.8.8, 1.1.1.1, 9.9.9.9'
+      ]) {
+        assert.equal(
+          requestIp({
+            socket: { remoteAddress: socketAddress },
+            headers: { 'x-forwarded-for': prefix + ', ' + header }
+          }, hops),
+          expected,
+          'additional untrusted LEFT-side entries must not influence the trusted client'
+        );
+      }
+
+      const split = Math.max(1, Math.floor(length / 2));
+      assert.equal(
+        requestIp({
+          socket: { remoteAddress: socketAddress },
+          headers: {
+            'x-forwarded-for': [
+              chain.slice(0, split).join(','),
+              chain.slice(split).join(',')
+            ].filter(Boolean)
+          }
+        }, hops),
+        expected,
+        'multiple header fields must preserve original right-to-left hop ordering'
+      );
+    }
+  }
+}
+
+// A forged/malformed address AT the selected trust boundary must never be
+// replaced by an attacker-supplied address farther to its left.
+for (const malformed of [
+  '999.999.999.999', '10.0.0.2:443', '[2001:db8::1]',
+  'unknown', ' ', '203.0.113.1\nInjected-Header: yes'
+]) {
+  assert.equal(
+    requestIp({
+      socket: { remoteAddress: socketAddress },
+      headers: { 'x-forwarded-for': '8.8.8.8, ' + malformed + ', 10.0.0.2' }
+    }, 2),
+    socketAddress,
+    'malformed selected forwarded IP must fail closed to the socket'
+  );
+}
+
 console.log('zBrowse request IP tests passed');
