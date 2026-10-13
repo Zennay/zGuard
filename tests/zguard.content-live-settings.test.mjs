@@ -9,7 +9,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packages = ['chromium', 'firefox', 'zbrowse/browser/zguard'];
-const strict = process.argv.includes('--require-live-settings');
+export function parseStrictMode(args) {
+  if (args.length === 0) return false;
+  if (args.length === 1 && args[0] === '--require-live-settings') return true;
+  throw new Error('Unsupported live-settings acceptance arguments: use only --require-live-settings');
+}
+const strict = parseStrictMode(process.argv.slice(2));
 const failures = [];
 
 async function boot(packageName, initial) {
