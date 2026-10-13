@@ -59,41 +59,89 @@ await new Promise((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve);
 });
 
-function runBrowser(extensionPath, profilePath, url) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '--headless=new',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-sync',
-      '--disable-extensions-except=' + extensionPath,
-      '--load-extension=' + extensionPath,
-      '--user-data-dir=' + profilePath,
-      '--virtual-time-budget=5000',
-      '--dump-dom',
-      url
-    ];
-    // Only a root-owned development/container invocation needs this flag.
-    // Hosted GitHub CI executes unprivileged and retains Chromium sandboxing.
-    if (process.getuid?.() === 0) args.unshift('--no-sandbox');
-    const child = spawn(browser, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '';
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 25000);
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => {
-      if (stderr.length < 10000) stderr += chunk.toString();
-    });
-    child.on('error', (error) => { clearTimeout(timeout); reject(error); });
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        reject(new Error('Chromium exited ' + code + ': ' + stderr.slice(-2000)));
-      } else resolve(stdout);
-    });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// The real renderer must have time to load MV3 content scripts and complete
+// asynchronous chrome.storage IPC before the page-side interception probe.
+async function runBrowser(extensionPath, profilePath, url) {
+  const args = [
+    '--headless=new', '--disable-gpu', '--disable-dev-shm-usage',
+    '--no-first-run', '--no-default-browser-check',
+    '--disable-background-networking', '--disable-sync',
+    '--disable-extensions-except=' + extensionPath,
+    '--load-extension=' + extensionPath,
+    '--user-data-dir=' + profilePath,
+    '--remote-debugging-port=0', url
+  ];
+  if (process.getuid?.() === 0) args.unshift('--no-sandbox');
+  const child = spawn(browser, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    if (stderr.length < 5000) stderr += chunk.toString();
   });
+  let socket;
+  try {
+    const portFile = path.join(profilePath, 'DevToolsActivePort');
+    for (let attempt = 0; attempt < 80 && !fs.existsSync(portFile); attempt += 1) {
+      if (child.exitCode !== null) break;
+      await sleep(100);
+    }
+    assert.ok(fs.existsSync(portFile), 'Chromium DevTools did not start: ' + stderr.slice(-900));
+    const port = Number(fs.readFileSync(portFile, 'utf8').split('\n')[0]);
+    assert.ok(Number.isSafeInteger(port) && port > 0, 'Invalid local CDP port');
+    const response = await fetch('http://127.0.0.1:' + port + '/json/list');
+    assert.equal(response.ok, true, 'Local CDP targets must be available');
+    const targets = await response.json();
+    const page = targets.find((target) => target.type === 'page' && target.url === url);
+    assert.ok(page?.webSocketDebuggerUrl, 'Expected real browser page target');
+    socket = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', () => reject(new Error('CDP socket failed')), { once: true });
+    });
+    await sleep(2000);
+    const expression = '(' + (() => {
+      function probe(id) {
+        const anchor = document.getElementById(id);
+        if (!anchor) throw new Error('Missing fixture anchor ' + id);
+        const click = new MouseEvent('click', {
+          bubbles: true, cancelable: true, ctrlKey: true
+        });
+        anchor.dispatchEvent(click);
+        const blocked = click.defaultPrevented;
+        if (!blocked) click.preventDefault();
+        return blocked;
+      }
+      return {
+        hostileClickBlocked: probe('hostile'),
+        ordinaryClickBlocked: probe('ordinary'),
+        mainWorldOpenWrapped: window.open.name === 'zGuardWindowOpen'
+      };
+    }).toString() + ')()';
+    const reply = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('CDP evaluation timed out')), 10000);
+      socket.addEventListener('message', function handle(message) {
+        const packet = JSON.parse(message.data);
+        if (packet.id !== 1) return;
+        socket.removeEventListener('message', handle);
+        clearTimeout(timer);
+        resolve(packet);
+      });
+      socket.send(JSON.stringify({
+        id: 1, method: 'Runtime.evaluate',
+        params: { expression, returnByValue: true, awaitPromise: true }
+      }));
+    });
+    if (reply.result?.exceptionDetails) {
+      throw new Error('Page probe failed: ' + reply.result.exceptionDetails.text);
+    }
+    const observed = reply.result?.result?.value;
+    assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
+    return observed;
+  } finally {
+    socket?.close();
+    child.kill('SIGTERM');
+  }
 }
 
 try {
@@ -104,10 +152,7 @@ try {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zguard-chromium-'));
     try {
       const url = 'http://127.0.0.1:' + server.address().port + '/';
-      const dom = await runBrowser(extensionPath, profile, url);
-      const match = dom.match(/<output id="zguard-probe">([^<]+)<\/output>/);
-      assert.ok(match, variant + ': no browser-side result; extension/fixture did not finish');
-      const observed = JSON.parse(match[1].replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
+      const observed = await runBrowser(extensionPath, profile, url);
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.ordinaryClickBlocked, false,
