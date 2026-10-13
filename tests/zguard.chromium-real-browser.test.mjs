@@ -33,21 +33,36 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   // This never opens an external URL even when extension injection races.
   (() => {
     const anchor = document.getElementById('hostile');
-    let reachedTarget = false;
-    const cancelFixtureNavigation = (event) => {
-      reachedTarget = true;
-      event.preventDefault();
+    function probeStartupGesture() {
+      let reachedTarget = false;
+      const cancelFixtureNavigation = (event) => {
+        reachedTarget = true;
+        event.preventDefault();
+      };
+      anchor.addEventListener('click', cancelFixtureNavigation, { once: true });
+      const event = new MouseEvent('click', {
+        bubbles: true, cancelable: true, ctrlKey: true
+      });
+      anchor.dispatchEvent(event);
+      anchor.removeEventListener('click', cancelFixtureNavigation);
+      return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
+    }
+    // Three distinct page lifecycle opportunities let QA distinguish whether
+    // extension arming lags only initial parsing or remains late through load.
+    // Every event is fixture-cancelled at its target if zGuard misses it.
+    const stages = {
+      parser: probeStartupGesture(),
+      domContentLoaded: null,
+      load: null
     };
-    anchor.addEventListener('click', cancelFixtureNavigation, { once: true });
-    const event = new MouseEvent('click', {
-      bubbles: true, cancelable: true, ctrlKey: true
-    });
-    anchor.dispatchEvent(event);
-    anchor.removeEventListener('click', cancelFixtureNavigation);
-    window.__zguardParserTimeClick = {
-      blocked: !reachedTarget,
-      cancelled: event.defaultPrevented
-    };
+    window.__zguardStartupStages = stages;
+    window.__zguardParserTimeClick = stages.parser;
+    document.addEventListener('DOMContentLoaded', () => {
+      stages.domContentLoaded = probeStartupGesture();
+    }, { once: true });
+    window.addEventListener('load', () => {
+      stages.load = probeStartupGesture();
+    }, { once: true });
   })();
 </script>
 <a id="hostileRootDot" href="https://WWW.NAP5K.COM./popup" target="_blank">DNS root dot</a>
@@ -210,6 +225,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       return {
         pageReady: true,
         parserTimeClick: window.__zguardParserTimeClick ?? null,
+        startupStages: window.__zguardStartupStages ?? null,
         hostileClickBlocked: hostile.blocked,
         hostileClickCancelled: hostile.cancelled,
         ordinaryClickBlocked: ordinary.blocked,
@@ -265,10 +281,12 @@ async function runBrowser(extensionPath, profilePath, url) {
         firstObservedTopFrameProtected =
           observed.hostileClickBlocked === true && observed.hostileClickCancelled === true;
       }
-      if (coldStart && firstObservedTopFrameProtected === false) break;
+      // Keep observing after an early failure so all lifecycle stages can be
+      // reported. Never rewrite the latched first-observation result.
       if (
         (observed.pageReady && observed.hostileClickBlocked &&
-          observed.cases?.frameHostile?.blocked) ||
+          observed.cases?.frameHostile?.blocked &&
+          (!coldStart || observed.startupStages?.load !== null)) ||
         Date.now() >= deadline
       ) break;
       await sleep(200);
@@ -343,6 +361,7 @@ async function runBrowser(extensionPath, profilePath, url) {
   }
 }
 
+const coldStartFailures = [];
 try {
   for (const { variant, attempt } of variants.flatMap((name) =>
     Array.from({ length: coldStart ? 3 : 1 }, (_, index) => ({ variant: name, attempt: index + 1 })))) {
@@ -359,12 +378,18 @@ try {
       assert.equal(observed.pageReady, true,
         variant + ': real Chrome must finish local fixture navigation before acceptance');
       if (coldStart) {
-        assert.equal(observed.parserTimeClick?.blocked, true,
-          variant + ': parser-time cold-start hostile click reached page target (issue #302)');
-        assert.equal(observed.parserTimeClick?.cancelled, true,
-          variant + ': parser-time gesture must be cancelled before navigation');
-        assert.equal(observed.firstObservedTopFrameProtected, true,
-          variant + ': first observed cold-start top-frame click was unprotected (issue #302)');
+        for (const stage of ['parser', 'domContentLoaded', 'load']) {
+          const gesture = observed.startupStages?.[stage];
+          if (gesture?.blocked !== true || gesture?.cancelled !== true) {
+            coldStartFailures.push(variant + ' #' + attempt + ' ' + stage +
+              ': blocked=' + String(gesture?.blocked) +
+              ', cancelled=' + String(gesture?.cancelled));
+          }
+        }
+        if (observed.firstObservedTopFrameProtected !== true) {
+          coldStartFailures.push(variant + ' #' + attempt +
+            ': first CDP-observed top-frame click was not blocked and cancelled');
+        }
       }
       assert.equal(observed.hostileClickBlocked, true,
         variant + ': actual injected extension must cancel hostile Ctrl-click');
@@ -421,6 +446,13 @@ try {
   }
 } finally {
   await new Promise((resolve) => server.close(resolve));
+}
+// Evaluate all six fresh-profile starts before rejecting. This provides an
+// honest failure distribution instead of truncating evidence at the first miss.
+if (coldStart) {
+  assert.deepEqual(coldStartFailures, [],
+    'Cold-start protection failed at one or more lifecycle stages (issue #302):\\n' +
+    coldStartFailures.join('\\n'));
 }
 console.log(requireMainWorld
   ? 'Real-browser MAIN-world acceptance passed'
