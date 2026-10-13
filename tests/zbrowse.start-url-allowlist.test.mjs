@@ -92,6 +92,35 @@ for (const [kind, candidate] of [
   );
 }
 
+// Opt-in real gateway acceptance for issue #266. Execute the actual
+// validStartUrl function extracted above, without recreating its URL policy.
+// No embedded credential values are printed to CI logs.
+if (process.argv.includes("--require-credential-free")) {
+  const failures = [];
+  for (const { url: approvedUrl } of sites) {
+    const authority = new URL(approvedUrl).host;
+    const credentialInputs = [
+      ["username/password", "https://user:pass@" + authority + "/watch"],
+      ["username-only", "https://user@" + authority + "/watch"],
+      ["password-only", "https://:pass@" + authority + "/watch"],
+      ["percent-encoded username", "https://us%65r@" + authority + "/watch"],
+      ["percent-encoded password", "https://user:%70ass@" + authority + "/watch"],
+      ["canonical HTTPS port", "https://user:pass@" + authority + ":443/watch"]
+    ];
+    for (const [kind, candidate] of credentialInputs) {
+      if (validStartUrl(candidate) !== null) {
+        failures.push(kind + " accepted for configured origin #" +
+          (sites.indexOf(sites.find((site) => site.url === approvedUrl)) + 1));
+      }
+    }
+  }
+  assert.deepEqual(failures, [],
+    "validStartUrl admits credential-bearing approved origins (issue #266): " +
+    failures.join("; "));
+  console.log("Gateway credential-free URL acceptance passed across " +
+    sites.length + " approved origins");
+}
+
 console.log(
   "zBrowse start-URL allowlist passed for " + sites.length +
   " curated sites and adversarial protocol/origin/port inputs"
