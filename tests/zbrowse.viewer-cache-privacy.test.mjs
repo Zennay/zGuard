@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { requireExactCachePrivacyFlag } from '../tools/cache-privacy-flags.mjs';
+
+const requireNoStore = requireExactCachePrivacyFlag(process.argv.slice(2));
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'zbrowse/gateway/server.js'), 'utf8');
@@ -111,7 +114,7 @@ assert.equal(denied.authorized, false, 'unknown viewer tokens must be forbidden'
 assert.equal(denied.res.statusCode, 403, 'unknown viewer token must receive 403');
 assert.equal(proxied, 1, 'unauthorized viewer must not reach upstream');
 
-if (process.argv.includes('--require-no-store')) {
+if (requireNoStore) {
   // Simulate a hostile/misconfigured upstream attempting to enable public
   // caching. The gateway must override it before serving bearer content.
   const cacheHeader = String(authorized.res.getHeader('Cache-Control') || '').toLowerCase();
