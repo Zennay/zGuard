@@ -24,7 +24,9 @@ async function boot(packageName, initial) {
       onChanged: { addListener(listener) { changeListeners.push(listener); } },
       local: {
         get(defaults, callback) {
-          callback({ ...defaults, ...stored });
+          const current = { ...defaults, ...stored };
+          if (typeof callback === 'function') callback(current);
+          return Promise.resolve(current);
         },
         set(update, callback) {
           const changes = {};
