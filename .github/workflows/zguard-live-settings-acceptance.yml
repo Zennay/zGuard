@@ -1,0 +1,49 @@
+name: zGuard live settings synchronization contract
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_live_settings:
+        description: "Require mode and enabled changes in an existing tab without reload (issue #3)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-live-settings-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  content-storage:
+    name: zGuard live extension content settings contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_LIVE_SETTINGS: ${{ inputs.require_live_settings || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Exercise installed content script behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zguard.content-live-settings.test.mjs
+          if [ "$REQUIRE_LIVE_SETTINGS" = "true" ]; then
+            node tests/zguard.content-live-settings.test.mjs --require-live-settings
+          fi
