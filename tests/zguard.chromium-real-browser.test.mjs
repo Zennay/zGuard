@@ -102,7 +102,7 @@ async function runBrowser(extensionPath, profilePath, url) {
       socket.addEventListener('open', resolve, { once: true });
       socket.addEventListener('error', () => reject(new Error('CDP socket failed')), { once: true });
     });
-    await sleep(2000);
+    await sleep(500);
     const expression = '(' + (() => {
       function probe(id) {
         const anchor = document.getElementById(id);
@@ -121,25 +121,34 @@ async function runBrowser(extensionPath, profilePath, url) {
         mainWorldOpenWrapped: window.open.name === 'zGuardWindowOpen'
       };
     }).toString() + ')()';
-    const reply = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('CDP evaluation timed out')), 10000);
-      socket.addEventListener('message', function handle(message) {
-        const packet = JSON.parse(message.data);
-        if (packet.id !== 1) return;
-        socket.removeEventListener('message', handle);
-        clearTimeout(timer);
-        resolve(packet);
+    // MV3 extension startup and asynchronous storage hydration are not
+    // synchronized with the CDP page target. Poll with a bounded deadline,
+    // but never accept a false click result as proof of real interception.
+    let observed;
+    const deadline = Date.now() + 8000;
+    do {
+      const reply = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('CDP evaluation timed out')), 10000);
+        socket.addEventListener('message', function handle(message) {
+          const packet = JSON.parse(message.data);
+          if (packet.id !== 1) return;
+          socket.removeEventListener('message', handle);
+          clearTimeout(timer);
+          resolve(packet);
+        });
+        socket.send(JSON.stringify({
+          id: 1, method: 'Runtime.evaluate',
+          params: { expression, returnByValue: true, awaitPromise: true }
+        }));
       });
-      socket.send(JSON.stringify({
-        id: 1, method: 'Runtime.evaluate',
-        params: { expression, returnByValue: true, awaitPromise: true }
-      }));
-    });
-    if (reply.result?.exceptionDetails) {
-      throw new Error('Page probe failed: ' + reply.result.exceptionDetails.text);
-    }
-    const observed = reply.result?.result?.value;
-    assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
+      if (reply.result?.exceptionDetails) {
+        throw new Error('Page probe failed: ' + reply.result.exceptionDetails.text);
+      }
+      observed = reply.result?.result?.value;
+      assert.ok(observed && typeof observed === 'object', 'CDP returned no page probe');
+      if (observed.hostileClickBlocked || Date.now() >= deadline) break;
+      await sleep(200);
+    } while (true);
     return observed;
   } finally {
     socket?.close();
