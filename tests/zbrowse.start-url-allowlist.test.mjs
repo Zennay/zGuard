@@ -9,21 +9,34 @@ const gateway = fs.readFileSync(path.join(root, "zbrowse/gateway/server.js"), "u
 const sites = JSON.parse(fs.readFileSync(path.join(root, "zbrowse/gateway/config/sites.json"), "utf8"));
 
 assert.ok(sites.length > 0, "approved gateway sites must not be empty");
-const approved = new Set(sites.map(({ url }) => new URL(url).origin.toLowerCase()));
-assert.equal(approved.size, sites.length, "each reviewed site must have a distinct origin");
-
-// Execute the actual gateway guard, not a test-side reimplementation.
-// Keep it in a sandbox without importing the Docker/gateway entrypoint.
-const start = gateway.indexOf("function validStartUrl(");
-const finish = gateway.indexOf("async function waitForBrowser(", start);
-assert.ok(start >= 0 && finish > start, "gateway must retain a reviewable validStartUrl guard");
-const guardSource = gateway.slice(start, finish);
-const validStartUrl = vm.runInNewContext(guardSource + "\nvalidStartUrl;", {
+// Execute both actual gateway constructs, not test-side reimplementations.
+// Keep all gateway side effects isolated: never import its Docker entrypoint.
+const allowlistStart = gateway.indexOf("const allowedOrigins = new Set(");
+const allowlistEnd = gateway.indexOf("const trustProxyHops", allowlistStart);
+const guardStart = gateway.indexOf("function validStartUrl(");
+const guardEnd = gateway.indexOf("async function waitForBrowser(", guardStart);
+assert.ok(
+  allowlistStart >= 0 && allowlistEnd > allowlistStart &&
+  guardStart >= 0 && guardEnd > guardStart,
+  "gateway must retain reviewable allowlist initialization and validStartUrl guard"
+);
+const actualCode = gateway.slice(allowlistStart, allowlistEnd) +
+  "\n" + gateway.slice(guardStart, guardEnd) +
+  "\n({ allowedOrigins, validStartUrl });";
+const evaluated = vm.runInNewContext(actualCode, {
   URL,
-  allowedOrigins: approved,
+  sites,
   config: { startUrl: sites[0].url }
 }, { filename: "zbrowse/gateway/server.js", timeout: 1_000 });
+const { allowedOrigins, validStartUrl } = evaluated;
 assert.equal(typeof validStartUrl, "function");
+assert.equal(allowedOrigins.size, sites.length, "configured sites must have distinct exact origins");
+for (const site of sites) {
+  assert.ok(
+    allowedOrigins.has(new URL(site.url).origin.toLowerCase()),
+    "the runtime allowlist must derive from every reviewed site origin"
+  );
+}
 
 const defaultSite = sites[0].url;
 for (const value of [undefined, null, "", defaultSite]) {
