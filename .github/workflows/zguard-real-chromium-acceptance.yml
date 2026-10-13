@@ -47,6 +47,7 @@ jobs:
           curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 150 \
             "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
             -o "$RUNNER_TEMP/chrome-for-testing.zip"
+          sha256sum "$RUNNER_TEMP/chrome-for-testing.zip"
           unzip -q "$RUNNER_TEMP/chrome-for-testing.zip" -d "$RUNNER_TEMP"
           test -x "$RUNNER_TEMP/chrome-linux64/chrome"
       - name: Chromium real-browser acceptance
