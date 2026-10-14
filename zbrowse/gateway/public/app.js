@@ -76,7 +76,7 @@ async function request(url, options = {}) {
   // lease teardown. Do not parse unbounded HTML/JSON proxy diagnostics.
   if (!response.ok && (url === "/api/session" || url.endsWith("/heartbeat"))) {
     try { await response.body?.cancel?.(); } catch { /* already closed */ }
-    const error = new Error("Gateway request rejected.");
+    const error = new Error("Gateway operation rejected.");
     error.status = response.status;
     throw error;
   }
