@@ -44,6 +44,7 @@ const logs = [];
 let createCalls = 0;
 let reservations = 0;
 let releases = 0;
+let nestedSourceError = null;
 const sandbox = {
   app, express, sites, URL, Date, Math,
   sessions, sessionsByIp, requestIp, trustProxyHops: 0,
@@ -84,6 +85,7 @@ const sandbox = {
         headers: { authorization: 'Bearer ' + token },
         env: { PASSWORD: password }
       };
+      nestedSourceError = nested;
       throw nested;
     }
     const fixture = {
@@ -169,6 +171,18 @@ try {
 
   assert.equal(logs.length, 3,
     'all three synthetic Docker exceptions must produce diagnostics');
+  // Native console.error renders Error.cause and enumerable request objects;
+  // String(error) conceals these exact credentials and is not valid test
+  // capture. Prove the negative canary independently of the gateway logger.
+  assert.ok(nestedSourceError instanceof Error,
+    'the real start route must have thrown the nested Docker error fixture');
+  assert.doesNotMatch(String(nestedSourceError), /Authorization|qa-pass|Bearer /,
+    'top-level Error string must not accidentally contain nested canaries');
+  const unsafeNativeLog = format('Session creation failed', nestedSourceError);
+  for (const canary of [token, password, 'qa-pass', 'Authorization: Basic']) {
+    assert.ok(unsafeNativeLog.includes(canary),
+      'negative control: raw native Node Error logging reveals nested synthetic credentials');
+  }
   assert.ok(logs[0].includes('Session creation failed'),
     'safe generic diagnostic label must be preserved');
   const leaking = logs.filter(line =>
