@@ -50,6 +50,7 @@ jobs:
           node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.start-url-allowlist.test.mjs
           node tests/zbrowse.start-url-real-http.test.mjs
+          node tests/zbrowse.session-json-body-real-http.test.mjs
           if [ "$REQUIRE_CREDENTIAL_FREE" = "true" ]; then
             node tests/zbrowse.start-url-allowlist.test.mjs --require-credential-free
             node tests/zbrowse.start-url-real-http.test.mjs --require-credential-free
