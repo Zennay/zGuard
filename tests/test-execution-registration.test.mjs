@@ -250,10 +250,31 @@ function executableInvocations(source) {
   invocationCache.set(source, calls);
   return calls;
 }
+// A child process naming a test in an unrelated argument (for example
+// `git show tests/example.test.js`) does not execute that test. Require an
+// actual language/test runner; unknown dynamic executables cannot prove CI
+// registration. Shell commands must also pass the existing command parser.
 function sourceExecutesTest(source, test, basename, uniqueBasename) {
   const references = uniqueBasename ? [test, basename] : [test];
-  return executableInvocations(source).some((call) =>
-    references.some((reference) => call.includes(reference)));
+  return executableInvocations(source).some((call) => {
+    const invocation = call.match(
+      /^(execFileSync|spawnSync|execSync|spawn)\s*\(\s*(process\.execPath|(["'])(.*?)\3)/s
+    );
+    if (!invocation) return false;
+    const executable = invocation[2] === 'process.execPath'
+      ? 'node'
+      : invocation[4].trim();
+    if (!/^(?:node(?:js)?|python(?:2|3)?|ruby|pytest)(?:\s|$)/.test(executable)) {
+      return false;
+    }
+    if (invocation[1] === 'execSync') {
+      return references.some((reference) => shellExecutesTest(executable, reference));
+    }
+    // Syntax-check and inline-evaluation paths only parse source; even when
+    // the target path is provided, these are not proof of running its tests.
+    if (/\[\s*["'](?:--check|-c|--eval|-e)["']\s*(?:,|\])/.test(call)) return false;
+    return references.some((reference) => call.includes(reference));
+  });
 }
 
 assert.equal(
@@ -266,6 +287,28 @@ assert.equal(
   true,
   'explicit child-process execution must register a nested test'
 );
+for (const nonRunner of [
+  "execFileSync('git', ['show', 'tests/child.test.js']);",
+  "spawnSync('grep', ['-R', 'tests/child.test.js', '.']);",
+  "execSync('git show tests/child.test.js');",
+  "spawnSync(process.execPath, ['--check', 'tests/child.test.js']);",
+  "spawnSync('node', ['--eval', 'console.log(\\\"tests/child.test.js\\\")']);",
+  "execSync('node --check tests/child.test.js');"
+]) {
+  assert.equal(sourceExecutesTest(nonRunner,
+    'tests/child.test.js', 'child.test.js', true), false,
+    'mentioning a test in a non-execution process is not registration');
+}
+for (const realRunner of [
+  "spawnSync('node', ['tests/child.test.js']);",
+  "execFileSync(process.execPath, ['tests/child.test.js']);",
+  "execSync('node tests/child.test.js');"
+]) {
+  assert.equal(sourceExecutesTest(realRunner,
+    'tests/child.test.js', 'child.test.js', true), true,
+    'real test runner execution must still register its target');
+}
+
 assert.equal(
   sourceExecutesTest(
     "const expected = 'node tests/child.test.js';",
