@@ -21,6 +21,15 @@ async function request(url, options = {}) {
     ...options
   });
   if (response.status === 204) return null;
+  // Successful lease renewal must be an actual gateway JSON response,
+  // not an HTML/plain-text proxy response that happens to parse as JSON.
+  // Other API results have their own schema and cleanup validation.
+  if (response.ok && url.endsWith("/heartbeat")) {
+    const contentType = response.headers?.get?.("content-type") || "";
+    if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      throw new Error("Invalid heartbeat response format.");
+    }
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");
