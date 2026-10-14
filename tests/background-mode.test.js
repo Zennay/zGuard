@@ -431,6 +431,13 @@ async function verifyBrowser(relativePath) {
 
 }
 
+// This behavior must remain part of the dedicated hosted integration gate,
+// not only an optional developer invocation.
+const integrationWorkflow = fs.readFileSync(path.join(root,
+  '.github/workflows/zguard-popup-background-integration.yml'), 'utf8');
+assert.match(integrationWorkflow, /^\s+node tests\/background-mode\.test\.js\s*$/m,
+  'dedicated hosted popup-background validation must execute mode tests');
+
 (async () => {
   await verifyBrowser('chromium/background.js');
   await verifyBrowser('firefox/background.js');
