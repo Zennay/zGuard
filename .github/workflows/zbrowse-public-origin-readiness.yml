@@ -34,11 +34,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
       - name: Validate safe public gateway read-only probing
         shell: bash
         run: |
           set -euo pipefail
           node tests/zbrowse.public-origin-readiness.test.mjs --self-test
+          node tests/zbrowse.gateway-public-api-real-http.test.mjs
           if [ "$LIVE_PROBE_EVENT" = "workflow_dispatch" ]; then
             node tests/zbrowse.public-origin-readiness.test.mjs --live
           fi
