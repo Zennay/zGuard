@@ -11,8 +11,8 @@ const signatures = [
     name: "PEM private key",
     pattern: new RegExp("-----BEGIN " + "(?:(?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
   },
-  { name: "GitHub classic token", pattern: new RegExp("gh" + "[opusr]_[A-Za-z0-9]{20,}") },
-  { name: "GitHub fine-grained token", pattern: new RegExp("github" + "_pat_[A-Za-z0-9_]{20,}") },
+  { name: "GitHub classic token", pattern: new RegExp("(?<![A-Za-z0-9_])gh" + "[opusr]_[A-Za-z0-9]{20,}") },
+  { name: "GitHub fine-grained token", pattern: new RegExp("(?<![A-Za-z0-9_])github" + "_pat_[A-Za-z0-9_]{20,}") },
   { name: "OpenAI-style secret", pattern: new RegExp("(?<![A-Za-z0-9])sk" + "-[A-Za-z0-9_-]{20,}") },
   { name: "AWS access key id", pattern: new RegExp("AK" + "IA[0-9A-Z]{16}") },
   { name: "Slack bot token", pattern: new RegExp("xox" + "b-[0-9A-Za-z-]{20,}") }
@@ -48,6 +48,38 @@ for (const harmless of [
   }
 }
 verifyTokenBoundary(tokenPattern);
+
+// Prefixes in ordinary words are not standalone credentials. A trailing
+// "ghp_" inside a filename or "github_pat_" inside an identifier must not
+// falsely fail CI, while assignments, Bearer headers and quoted keys must.
+function verifyGitHubBoundary(pattern, token, label) {
+  for (const text of [
+    token, "GITHUB_TOKEN=" + token, "Bearer " + token,
+    '{"credential":"' + token + '"}', "(" + token + ")"
+  ]) {
+    assert.equal(pattern.test(text), true,
+      label + ": standalone credential must still be detected");
+  }
+  for (const text of [
+    "prefix" + token, "task" + token, "filename_" + token,
+    token.slice(0, -12)
+  ]) {
+    assert.equal(pattern.test(text), false,
+      label + ": embedded or truncated token-like text is not a secret");
+  }
+}
+for (const [name, synthetic, oldPattern] of [
+  ["GitHub classic token", "gh" + "p_" + "B".repeat(30),
+    new RegExp("gh" + "[opusr]_[A-Za-z0-9]{20,}")],
+  ["GitHub fine-grained token", "github" + "_pat_" + "C".repeat(30),
+    new RegExp("github" + "_pat_[A-Za-z0-9_]{20,}")]
+]) {
+  const pattern = signatures.find(signature => signature.name === name)?.pattern;
+  assert.ok(pattern, name + ": matcher must remain registered");
+  verifyGitHubBoundary(pattern, synthetic, name);
+  assert.throws(() => verifyGitHubBoundary(oldPattern, synthetic, name),
+    undefined, name + ": removing the identifier boundary must break the test");
+}
 // Prove that a regression to the old unbounded-prefix detector fails QA.
 assert.throws(() => verifyTokenBoundary(new RegExp("sk" + "-[A-Za-z0-9_-]{20,}")),
   undefined, "removing the token boundary must be caught by this self-test");
@@ -224,7 +256,9 @@ for (const harmless of [
   Buffer.from("-----BEGIN " + "PGP PUBLIC KEY BLOCK-----", "ascii"),
   Buffer.from([0, 255, 128, 0]),
   Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\0", "utf8"),
-  Buffer.from("sk" + "-" + "A".repeat(19) + "\0", "utf8")
+  Buffer.from("sk" + "-" + "A".repeat(19) + "\0", "utf8"),
+  Buffer.from("prefix" + "gh" + "p_" + "B".repeat(30), "ascii"),
+  Buffer.from("filename_" + "github" + "_pat_" + "C".repeat(30), "ascii")
 ]) {
   assert.deepEqual(scanBytes(harmless), [],
     "benign binary and embedded/short markers must remain allowed");
