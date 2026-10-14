@@ -118,6 +118,24 @@ try {
         Buffer.from(Buffer.from(header, 'utf16le')).swap16()]), header);
   }
 
+  // A complete real Git-index run must detect UTF-32 too; the in-memory
+  // decoder regression alone would not prove the shipped scanner executes.
+  function utf32(value, bigEndian) {
+    const bytes = Buffer.alloc(value.length * 4);
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      assert.ok(code >= 0x20 && code <= 0x7e);
+      bytes[i * 4 + (bigEndian ? 3 : 0)] = code;
+    }
+    return bytes;
+  }
+  reject('misaligned UTF-32LE API secret', 'OpenAI-style secret',
+    Buffer.concat([Buffer.from([0xff, 0x80, 0xfe]),
+      utf32(first, false), Buffer.from([0])]), first);
+  reject('BOM-prefixed UTF-32BE Git token', 'GitHub fine-grained token',
+    Buffer.concat([Buffer.from([0, 0, 0xfe, 0xff]),
+      utf32(second, true), Buffer.from([0])]), second);
+
   // The policy must not mistake public keys or ordinary certificates for
   // private credentials even when they are tracked as binary fixtures.
   for (const marker of ['PUBLIC KEY', 'CERTIFICATE', 'PGP PUBLIC KEY BLOCK']) {
@@ -129,7 +147,7 @@ try {
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
-    'ten rejected binary/UTF-16/private-key tracked secrets, benign public headers, and recovery');
+    'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, benign public headers, and recovery');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
