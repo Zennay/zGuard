@@ -39,6 +39,63 @@ function requireMainPush(source) {
   assert.ok(main, 'push validation must include main, not only other branches/tags');
 }
 
+// Repository QA permits deliberately scoped workflow checks, but never
+// asymmetric PR/push scopes, skipped workflow-definition changes, or filters
+// that select only closed PRs or exclude particular paths.
+function requireReviewedAutomaticFilters(source, relative) {
+  const lines = source.split(/\r?\n/);
+  function fields(event) {
+    const start = lines.findIndex(line => line === '  ' + event + ':');
+    assert.ok(start >= 0, relative + ': missing block-style ' + event);
+    const result = new Map();
+    let active = null;
+    for (let i = start + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      if (!/^    /.test(line)) break;
+      const field = /^    ([a-z-]+):\s*(?:#.*)?$/.exec(line);
+      if (field) {
+        assert.ok(!result.has(field[1]), relative + ': duplicate ' + event + ' field');
+        result.set(field[1], []);
+        active = field[1];
+        continue;
+      }
+      const item = /^      - (['"]?)([^'"]+)\1\s*(?:#.*)?$/.exec(line);
+      assert.ok(item && active, relative + ': unreviewed ' + event + ' YAML');
+      result.get(active).push(item[2]);
+    }
+    return result;
+  }
+  const pr = fields('pull_request');
+  const push = fields('push');
+  for (const key of pr.keys()) {
+    assert.equal(key, 'paths', relative + ': PR event may only use explicit paths');
+  }
+  for (const key of push.keys()) {
+    assert.ok(key === 'branches' || key === 'paths',
+      relative + ': push event may only use reviewed branches/paths');
+  }
+  assert.deepEqual(push.get('branches'), ['main'],
+    relative + ': push must target exactly the main branch');
+  assert.equal(pr.has('paths'), push.has('paths'),
+    relative + ': filtered PR and push events must be symmetric');
+  if (pr.has('paths')) {
+    const prPaths = pr.get('paths');
+    const pushPaths = push.get('paths');
+    assert.ok(prPaths.length > 0, relative + ': filtered workflow needs paths');
+    assert.deepEqual(prPaths, pushPaths,
+      relative + ': PR/push path filters must match exactly');
+    for (const pattern of prPaths) {
+      assert.ok(!pattern.startsWith('!') && !pattern.includes('..'),
+        relative + ': no negative/parent path filters');
+    }
+    const ownPath = '.github/workflows/' + relative;
+    assert.ok(prPaths.includes(ownPath) ||
+      prPaths.includes('.github/workflows/**'),
+      relative + ': scoped workflow must re-run when its YAML changes');
+  }
+}
+
 function workflowEvents(source) {
   const lines = source.split(/\r?\n/);
   const onIndexes = lines
@@ -121,6 +178,39 @@ for (const [label, weakened] of [
     label + ' must not silently bypass main push validation');
 }
 
+const reviewedFilterFixture = [
+  'on:', '  pull_request:', '  push:', '    branches:', '      - main',
+  '  workflow_dispatch:', 'jobs:'
+].join('\n');
+requireReviewedAutomaticFilters(reviewedFilterFixture, 'example.yml');
+const filteredFixture = reviewedFilterFixture
+  .replace('  pull_request:', '  pull_request:\n    paths:\n      - ".github/workflows/example.yml"\n      - "tests/**"')
+  .replace('      - main', '      - main\n    paths:\n      - ".github/workflows/example.yml"\n      - "tests/**"');
+requireReviewedAutomaticFilters(filteredFixture, 'example.yml');
+for (const [label, mutated] of [
+  ['PR closed-only', reviewedFilterFixture.replace('  pull_request:',
+    '  pull_request:\n    types:\n      - closed')],
+  ['PR branch filter', reviewedFilterFixture.replace('  pull_request:',
+    '  pull_request:\n    branches:\n      - main')],
+  ['PR-only filter', filteredFixture.replace(
+    '    paths:\n      - ".github/workflows/example.yml"\n      - "tests/**"\n  workflow_dispatch:', '  workflow_dispatch:')],
+  ['push-only filter', reviewedFilterFixture.replace('      - main',
+    '      - main\n    paths:\n      - tests/**')],
+  ['PR/push filter drift', filteredFixture.replace(
+    '      - "tests/**"\n  workflow_dispatch:', '      - "docs/**"\n  workflow_dispatch:')],
+  ['untracked workflow edit', filteredFixture.replaceAll(
+    '.github/workflows/example.yml', 'src/**')],
+  ['excluded security paths', filteredFixture.replace(
+    '      - "tests/**"', '      - "!tests/security/**"')],
+  ['extra push branch', reviewedFilterFixture.replace('      - main',
+    '      - main\n      - feature')],
+  ['push tags', reviewedFilterFixture.replace('      - main',
+    '      - main\n    tags:\n      - v*')]
+]) {
+  assert.throws(() => requireReviewedAutomaticFilters(mutated, 'example.yml'),
+    undefined, label + ' must not skip a reviewed automatic QA surface');
+}
+
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
   .sort();
@@ -133,6 +223,7 @@ for (const name of workflows) {
   const events = workflowEvents(source);
   requireAutomaticValidation(events);
   requireMainPush(source);
+  requireReviewedAutomaticFilters(source, name);
   const disallowed = [...new Set(events.filter((event) => !allowedEvents.has(event)))]
     .sort();
 
