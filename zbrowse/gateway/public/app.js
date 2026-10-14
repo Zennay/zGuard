@@ -22,6 +22,9 @@ async function boundedGatewayJson(response, maximumBytes) {
   const declared = response.headers?.get?.("content-length");
   if (declared !== null && declared !== undefined) {
     if (!/^\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+      // Stop a declared-oversize transfer without even reading its first
+      // chunk. An HTTP body can keep consuming network after we reject it.
+      try { await response.body?.cancel?.(); } catch { /* already closed */ }
       throw new Error("Invalid gateway response size.");
     }
   }
@@ -37,12 +40,17 @@ async function boundedGatewayJson(response, maximumBytes) {
       if (!(value instanceof Uint8Array)) throw new Error("Invalid gateway response chunk.");
       received += value.byteLength;
       if (received > maximumBytes) {
-        await reader.cancel();
         throw new Error("Gateway response too large.");
       }
       decoded += decoder.decode(value, { stream: true });
     }
     decoded += decoder.decode();
+  } catch (error) {
+    // A decoding error, invalid stream chunk or oversize payload must abort
+    // the still-active body, not merely release the reader lock and leave an
+    // untrusted response downloading in the background.
+    try { await reader.cancel(); } catch { /* already closed */ }
+    throw error;
   } finally {
     reader.releaseLock();
   }
