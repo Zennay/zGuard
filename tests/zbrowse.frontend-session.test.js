@@ -1150,7 +1150,9 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const shortened = await bootPortal({
     sessionRequest: async () => {
       shortenedStarts++;
-      return response(validSession);
+      // Each browser response is a fresh JSON object in production. Do not
+      // mutate the shared fixture that later negative test cases reuse.
+      return response({ ...validSession });
     },
     heartbeatRequest: async () => response({ ok: true, expiresAt: Date.now() + 400 })
   });
