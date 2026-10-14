@@ -169,7 +169,7 @@ try {
     console.log('Real Express success and denial session HTTP cache policy PASS');
   } else {
     console.log('Shipped session route served 201/200 and 400/415/403/409/503/500 over local HTTP; ' +
-      'all six no-store policies=' + noStore +
+      'all ' + responses.length + ' no-store policies=' + noStore +
       ' (strict proof requires --require-no-store; issue #284 remains open)');
   }
 } finally {
