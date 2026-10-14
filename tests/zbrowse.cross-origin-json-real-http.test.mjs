@@ -213,7 +213,7 @@ try {
       status: result.status,
       started: starts - initialStarts,
       reserved: reservations - initialReserves,
-      returnedBearer: /"token"\\s*:|"viewerUrl"\\s*:/.test(result.body)
+      returnedBearer: /"token"\s*:|"viewerUrl"\s*:/.test(result.body)
     };
   }
   deceptiveResults['duplicate-Origin-new'] = await duplicateOriginPost();
