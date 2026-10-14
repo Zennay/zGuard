@@ -3,6 +3,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
+import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
+
+const strict = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-key-parity');
 
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
@@ -91,7 +94,7 @@ assert.ok(incomplete[0].identities.sessionIdentity,
 assert.notEqual(incomplete[0].identities.sessionIdentity, '198.51.100.20',
   'incomplete chain must not override session identity with forwarded data');
 
-if (process.argv.includes('--require-key-parity')) {
+if (strict) {
   const sameKey = incomplete[0].identities.limiterIdentity ===
     incomplete[0].identities.sessionIdentity;
   const quotaEnforced = incomplete[1].status === 429;
