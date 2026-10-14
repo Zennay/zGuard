@@ -268,7 +268,16 @@ function browserProxyOptions(req) {
 }
 
 function browserProxyError(error, response) {
-  console.error("Browser proxy error", error.message);
+  // Upstream error.message and stack can contain bearer viewer paths, proxy
+  // URL userinfo, authorization headers, terminal escapes or newlines.
+  // Emit ONLY literal, reviewed Node/proxy error codes or a generic fallback.
+  // Never log arbitrary codes, messages, URLs, request objects or credentials.
+  const safeCodes = new Set([
+    "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE",
+    "ENOTFOUND", "EAI_AGAIN", "ERR_STREAM_PREMATURE_CLOSE"
+  ]);
+  const category = safeCodes.has(error?.code) ? error.code : "UPSTREAM_FAILURE";
+  console.error("Browser proxy error", category);
   if (response?.writeHead && !response.headersSent) {
     response.writeHead(502).end("Browser connection interrupted.");
     return;

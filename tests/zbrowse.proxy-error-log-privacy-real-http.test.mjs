@@ -45,6 +45,10 @@ const errors = [
   new Error('synthetic proxy failure\u001b[2J\u001b[H[OK] forged healthy session\u2028' +
     'PASSWORD=' + password)
 ];
+// Confirm a reviewed network failure remains diagnosable, while arbitrary
+// external error codes cannot smuggle an otherwise secret bearer into logs.
+errors[0].code = 'ECONNRESET';
+errors[1].code = token;
 let forwards = 0;
 const sandbox = {
   app, sessions, requestIp, requestPath, trustProxyHops: 0,
@@ -145,6 +149,10 @@ try {
   if (strict) {
     assert.equal(leaking.length, 0,
       'viewer proxy diagnostics must redact bearer paths, credentials and injected log lines');
+    assert.equal(captured[0], 'Browser proxy error ECONNRESET',
+      'known allowlisted network codes must remain actionable');
+    assert.ok(captured.slice(1).every(line => line === 'Browser proxy error UPSTREAM_FAILURE'),
+      'arbitrary codes and untrusted error messages must collapse to a bounded category');
   }
   console.log('Shipped viewer proxy error logging over localhost (including ' +
     'one interrupted response after headers): ' +

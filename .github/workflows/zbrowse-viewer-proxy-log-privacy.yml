@@ -50,6 +50,8 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.viewer-path-recovery-real-http.test.mjs
           node tests/zbrowse.proxy-error-log-privacy-real-http.test.mjs
+          # Credential-safe proxy diagnostics are mandatory on PRs and main.
+          node tests/zbrowse.proxy-error-log-privacy-real-http.test.mjs --require-redacted-proxy-errors
           if [ "$REQUIRE_REDACTED_PROXY_ERRORS" = "true" ]; then
             node tests/zbrowse.proxy-error-log-privacy-real-http.test.mjs --require-redacted-proxy-errors
           fi
