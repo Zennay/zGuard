@@ -5,8 +5,8 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadContentScript(relativePath, mode, enabled = true) {
-  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+async function loadContentScript(relativePath, mode, enabled = true, overrideSource = null) {
+  const source = overrideSource ?? fs.readFileSync(path.join(root, relativePath), 'utf8');
   const events = [];
   let allowedOpenCount = 0;
   let clickHandler;
@@ -506,11 +506,53 @@ async function verifyBrowser(relativePath) {
   assert.equal(disabled.events.length, 0);
 }
 
+// Mutate the shipped source in memory and run the SAME content VM harness.
+// If named contexts, form submitters or case-insensitive reserved keywords
+// silently regress, these controls must actually fail observable assertions.
+async function verifyPopupTargetMutationControls(relativePath) {
+  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+  async function broken(label, original, replacement, mode, verify) {
+    assert.ok(source.includes(original),
+      relativePath + ': expected mutation source missing: ' + label);
+    const altered = source.replace(original, replacement);
+    assert.notEqual(altered, source, label + ': mutation must change source');
+    const script = await loadContentScript(relativePath, mode, true, altered);
+    assert.throws(() => verify(script), { code: 'ERR_ASSERTION' },
+      relativePath + ': ' + label + ' regression must cause a genuine behavioral failure');
+  }
+  await broken('named anchor bypass',
+    'opensSeparateContext(target) || event.ctrlKey',
+    "target.toLowerCase() === '_blank' || event.ctrlKey",
+    'balanced', (app) => assert.deepEqual(
+      app.click('https://ads.al5sm.com/popup', { target: 'adPopupWindow' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+  await broken('named form bypass',
+    '!opensSeparateContext(target)',
+    "String(target).toLowerCase() !== '_blank'",
+    'strict', (app) => assert.deepEqual(
+      app.submit('https://example.org/video', { target: 'reportPanel' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+  await broken('lost case-folding of special targets',
+    "const name = String(target || '').toLowerCase();",
+    "const name = String(target || '');",
+    'balanced', (app) => assert.deepEqual(
+      app.click('https://ads.al5sm.com/popup', { target: '_PARENT' }), []));
+  await broken('named-window classifier narrowed to _blank',
+    "return Boolean(name) && !['_self', '_parent', '_top', '_unfencedtop'].includes(name);",
+    "return name === '_blank';",
+    'strict', (app) => assert.deepEqual(
+      app.submit('https://example.org/video', { target: 'reportPanel' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+}
+
 (async () => {
   await verifyBrowser('chromium/content.js');
   await verifyBrowser('firefox/content.js');
   await verifyBrowser('zbrowse/browser/zguard/content.js');
-  console.log('zGuard content mode behavior tests passed');
+  for (const relativePath of [
+    'chromium/content.js', 'firefox/content.js', 'zbrowse/browser/zguard/content.js'
+  ]) await verifyPopupTargetMutationControls(relativePath);
+  console.log('zGuard content mode behavior and 12 popup-target mutations passed');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
