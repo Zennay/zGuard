@@ -3,6 +3,7 @@
 // The real geckodriver test remains the only acceptance of runtime behavior.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 const source = fs.readFileSync(
   new URL('./zguard.firefox-real-browser.test.mjs', import.meta.url), 'utf8'
@@ -66,4 +67,30 @@ assert.notEqual(weakenedDispatch, workflow, 'workflow mutation must change actua
 assert.throws(() => verify(source, weakenedDispatch), undefined,
   'disabled Firefox strict dispatch command cannot become a release pass');
 
-console.log('Firefox MAIN-world issue #3 strict acceptance wiring: 5 mutation checks PASS (offline)');
+// Exercise the actual Firefox entrypoint with malformed flags before it can
+// depend on an XPI, geckodriver or any live/browser environment. An invalid
+// operator request must never silently turn into a successful baseline run.
+const realEntry = new URL('./zguard.firefox-real-browser.test.mjs', import.meta.url);
+const invalidArgs = [
+  ['--require-pageword'],
+  ['--require-pageworld', '--require-pageworld'],
+  ['--require-pageworld=true'],
+  ['--require-pageworld', '--unknown'],
+  ['--unknown', '--require-pageworld'],
+  ['--']
+];
+for (const args of invalidArgs) {
+  const child = spawnSync(process.execPath, [realEntry.pathname, ...args], {
+    encoding: 'utf8', timeout: 5000, maxBuffer: 128 * 1024,
+    env: { ...process.env, ZGUARD_FIREFOX_XPI: '' }
+  });
+  assert.equal(child.status, 1, 'invalid Firefox CLI must exit 1 before launching browser');
+  assert.match(child.stderr, /Unsupported or duplicate Firefox acceptance flag/,
+    'actual Firefox entrypoint must fail at argument validation');
+  assert.doesNotMatch(child.stderr, /Set ZGUARD_FIREFOX_XPI|geckodriver is required/,
+    'invalid strict flags must be rejected before missing browser prerequisites');
+  assert.doesNotMatch(child.stdout, /passed|success|accepted/i,
+    'bad Firefox flags may not claim any acceptance');
+}
+console.log('Firefox MAIN-world issue #3 strict acceptance wiring: 5 mutations plus ' +
+  invalidArgs.length + ' real entrypoint CLI rejections PASS (offline)');
