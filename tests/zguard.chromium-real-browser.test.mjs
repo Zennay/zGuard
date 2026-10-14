@@ -755,6 +755,84 @@ async function runBrowser(extensionPath, profilePath, url) {
         hostile: await nativeKeyboardFormProbe('https://ads.al5sm.com/popup'),
         ordinary: await nativeKeyboardFormProbe('https://example.org/video')
       };
+
+      // Unlike DOM requestSubmit() or synthetic click(), CDP native pointer
+      // input exercises real button hit-testing and trusted form submission.
+      async function nativePointerFormProbe(action) {
+        const setup = await cdp('Runtime.evaluate', {
+          expression: '(' + ((url) => {
+            const form = document.createElement('form');
+            form.method = 'GET';
+            form.action = url;
+            form.target = '_blank';
+            const button = document.createElement('button');
+            button.type = 'submit';
+            button.textContent = 'Native pointer form probe';
+            button.style.cssText = 'display:block;width:180px;height:64px';
+            form.append(button);
+            document.body.append(form);
+            const state = {
+              trustedClick: false, documentCaptured: false,
+              reachedForm: false, trustedSubmit: false, cancelledByFixture: false
+            };
+            window.__zguardPointerFormState = state;
+            function onClick(event) {
+              state.trustedClick = event.isTrusted;
+            }
+            function safety(event) {
+              if (event.target !== form) return;
+              state.documentCaptured = true;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            function target(event) {
+              state.reachedForm = true;
+              state.trustedSubmit = event.isTrusted;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            button.addEventListener('click', onClick);
+            document.addEventListener('submit', safety, true);
+            form.addEventListener('submit', target);
+            window.__zguardPointerFormCleanup = () => {
+              button.removeEventListener('click', onClick);
+              document.removeEventListener('submit', safety, true);
+              form.removeEventListener('submit', target);
+              form.remove();
+            };
+            button.scrollIntoView({ block: 'center' });
+            const rect = button.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2 };
+          }).toString() + ')(' + JSON.stringify(action) + ')',
+          returnByValue: true
+        });
+        assert.equal(setup.exceptionDetails, undefined,
+          'Real native form button must initialize');
+        const pos = setup.result?.value;
+        assert.ok(Number.isFinite(pos?.x) && Number.isFinite(pos?.y),
+          'Real native form button must be hit-testable');
+        for (const params of [
+          { type: 'mouseMoved', button: 'none', buttons: 0 },
+          { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1 },
+          { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1 }
+        ]) {
+          await cdp('Input.dispatchMouseEvent', { ...pos, ...params });
+        }
+        await sleep(80);
+        const result = await cdp('Runtime.evaluate', {
+          expression: '(() => { const state = window.__zguardPointerFormState; ' +
+            'window.__zguardPointerFormCleanup(); return state; })()',
+          returnByValue: true
+        });
+        assert.equal(result.exceptionDetails, undefined,
+          'Native pointer form results must be accessible');
+        return result.result?.value;
+      }
+      observed.formPointer = {
+        hostile: await nativePointerFormProbe('https://ads.al5sm.com/popup'),
+        ordinary: await nativePointerFormProbe('https://example.org/video')
+      };
     }
     if (requireShadowDom) {
       // The browser, not our VM, retargets composed clicks from a real
@@ -1120,6 +1198,18 @@ try {
           variant + ': fixture must cancel ordinary external keyboard form submission');
         assert.equal(observed.formKeyboard.hostile.submitReached, false,
           variant + ': hostile trusted keyboard form submission escaped popup guard');
+        assert.equal(observed.formPointer?.ordinary?.trustedClick, true,
+          variant + ': real pointer must deliver a trusted submit-button click');
+        assert.equal(observed.formPointer.ordinary.documentCaptured, true,
+          variant + ': harmless pointer form submit must reach document capture');
+        assert.equal(observed.formPointer.ordinary.reachedForm, true,
+          variant + ': normal real-pointer form submission must remain available');
+        assert.equal(observed.formPointer.ordinary.trustedSubmit, true,
+          variant + ': normal real-pointer form submit event must be trusted');
+        assert.equal(observed.formPointer.ordinary.cancelledByFixture, true,
+          variant + ': fixture must cancel all ordinary external form navigations');
+        assert.equal(observed.formPointer.hostile.reachedForm, false,
+          variant + ': hostile native-pointer form escaped popup submit guard');
       }
       if (requireShadowDom) {
         assert.equal(observed.shadowDom?.ordinary?.composed, true,
