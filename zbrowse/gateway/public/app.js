@@ -20,6 +20,12 @@ async function request(url, options = {}) {
     headers: { "content-type": "application/json", ...(options.headers || {}) },
     ...options
   });
+  // The gateway confirms a completed browser teardown with 204 No Content.
+  // A proxy-generated 200/202/206 is not evidence of Docker cleanup, even
+  // when its body looks successful. Keep the old token locked for retry.
+  if (options.method === "DELETE" && response.ok && response.status !== 204) {
+    throw new Error("Unexpected session release status.");
+  }
   if (response.status === 204) return null;
   // Successful lease renewal must be an actual gateway JSON response,
   // not an HTML/plain-text proxy response that happens to parse as JSON.
