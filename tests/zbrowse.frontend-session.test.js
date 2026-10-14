@@ -244,11 +244,33 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       label + ': scripted submit must never start browser on malformed health');
   }
 
+  // Successful-looking HTTP codes other than 200 are not documented GET
+  // confirmations. A proxy 202/203/206 with copied "ok" JSON must not
+  // advertise a usable browser even when its capacity fields look valid.
+  for (const status of [201, 202, 203, 205, 206]) {
+    const unexpectedHealth = await bootPortal({
+      healthRequest: async () => response({
+        status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1
+      }, status)
+    });
+    assert.equal(unexpectedHealth.element('capacityText').textContent,
+      'Browser engine offline', status + ': non-200 health must fail closed');
+    assert.equal(unexpectedHealth.element('startButton').disabled, true,
+      status + ': non-200 health may not enable browser creation');
+    unexpectedHealth.submit();
+    assert.equal(unexpectedHealth.requests.filter(({ url }) => url === '/api/session').length,
+      0, status + ': scripted submit must not bypass invalid health status');
+  }
+
   // Public health may be green while /api/sites is offline or supplies an
   // invalid catalogue (issue #293). Do not enable the Open button, prefill an
   // unreviewed URL or send a browser POST merely because capacity is free.
   const healthy = { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 };
   const catalogueFailures = [
+    ...[201, 202, 203, 205, 206].map((status) => [
+      'non-200 catalogue ' + status,
+      () => response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] }, status)
+    ]),
     ['offline catalogue', () => Promise.reject(new TypeError('gateway route unreachable'))],
     ['missing sites', () => response({})],
     ['null sites', () => response({ sites: null })],
