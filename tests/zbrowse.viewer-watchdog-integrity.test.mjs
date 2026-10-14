@@ -41,6 +41,12 @@ function verify(runtime, dom, browser, ci) {
   ]) {
     assert.ok(start.includes(anchor), 'viewer watchdog: ' + name);
   }
+  const timerBegin = start.indexOf('const loadTimeoutId = window.setTimeout(() => {');
+  const timerEnd = start.indexOf('state.viewerLoadTimeout = loadTimeoutId;', timerBegin);
+  assert.ok(timerBegin >= 0 && timerEnd > timerBegin,
+    'watchdog must retain a distinct bounded timeout ID');
+  assert.match(start.slice(timerBegin, timerEnd), /\}, 30000\);\s*$/,
+    'the viewer watchdog itself must remain 30s (not the heartbeat interval)');
   assert.ok(start.indexOf('frame.addEventListener("load"') <
     start.indexOf('frame.src = session.viewerUrl;'),
     'load handler must be registered BEFORE iframe navigation');
