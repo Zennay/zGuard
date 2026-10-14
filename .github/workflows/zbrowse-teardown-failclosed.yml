@@ -52,8 +52,10 @@ jobs:
           node tests/zbrowse.teardown-failclosed.test.mjs
           node tests/zbrowse.teardown-admission-real-http.test.mjs
           node tests/zbrowse.shutdown-failed-cleanup.test.mjs
+          node tests/zbrowse.shutdown-admission-race-real-http.test.mjs
           if [ "$REQUIRE_FAIL_CLOSED" = "true" ]; then
             node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
             node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
             node tests/zbrowse.shutdown-failed-cleanup.test.mjs --require-shutdown-fail-closed
+            node tests/zbrowse.shutdown-admission-race-real-http.test.mjs --require-shutdown-drain
           fi
