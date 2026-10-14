@@ -189,6 +189,9 @@ const server = http.createServer(async (req, res) => {
         if (mode === 'html-404') {
           res.writeHead(404, { 'content-type': 'text/html' })
             .end('<!doctype html><title>Proxy route missing</title>');
+        } else if (mode === 'json-body-html-404') {
+          res.writeHead(404, { 'content-type': 'text/html' })
+            .end(JSON.stringify({ error: 'Session not found.' }));
         } else if (mode === 'json-410') {
           sendJson(res, 410, { error: 'Reverse proxy route gone' });
         } else {
@@ -1022,7 +1025,7 @@ try {
   // a gateway browser is still alive. Exercise actual Chromium fetch + HTTP
   // on loopback, not a mocked Promise. Only a later gateway-confirmed DELETE
   // can restore Open after these untrusted statuses.
-  for (const mode of ['html-404', 'json-410']) {
+  for (const mode of ['html-404', 'json-body-html-404', 'json-410']) {
     const startBefore = starts;
     const deleteBefore = deletions;
     await evaluate('document.getElementById("browserForm").requestSubmit(); true');
