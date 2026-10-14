@@ -549,8 +549,8 @@ function reviewedSiteCatalogue(data) {
     if (!site || typeof site.name !== "string" || !site.name.trim() ||
         site.name.length > 96 ||
         // Include C1 controls, Arabic Letter Mark, LRM/RLM and Unicode
-        // paragraph separators as well as directional embedding/isolation.
-        /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/.test(site.name) ||
+        // paragraph separators, zero-width format controls and byte-order marks.
+        /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/.test(site.name) ||
         typeof site.url !== "string" || site.url.length > 2048) return false;
     try {
       const url = new URL(site.url);
