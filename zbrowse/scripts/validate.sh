@@ -21,6 +21,11 @@ node ../tests/zbrowse.install-preflight.test.mjs
 node ../tests/zbrowse.install-validation-order.test.mjs
 node ../tests/zbrowse.portal-accessibility.test.mjs
 node ../tests/zbrowse.repository-hygiene.test.js
+# Release-safety checks run with offline fixtures only. A local validation
+# must never contact the public TV origin or allocate browser sessions.
+node ../tests/zbrowse.iframe-capability-boundary.test.mjs
+node ../tests/zbrowse.public-origin-readiness.test.mjs --self-test
+node ../tests/zbrowse.public-tv-static-release.test.mjs --self-test
 node ../tests/zbrowse.validation-entrypoint.test.mjs
 bash -n scripts/install.sh
 bash -n browser/root/usr/local/bin/start-zbrowse

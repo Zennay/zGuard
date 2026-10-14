@@ -15,6 +15,7 @@ const requiredPortableChecks = [
   'zbrowse.session-admission.test.mjs',
   'zbrowse.session-lifetime.test.mjs',
   'zbrowse.frontend-session.test.js',
+  'zbrowse.iframe-capability-boundary.test.mjs',
   'zbrowse.gateway-containment.test.mjs',
   'zbrowse.gateway-dependency-audit.test.mjs',
   'zbrowse.install-preflight.test.mjs',
@@ -26,6 +27,36 @@ for (const test of requiredPortableChecks) {
   const command = `node ../tests/${test}`;
   const matches = validate.split(command).length - 1;
   assert.equal(matches, 1, `validate.sh must execute ${test} exactly once`);
+}
+
+// Offline release probes are valuable during local validation, but a
+// production --live invocation must never be smuggled into validate.sh.
+// Verify the entire shell command, rather than matching only the script name.
+const offlineReleaseProbes = [
+  'zbrowse.public-origin-readiness.test.mjs',
+  'zbrowse.public-tv-static-release.test.mjs'
+];
+function assertOfflineProbeModes(script) {
+  const lines = script.split(/\r?\n/);
+  for (const probe of offlineReleaseProbes) {
+    const command = `node ../tests/${probe} --self-test`;
+    const invocations = lines.map(line => line.trim()).filter(line =>
+      line.startsWith(`node ../tests/${probe}`));
+    assert.deepEqual(invocations, [command],
+      `${probe}: run exactly once and only in --self-test mode`);
+  }
+}
+assertOfflineProbeModes(validate);
+for (const probe of offlineReleaseProbes) {
+  const safe = `node ../tests/${probe} --self-test`;
+  assert.throws(() => assertOfflineProbeModes(validate.replace(safe,
+    `node ../tests/${probe} --live`)),
+  /only in --self-test mode/, `${probe}: live traffic mutation must fail`);
+  assert.throws(() => assertOfflineProbeModes(validate.replace(safe, '')),
+    /only in --self-test mode/, `${probe}: missing gate mutation must fail`);
+  assert.throws(() => assertOfflineProbeModes(validate.replace(safe,
+    safe + '\n' + safe)),
+  /only in --self-test mode/, `${probe}: duplicate gate mutation must fail`);
 }
 
 assert.match(
