@@ -1,0 +1,56 @@
+name: zBrowse disconnected browser start reconciliation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_disconnect_reconciliation:
+        description: "Fail if an abandoned session POST leaves an unowned browser allocation"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-disconnected-start-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disconnected-start:
+    name: Gateway real HTTP disconnected-start reconciliation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_DISCONNECT_RECONCILIATION: ${{ inputs.require_disconnect_reconciliation || 'false' }}
+    steps:
+      - name: Checkout exact proposed source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without lifecycle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+      - name: Exercise actual gateway POST after client disconnect
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tests/zbrowse.disconnected-session-start-real-http.test.mjs
+          node tests/zbrowse.disconnected-session-start-real-http.test.mjs
+          if [ "$REQUIRE_DISCONNECT_RECONCILIATION" = "true" ]; then
+            node tests/zbrowse.disconnected-session-start-real-http.test.mjs --require-disconnect-reconciliation
+          fi
+          test -z "$(git status --porcelain)"
