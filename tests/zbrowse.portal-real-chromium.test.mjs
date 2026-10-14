@@ -120,7 +120,7 @@ const server = http.createServer(async (req, res) => {
         ], maxSessionMinutes: 15 });
       } else if (sitesMode === 'bidi-name') {
         sendJson(res, 200, { sites: [
-          { name: 'Video\\u202Efake.invalid', url: sites[0].url }
+          { name: 'Video\u202Efake.invalid', url: sites[0].url }
         ], maxSessionMinutes: 15 });
       } else {
         sendJson(res, 200, { sites, maxSessionMinutes: 15 });
