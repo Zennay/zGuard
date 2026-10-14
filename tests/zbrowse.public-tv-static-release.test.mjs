@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import http from 'node:http';
 
 const PUBLIC_ORIGIN = 'https://zbrowse-tv.lizellay.chatgpt.site/';
 const reviewedAssets = [
@@ -128,6 +129,131 @@ function readOnlyMode(args) {
     throw new Error('Exactly one static release mode required: --self-test or --live');
   }
   return args[0];
+}
+
+// True HTTP/1.1 loopback proof: an invalid production asset must close its
+// network transfer. No public endpoints, tokens, sessions or remote browsers.
+async function realTcpStaticReleaseAcceptance() {
+  let scenario = null;
+  const seen = [];
+  let unexpectedRedirects = 0;
+  const server = http.createServer((req, res) => {
+    seen.push({ method: req.method, route: req.url });
+    const asset = reviewed.get(req.url);
+    if (req.method !== 'GET' || !asset) {
+      unexpectedRedirects++;
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    if (scenario && scenario.route === req.url) {
+      const active = scenario;
+      if (active.mode === 'silent') {
+        req.socket.once('close', () => { active.closed = true; });
+        return; // Accept TCP and GET, but never send even the HTTP headers.
+      }
+      if (active.mode === 'redirect') {
+        res.writeHead(302, { location: '/unexpected-redirect-target' });
+        res.end();
+        return;
+      }
+      res.once('close', () => { active.closed = true; });
+      res.writeHead(active.status, {
+        'content-type': active.contentType,
+        ...active.headers
+      });
+      res.write(active.bytes);
+      return; // Deliberately keep error/oversize/stalled bodies open.
+    }
+    res.writeHead(200, { 'content-type': asset.mediaTypes[0],
+      'cache-control': 'no-store' });
+    res.end(asset.bytes);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const local = 'http://127.0.0.1:' + server.address().port;
+  const localFetch = (raw, options) => {
+    const url = new URL(raw);
+    assert.equal(url.origin, new URL(PUBLIC_ORIGIN).origin,
+      'only reviewed public identity URLs may be mapped to loopback');
+    assert.ok(reviewed.has(url.pathname),
+      'only reviewed static routes may be mapped to loopback');
+    assert.equal(options.method, 'GET', 'static HTTP proof must be GET-only');
+    assert.equal(options.credentials, 'omit', 'static HTTP proof cannot send credentials');
+    assert.equal(options.redirect, 'error', 'redirects must fail closed');
+    return fetch(local + url.pathname, options);
+  };
+  try {
+    for (const [route, status, contentType, headers, bytes, message] of [
+      ['/', 503, 'text/html', {}, '<html>bad gateway</html>', /exactly HTTP 200/],
+      ['/app.js', 200, 'text/html', {}, '<html>fallback</html>', /wrong content type/],
+      ['/styles.css', 200, 'text/css', { 'content-length': '999999' },
+        'x', /advertised body exceeds audited release asset/],
+      ['/app.js', 200, 'application/javascript', {},
+        Buffer.alloc(reviewed.get('/app.js').bytes.length + 1, 32),
+        /streamed asset exceeds audited release size/]
+    ]) {
+      scenario = { route, status, contentType, headers, bytes, closed: false };
+      const active = scenario;
+      await assert.rejects(verifyPublicStaticRelease(localFetch), message,
+        route + ': rejected asset must fail the release gate');
+      for (let i = 0; i < 60 && !active.closed; i++)
+        await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(active.closed, true,
+        route + ': server must observe actual connection teardown within 3 seconds');
+    }
+    // A gateway that never finishes a correct-looking JS stream and another
+    // that never sends CSS headers must both expire through the 7s app signal.
+    for (const [route, mode, bytes] of [
+      ['/app.js', 'body', ' '],
+      ['/styles.css', 'silent', '']
+    ]) {
+      scenario = {
+        route, mode, bytes, status: 200,
+        contentType: reviewed.get(route).mediaTypes[0],
+        headers: {}, closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const started = Date.now();
+      try {
+        await assert.rejects(Promise.race([
+          verifyPublicStaticRelease(localFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without client timeout')), 11000);
+          })
+        ]), /aborted|time(?:d)? ?out/i,
+        route + ': real stalled response must expire from client deadline');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      assert.ok(Date.now() - started >= 5500 && Date.now() - started < 10500,
+        route + ': stalled response must time out near the 7s deadline');
+      for (let i = 0; i < 60 && !active.closed; i++)
+        await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(active.closed, true,
+        route + ': timed-out HTTP response must close the real connection');
+    }
+    scenario = { route: '/', mode: 'redirect', closed: false };
+    await assert.rejects(verifyPublicStaticRelease(localFetch),
+      /fetch failed|redirect/i, 'HTTP redirect must never certify the wrong public static identity');
+    assert.equal(unexpectedRedirects, 0,
+      'redirect refusal must happen before contacting a second path');
+    scenario = null;
+    const recovered = await verifyPublicStaticRelease(localFetch);
+    assert.deepEqual(recovered.map(item => item.route), ['/', '/app.js', '/styles.css'],
+      'unchanged audited assets must recover after bad live transport cases');
+    assert.ok(seen.length >= 10, 'real HTTP requests must reach loopback server');
+    assert.ok(seen.every(({ method, route }) =>
+      method === 'GET' && reviewed.has(route)),
+    'no unexpected methods, session routes or redirected requests are allowed');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 }
 
 async function selfTest() {
@@ -280,6 +406,7 @@ async function selfTest() {
     assert.match(child.stderr, /Exactly one static release mode/);
     assert.doesNotMatch(child.stdout, /static release identity verified/);
   }
+  await realTcpStaticReleaseAcceptance();
   console.log('zBrowse public TV static release identity self-test passed (GET-only)');
 }
 
