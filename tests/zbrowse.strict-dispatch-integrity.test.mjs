@@ -171,9 +171,9 @@ function testWorkflow(name, gates, yaml) {
   // skipped or reported green by Actions if someone adds a job/step if:false
   // or turns failures into tolerated outcomes. These gates are release
   // evidence; a skipped or non-blocking job is not valid acceptance.
-  assert.doesNotMatch(yaml, /^\\s*continue-on-error:\\s*(?:true|\\$\\{\\{)/mi,
+  assert.doesNotMatch(yaml, /^\s*continue-on-error:\s*(?:true|\$\{\{)/mi,
     name + ': strict evidence cannot ignore job or step failures');
-  assert.doesNotMatch(yaml, /^\\s*if:\\s*(?:false|\\$\\{\\{\\s*false\\s*\\}\\})\\s*$/mi,
+  assert.doesNotMatch(yaml, /^\s*if:\s*(?:false|\$\{\{\s*false\s*\}\})\s*$/mi,
     name + ': strict evidence cannot be a disabled job or step');
   assert.ok(yaml.includes('persist-credentials: false'),
     name + ': checkout must not persist token');
@@ -297,7 +297,7 @@ for (const [label, injected] of [
   ['expression cannot disable gate', '    if: ${{ false }}']
 ]) {
   const changed = fixture.replace('    runs-on: ubuntu-latest',
-    '    runs-on: ubuntu-latest\\n' + injected);
+    '    runs-on: ubuntu-latest\n' + injected);
   assert.notEqual(changed, fixture, label + ': test mutation must change workflow');
   assert.throws(() => testWorkflow(sample, sampleGates, changed),
     undefined, label + ': strict CI cannot report false-green skipped work');
