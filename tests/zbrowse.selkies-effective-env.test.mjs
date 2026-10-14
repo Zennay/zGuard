@@ -10,6 +10,9 @@ const secret = 'synthetic-password-NEVER-PRINT-9x7';
 const bearer = 'synthetic-bearer-NEVER-PRINT-4y2';
 function fixture(overrides = {}) {
   return [{
+    Id: 'a'.repeat(64),
+    Name: '/zbrowse-abc123def456',
+    State: { Running: true, Status: 'running' },
     Config: {
       Labels: { 'zbrowse.managed': 'true' },
       Env: [
@@ -69,6 +72,10 @@ assert.equal(obsolete.status, 1);
 privateOutput(obsolete);
 
 const invalidInputs = [
+  ['stopped browser', [{ ...good[0], State: { Running: false, Status: 'exited' } }]],
+  ['missing container identity', [{ ...good[0], Id: '' }]],
+  ['foreign container name', [{ ...good[0], Name: '/untrusted-app' }]],
+  ['name without managed prefix', [{ ...good[0], Name: '/zbrowse-abc' }]],
   ['unmanaged browser', [{ Config: {
     Labels: { 'zbrowse.managed': 'false' }, Env: good[0].Config.Env
   } }]],
