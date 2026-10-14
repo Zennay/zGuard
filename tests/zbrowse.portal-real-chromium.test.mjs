@@ -537,6 +537,11 @@ try {
       if (delay === 30000) window.__qaHeartbeat = callback;
       return originalSetInterval(callback, delay, ...args);
     };
+    const originalSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => {
+      if (delay === 30000) window.__qaViewerWatchdog = callback;
+      return originalSetTimeout(callback, delay, ...args);
+    };
   })(); true`);
 
   // End-to-end browser fetch over real chunked HTTP: a proxy can return
@@ -845,6 +850,21 @@ try {
   await until(async () => await evaluate(
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
+  // A queued timeout callback can still fire after clearTimeout(), e.g.
+  // near the precise instant a real viewer load event is dispatched.
+  // Exercise the captured *shipped* callback inside real Chrome, not a
+  // duplicate handler, and prove it cannot DELETE an already loaded viewer.
+  assert.equal(await evaluate('typeof window.__qaViewerWatchdog'), 'function',
+    'real viewer must have installed a 30-second loading watchdog');
+  assert.equal(await evaluate('state.viewerLoadTimeout'), null,
+    'real iframe load must disarm the watchdog');
+  const beforeStaleWatchdogDeletes = deletions;
+  await evaluate('window.__qaViewerWatchdog(); true');
+  await sleep(50);
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), false,
+    'stale real-Chromium watchdog callback must not close loaded viewer');
+  assert.equal(deletions, beforeStaleWatchdogDeletes,
+    'loaded viewer must never be DELETEd by a stale callback');
 
   // Test the actual TV viewer toolbar at narrow remote-control viewports.
   // A fullscreen control outside the viewport can still pass DOM presence
