@@ -51,7 +51,9 @@ function accept(label) {
   assert.match(child.stdout, /repository secret hygiene contract passed/,
     label + ': must actually execute the shipped scanner');
 }
-function reject(label, signature, bytes) {
+function reject(label, signature, bytes, confidentialValue) {
+  assert.ok(typeof confidentialValue === 'string' && confidentialValue.length > 0,
+    label + ': the regression fixture must identify the value to protect');
   writeAndTrack(bytes);
   const child = runScanner();
   assert.equal(child.status, 1,
@@ -61,6 +63,11 @@ function reject(label, signature, bytes) {
   assert.ok(child.stderr.includes('fixtures/blob.bin') &&
     child.stderr.includes(signature),
     label + ': failure must identify affected Git path and detected signature');
+  // Diagnoses may name the tracked path and matching *signature*, but never
+  // include the matched secret or private-key header in hosted Action logs.
+  // Assert this on the real scanner's stdout and stderr, including failures.
+  assert.ok(!(child.stdout + child.stderr).includes(confidentialValue),
+    label + ': scanner diagnostics must not reveal matched secret values');
 }
 
 try {
@@ -77,23 +84,23 @@ try {
   const first = 'sk' + '-' + 'A'.repeat(32);
   reject('NUL-padded API secret', 'OpenAI-style secret',
     Buffer.concat([Buffer.from([0, 255, 128]),
-      Buffer.from(first, 'ascii'), Buffer.from([0, 10])]));
+      Buffer.from(first, 'ascii'), Buffer.from([0, 10])]), first);
 
   const second = 'github' + '_pat_' + 'B'.repeat(36);
   reject('invalid-UTF8-padded Git token', 'GitHub fine-grained token',
     Buffer.concat([Buffer.from([255, 254, 0]),
-      Buffer.from('[' + second + ']', 'ascii'), Buffer.from([0, 128])]));
+      Buffer.from('[' + second + ']', 'ascii'), Buffer.from([0, 128])]), second);
 
   // A Windows/PowerShell-style encoded secret has a NUL between each
   // ASCII character. Exercise both endiannesses against the *real* scanner
   // in a temporary tracked Git repository, not a replicated regex.
   reject('misaligned UTF-16LE API secret', 'OpenAI-style secret',
     Buffer.concat([Buffer.from([255]), Buffer.from(first, 'utf16le'),
-      Buffer.from([0])]));
+      Buffer.from([0])]), first);
   reject('BOM-prefixed UTF-16BE Git token', 'GitHub fine-grained token',
     Buffer.concat([Buffer.from([0xfe, 0xff]),
       Buffer.from(Buffer.from(second, 'utf16le')).swap16(),
-      Buffer.from([0])]));
+      Buffer.from([0])]), second);
 
   // The real tracked-file scan must also reject private-key header forms
   // frequently produced by encrypted PKCS#8, legacy DSA and OpenPGP tools.
@@ -105,10 +112,10 @@ try {
   ]) {
     const header = '-----BEGIN ' + marker + '-----';
     reject(description + ' raw tracked key header', 'PEM private key',
-      Buffer.concat([Buffer.from([0, 255]), Buffer.from(header, 'ascii')]));
+      Buffer.concat([Buffer.from([0, 255]), Buffer.from(header, 'ascii')]), header);
     reject(description + ' tracked UTF-16BE key header', 'PEM private key',
       Buffer.concat([Buffer.from([0x80, 0xfe, 0xff]),
-        Buffer.from(Buffer.from(header, 'utf16le')).swap16()]));
+        Buffer.from(Buffer.from(header, 'utf16le')).swap16()]), header);
   }
 
   // The policy must not mistake public keys or ordinary certificates for
