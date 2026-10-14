@@ -39,7 +39,11 @@ const errors = [
     '?viewerToken=' + token + ' password=' + password),
   // A proxy exception can also carry arbitrary line breaks; a diagnostic
   // must never let untrusted text forge additional log records.
-  new Error('synthetic proxy failure\n[INFO] fake-success /s/' + token)
+  new Error('synthetic proxy failure\n[INFO] fake-success /s/' + token),
+  // Terminal control sequences and Unicode line separators can falsify
+  // viewer diagnostics even without literal CR or LF in the error message.
+  new Error('synthetic proxy failure\u001b[2J\u001b[H[OK] forged healthy session\u2028' +
+    'PASSWORD=' + password)
 ];
 let forwards = 0;
 const sandbox = {
@@ -88,32 +92,34 @@ try {
   const first = await get(viewer);
   const second = await get(viewer);
   const third = await get(viewer);
-  for (const response of [first, second, third]) {
+  const fourth = await get(viewer);
+  for (const response of [first, second, third, fourth]) {
     assert.equal(response.status, 502,
       'real gateway must report synthetic upstream connection failure');
     assert.equal(response.body, 'Browser connection interrupted.',
       'the public 502 error must remain generic and credential-free');
   }
-  assert.equal(captured.length, 3, 'every upstream failure should record a diagnostic');
+  assert.equal(captured.length, 4, 'every upstream failure should record a diagnostic');
   assert.ok(captured.every(line => line.includes('Browser proxy error')),
     'logging must keep a generic upstream failure signal');
 
   const denied = await get('/s/' + 'U'.repeat(32) + '/assets/player.js');
   assert.equal(denied.status, 403,
     'invalid token must be blocked before any upstream error path');
-  assert.equal(forwards, 3, 'denied tokens must never be forwarded upstream');
+  assert.equal(forwards, 4, 'denied tokens must never be forwarded upstream');
 
   const restored = await get(viewer);
   assert.deepEqual(restored, { status: 200, body: 'recovered' },
     'a connection failure must not disable later authorized browser use');
-  assert.equal(forwards, 4);
+  assert.equal(forwards, 5);
 
   // Deliberately inspect only in memory. Do not include any synthetic bearer
   // or credential text in CI diagnostics; the pass/fail count is sufficient.
   const sensitiveCanaries = [token, password, basicAuth,
     'sample-user', 'sample-pass', 'viewerToken='];
   const leaking = captured.filter(line =>
-    sensitiveCanaries.some(needle => line.includes(needle)) || /[\r\n]/.test(line));
+    sensitiveCanaries.some(needle => line.includes(needle)) ||
+    /[\r\n\x1b\u2028\u2029]/.test(line));
   if (strict) {
     assert.equal(leaking.length, 0,
       'viewer proxy diagnostics must redact bearer paths, credentials and injected log lines');
