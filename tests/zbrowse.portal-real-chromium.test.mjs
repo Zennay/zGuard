@@ -52,6 +52,7 @@ let starts = 0;
 let viewerResponseMode = 'valid';
 let nextStartFailure = null;
 let nextStartMediaType = null;
+let nextStartStatus = null;
 let deletions = 0;
 let failNextDelete = false;
 let droppedDeleteAttemptsRemaining = 0;
@@ -165,15 +166,17 @@ const server = http.createServer(async (req, res) => {
         maxMinutes: 15, expiresAt: viewerResponseMode === 'expired' ?
           Date.now() - 1000 : Date.now() + 900_000
       };
+      const successStatus = nextStartStatus ?? 201;
+      nextStartStatus = null;
       if (nextStartMediaType !== null) {
         const mediaType = nextStartMediaType;
         nextStartMediaType = null;
-        res.writeHead(201, {
+        res.writeHead(successStatus, {
           ...(mediaType === 'missing' ? {} : { 'content-type': mediaType }),
           'cache-control': 'no-store'
         }).end(JSON.stringify(payload));
       } else {
-        sendJson(res, 201, payload);
+        sendJson(res, successStatus, payload);
       }
       return;
     }
@@ -1701,6 +1704,58 @@ try {
       '!document.getElementById("startButton").disabled'
     ), mediaType + ': confirmed cleanup permits retry');
   }
+
+  // Actual Chromium / localhost acceptance for unexpected successful
+  // POST statuses, distinct from malformed Content-Type. These responses
+  // deliberately contain fully valid bearer JSON to show why accepting
+  // arbitrary 2xx would mount an unconfirmed viewer. The same-owner 200
+  // reuse status remains supported; new sessions use 201 by default.
+  for (const status of [202, 203, 206]) {
+    const priorStarts = starts;
+    const priorDeletions = deletions;
+    const priorViewers = viewerRequests;
+    nextStartStatus = status;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === priorStarts + 1,
+      status + ': unexpected status fixture must receive real browser POST');
+    assert.ok(releaseStart, status + ': fixture must control the 2xx response');
+    releaseStart();
+    releaseStart = null;
+    await until(() => deletions === priorDeletions + 1,
+      status + ': rejected but minted bearer must be DELETEd');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === "Invalid browser session response."'
+    ), status + ': user sees reviewed error for unexpected status');
+    assert.equal(viewerRequests, priorViewers,
+      status + ': unreviewed 2xx must not fetch authenticated iframe URL');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      status + ': unreviewed 2xx must leave viewer hidden');
+    assert.equal(starts, priorStarts + 1,
+      status + ': invalid response must never start a replacement implicitly');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), status + ': confirmed DELETE must restore deliberate retry');
+  }
+
+  // Explicitly accept the gateway's 200 OK same-owner reuse contract.
+  const beforeReuseStart = starts;
+  const beforeReuseDelete = deletions;
+  nextStartStatus = 200;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === beforeReuseStart + 1,
+    'real 200 reuse must reach local browser fixture');
+  assert.ok(releaseStart, 'real reuse fixture must hold start');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'HTTP 200 reuse with valid body must mount viewer');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === beforeReuseDelete + 1,
+    'reused viewer must still send idempotent cleanup');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'reused viewer must return to ready home after successful DELETE');
 
   // Real Chromium must never render raw error JSON from a failed browser
   // POST. A reverse proxy might echo a bearer route or credentials into its
