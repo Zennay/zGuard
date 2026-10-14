@@ -103,6 +103,8 @@ const containmentCases = [
   ['added sysadmin', { CapAdd: ['SYS_ADMIN'] }, 'DOCKER_CAPABILITIES'],
   ['host PID namespace', { PidMode: 'host' }, 'DOCKER_CAPABILITIES'],
   ['host user namespace', { UsernsMode: 'host' }, 'DOCKER_CAPABILITIES'],
+  ['host cgroup namespace', { CgroupnsMode: 'host' }, 'DOCKER_CGROUP_NAMESPACE'],
+  ['OOM killer disabled', { OomKillDisable: true }, 'DOCKER_OOM_KILLER'],
   ['docker socket bind', { Binds: ['/var/run/docker.sock:/var/run/docker.sock'] },
     'DOCKER_HOST_MOUNTS'],
   ['host home mount', { Mounts: [{ Type: 'bind', Source: '/home', Target: '/home' }] },
