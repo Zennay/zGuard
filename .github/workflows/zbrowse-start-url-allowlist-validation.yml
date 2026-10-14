@@ -57,6 +57,9 @@ jobs:
           node tests/zbrowse.start-url-real-http.test.mjs
           node tests/zbrowse.session-json-body-real-http.test.mjs
           node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs
+          # Credential-bearing URLs must always be refused before reuse/start.
+          node tests/zbrowse.start-url-allowlist.test.mjs --require-credential-free
+          node tests/zbrowse.start-url-real-http.test.mjs --require-credential-free
           if [ "$REQUIRE_JSON_ONLY" = "true" ]; then
             node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only
           fi
