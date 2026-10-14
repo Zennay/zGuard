@@ -92,6 +92,11 @@ async function refreshHealth(retryPendingRelease = true) {
     }
     gatewayCanStart = true;
     syncStartButton();
+    if (pendingReleaseToken) {
+      status.className = "status";
+      $("capacityText").textContent = "Finishing previous browser session";
+      return;
+    }
     const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
