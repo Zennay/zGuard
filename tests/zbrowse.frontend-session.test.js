@@ -287,6 +287,45 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     'page exit must not extend the abandoned session lease'
   );
 
+  // Abandon while the gateway is *still* creating a browser. No token
+  // exists at pagehide time, but if its response resolves later the original
+  // script must release that issued token without ever mounting the viewer.
+  const pendingAbandon = deferred();
+  const abandoned = await bootPortal({
+    sessionRequest: () => pendingAbandon.promise
+  });
+  abandoned.element('browserView').hidden = true;
+  abandoned.submit();
+  abandoned.pagehide();
+  assert.equal(
+    abandoned.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    0, 'pagehide cannot delete a token that the gateway has not issued yet'
+  );
+  pendingAbandon.resolve(response(validSession));
+  await settle();
+  assert.equal(abandoned.element('browserFrame').srcHistory.includes(validViewer), false,
+    'late session completion must never navigate a viewer on an abandoned page');
+  assert.equal(abandoned.element('browserView').hidden, true,
+    'late session must not render a browser after pagehide');
+  assert.deepEqual(
+    [...abandoned.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'abandoned creation must not start heartbeat/countdown timers'
+  );
+  const lateRelease = abandoned.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE');
+  assert.equal(lateRelease.length, 1,
+    'late created session must be released exactly once');
+  assert.equal(lateRelease[0].options.keepalive, true,
+    'late release must be eligible for dispatch during document teardown');
+  abandoned.pagehide();
+  await settle();
+  assert.equal(
+    abandoned.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'repeated pagehide must not duplicate already-released late sessions'
+  );
+
   // The explicit End control must free the viewer immediately, keep the
   // ordinary capacity poller alive, and never double-release on unload.
   const manual = await bootPortal({ sessionRequest: async () => response(validSession) });
