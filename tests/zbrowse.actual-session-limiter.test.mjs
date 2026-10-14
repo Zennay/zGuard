@@ -154,7 +154,17 @@ const portEnforced = portTagged.at(-1).status === 429;
 const ipv6PortMatched = bracketedIPv6[0].identity.limiterIdentity ===
   bracketedIPv6[0].identity.sessionIdentity;
 const ipv6PortEnforced = bracketedIPv6.at(-1).status === 429;
-const additional = { emptyCandidate, quotedCandidate, ipv6ZoneCandidate };
+// TRUST_PROXY=2 is meaningful only if the *trusted hop* on the right
+// actually has an IP address. A valid-looking left client must not gain a
+// fresh limiter/session identity by appending a malformed trusted proxy hop.
+const invalidTrustedHop = await scenario(i =>
+  '198.51.100.' + (20 + i) + ', invalid-trusted-proxy');
+const portTaggedTrustedHop = await scenario(i =>
+  '198.51.100.' + (20 + i) + ', 10.0.0.2:' + (4400 + i));
+const additional = {
+  emptyCandidate, quotedCandidate, ipv6ZoneCandidate,
+  invalidTrustedHop, portTaggedTrustedHop
+};
 const additionalParity = Object.fromEntries(Object.entries(additional).map(
   ([name, responses]) => [name, responses[0].identity.limiterIdentity ===
     responses[0].identity.sessionIdentity && responses.at(-1).status === 429]
@@ -167,9 +177,14 @@ if (strict) {
     'source-tethered gateway limiter and session ownership must share a fail-closed key for incomplete or invalid XFF (issue #21)');
   assert.equal(zoneFallsBack, true,
     'scoped IPv6 zone IDs must not become distinct forwarded session owners');
+  assert.equal(invalidTrustedHop[0].identity.sessionIdentity, '127.0.0.1',
+    'invalid trusted proxy hop must not authorize an arbitrary forwarded client');
+  assert.equal(portTaggedTrustedHop[0].identity.sessionIdentity, '127.0.0.1',
+    'source-port-tagged trusted hop must fail closed to TCP peer');
   assert.deepEqual(additionalParity, {
-    emptyCandidate: true, quotedCandidate: true, ipv6ZoneCandidate: true
-  }, 'malformed quoted, empty and IPv6-zone XFF chains must share quota with session owner');
+    emptyCandidate: true, quotedCandidate: true, ipv6ZoneCandidate: true,
+    invalidTrustedHop: true, portTaggedTrustedHop: true
+  }, 'malformed candidate and trusted-proxy XFF chains must share quota with session owner');
   console.log('Source-tethered production session limiter identity parity PASS');
 } else {
   console.log('Source-tethered gateway session limiter validated for complete chains: ' +
@@ -184,6 +199,7 @@ if (strict) {
     ', IPv6-port quotaEnforced=' + ipv6PortEnforced +
     ', IPv6-zone peer fallback=' + zoneFallsBack +
     ', malformed-extra identity/limit parity=' +
-    Object.values(additionalParity).filter(Boolean).length + '/3' +
+    Object.values(additionalParity).filter(Boolean).length + '/' +
+    Object.keys(additionalParity).length +
     '; require --require-source-parity for the unresolved issue #21');
 }
