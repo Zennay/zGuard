@@ -248,6 +248,44 @@ async function verifyBrowser(relativePath) {
     }
   }
 
+  // A non-reserved named target can open a separate tab/window when no
+  // matching browsing context exists. A hostile site must not escape the
+  // guard merely by replacing _blank with a name; keep the browser's
+  // same-context special keywords and harmless destinations available.
+  for (const target of ['adPopupWindow', 'reportPanel']) {
+    for (const options of [{ target }, { target, elementTag: 'area' },
+      { target, shadow: true }]) {
+      assert.deepEqual(balanced.click('https://ads.al5sm.com/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': named window must not bypass hostile-host protection');
+      assert.deepEqual(strict.click('https://example.org/video', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': strict mode must guard named cross-origin contexts');
+      assert.deepEqual(strict.click('/same-origin', options), [],
+        relativePath + ': named same-origin browsing is not blocked');
+      assert.deepEqual(balanced.click('https://example.org/video', options), [],
+        relativePath + ': harmless named browsing is preserved in balanced mode');
+    }
+    assert.deepEqual(balanced.submit('https://ads.al5sm.com/popup', { target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': named hostile form targets must be intercepted');
+    assert.deepEqual(strict.submit('https://example.org/video', { target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': strict named form submission must not create an external window');
+    assert.deepEqual(strict.submit('/same-origin', { target }), [],
+      relativePath + ': named same-origin form remains available');
+    assert.deepEqual(strict.submit('/same-origin', { target: '_self',
+      submitterAction: 'https://example.org/video', submitterTarget: target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': named formtarget override must not bypass strict mode');
+  }
+  for (const target of ['', '_self', '_PARENT', '_TOP', '_unfencedTop']) {
+    assert.deepEqual(balanced.click('https://ads.al5sm.com/popup', { target }), [],
+      relativePath + ': same-context special target must not become a popup');
+    assert.deepEqual(strict.submit('https://example.org/video', { target }), [],
+      relativePath + ': same-context form target must remain navigable');
+  }
+
   // Strict mode isolates origins rather than visual URL prefixes.
   for (const local of [
     '/next',
