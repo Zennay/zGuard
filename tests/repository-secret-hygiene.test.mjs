@@ -11,8 +11,8 @@ const signatures = [
     name: "PEM private key",
     pattern: new RegExp("-----BEGIN " + "(?:(?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
   },
-  { name: "GitHub classic token", pattern: new RegExp("(?<![A-Za-z0-9])gh" + "[opusr]_[A-Za-z0-9]{20,}") },
-  { name: "GitHub fine-grained token", pattern: new RegExp("(?<![A-Za-z0-9])github" + "_pat_[A-Za-z0-9_]{20,}") },
+  { name: "GitHub classic token", pattern: new RegExp("(?<![A-Za-z0-9_])gh" + "[opusr]_[A-Za-z0-9]{20,}") },
+  { name: "GitHub fine-grained token", pattern: new RegExp("(?<![A-Za-z0-9_])github" + "_pat_[A-Za-z0-9_]{20,}") },
   { name: "OpenAI-style secret", pattern: new RegExp("(?<![A-Za-z0-9])sk" + "-[A-Za-z0-9_-]{20,}") },
   { name: "AWS access key id", pattern: new RegExp("AK" + "IA[0-9A-Z]{16}") },
   { name: "Slack bot token", pattern: new RegExp("xox" + "b-[0-9A-Za-z-]{20,}") }
