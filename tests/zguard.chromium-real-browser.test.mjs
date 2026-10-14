@@ -721,13 +721,14 @@ async function runBrowser(extensionPath, profilePath, url) {
             form.append(button);
             document.body.append(form);
             const state = {
-              focused: false, enterTrusted: false, submitReached: false,
-              submitTrusted: false, seenOnDocument: false,
+              focused: false, enterTrusted: false, spaceTrusted: false,
+              submitReached: false, submitTrusted: false, seenOnDocument: false,
               cancelledByFixture: false
             };
             window.__zguardKeyboardFormState = state;
             function keydown(event) {
               if (event.key === 'Enter') state.enterTrusted = event.isTrusted;
+              if (event.key === ' ') state.spaceTrusted = event.isTrusted;
             }
             function safety(event) {
               if (event.target !== form) return;
@@ -767,6 +768,24 @@ async function runBrowser(extensionPath, profilePath, url) {
           });
         }
         await sleep(80);
+        // On some Chrome builds Enter on a just-focused submit button can
+        // deliver trusted keydown without dispatching the form event. Exercise
+        // native Space as a second genuine keyboard activation in that case;
+        // neither attempt may escape the hostile capture guard.
+        const entered = await cdp('Runtime.evaluate', {
+          expression: 'window.__zguardKeyboardFormState.submitReached',
+          returnByValue: true
+        });
+        const usedSpace = entered.result?.value !== true;
+        if (usedSpace) {
+          for (const type of ['keyDown', 'keyUp']) {
+            await cdp('Input.dispatchKeyEvent', {
+              type, key: ' ', code: 'Space',
+              windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
+            });
+          }
+          await sleep(80);
+        }
         const result = await cdp('Runtime.evaluate', {
           expression: '(() => { const state = window.__zguardKeyboardFormState; ' +
             'window.__zguardKeyboardFormCleanup(); return state; })()',
@@ -774,6 +793,8 @@ async function runBrowser(extensionPath, profilePath, url) {
         });
         assert.equal(result.exceptionDetails, undefined,
           'Native keyboard form probe must finish safely');
+        if (usedSpace) assert.equal(result.result?.value?.spaceTrusted, true,
+          'fallback native Space must be delivered as a trusted browser key');
         return result.result?.value;
       }
       observed.formKeyboard = {
