@@ -14,7 +14,10 @@ const requiredChecks = JSON.parse(
 // six repository-admin required check contexts. Bind their results to the
 // proposed commit rather than GitHub's synthetic PR merge revision.
 const additionalSourceBoundWorkflows = [
-  '.github/workflows/manifest-integrity-validation.yml'
+  '.github/workflows/manifest-integrity-validation.yml',
+  '.github/workflows/popup-accessibility-validation.yml',
+  '.github/workflows/browser-image-integrity-validation.yml',
+  '.github/workflows/zguard-local-resource-integrity.yml'
 ];
 const prHeadContractWorkflows = new Set([
   ...requiredChecks, ...additionalSourceBoundWorkflows
@@ -109,26 +112,25 @@ assert.equal(prHeadContractWorkflows.size,
 
 // Canary: the previous checkout-without-ref flow silently validated GitHub's
 // synthetic merge ref and still produced a successful status on a PR.
-const manifestWorkflow = workflows.find(({ relative }) =>
-  relative === additionalSourceBoundWorkflows[0]);
-assert.ok(manifestWorkflow, 'the protected manifest workflow must be discovered');
 const trustedRef = 'ref: ' + String.fromCharCode(36) +
   '{{ github.event.pull_request.head.sha || github.sha }}';
 const checkoutProof = 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"';
-assert.ok(manifestWorkflow.source.includes(trustedRef),
-  'manifest workflow must contain the exact trusted PR-head ref');
-assert.ok(manifestWorkflow.source.includes(checkoutProof),
-  'manifest workflow must contain the actual git checkout proof');
-for (const [name, changed] of [
-  ['implicit merge checkout', manifestWorkflow.source.replace(
-    trustedRef, 'ref: main')],
-  ['missing checkout proof', manifestWorkflow.source.replace(
-    checkoutProof, 'echo unverified')]
-]) {
-  assert.notEqual(changed, manifestWorkflow.source,
-    name + ': mutation must change source');
-  assert.ok(!(changed.includes(trustedRef) && changed.includes(checkoutProof)),
-    name + ': unsafe checkout mutation must not satisfy source identity');
+for (const reviewedWorkflow of additionalSourceBoundWorkflows) {
+  const selected = workflows.find(({ relative }) => relative === reviewedWorkflow);
+  assert.ok(selected, reviewedWorkflow + ': protected QA workflow must be discovered');
+  assert.ok(selected.source.includes(trustedRef),
+    reviewedWorkflow + ': exact trusted PR-head checkout must be present');
+  assert.ok(selected.source.includes(checkoutProof),
+    reviewedWorkflow + ': git checkout identity proof must be present');
+  for (const [name, changed] of [
+    ['implicit merge checkout', selected.source.replace(trustedRef, 'ref: main')],
+    ['missing checkout proof', selected.source.replace(checkoutProof, 'echo unverified')]
+  ]) {
+    assert.notEqual(changed, selected.source,
+      reviewedWorkflow + ' ' + name + ': mutation must change source');
+    assert.ok(!(changed.includes(trustedRef) && changed.includes(checkoutProof)),
+      reviewedWorkflow + ' ' + name + ': unsafe checkout mutation must be detected');
+  }
 }
 
 console.log(
