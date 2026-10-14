@@ -62,7 +62,7 @@ async function ensureSiteCatalogue() {
   if (siteCatalogueRequest) return siteCatalogueRequest;
   const attempt = (async () => {
     try {
-      const data = await request("/api/sites", { cache: "no-store" });
+      const data = await request("/api/sites", { cache: "no-store", signal: AbortSignal.timeout(7000) });
       if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
       state.sites = data.sites;
       renderSuggestions();
@@ -103,7 +103,7 @@ async function refreshHealth(retryPendingRelease = true) {
     // Readiness controls session admission, so do not reuse a previous 200
     // from the browser HTTP cache even if a proxy misconfigures max-age.
     // Server/CDN no-store remains an independent requirement (#293).
-    const health = await request("/api/health", { cache: "no-store" });
+    const health = await request("/api/health", { cache: "no-store", signal: AbortSignal.timeout(7000) });
     // A slower earlier poll cannot overwrite a newer capacity observation.
     if (sequence !== healthRequestSequence) return;
     // A gateway in shutdown/drain mode must never be shown as available,

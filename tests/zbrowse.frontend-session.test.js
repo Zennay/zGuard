@@ -42,6 +42,15 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const windowEvents = new Map();
   const fullscreenEvents = [];
   const documentEvents = new Map();
+  const timeoutControls = [];
+  const AbortSignal = {
+    timeout(ms) {
+      assert.equal(ms, 7000, 'readiness GET must use bounded timeout');
+      const controller = new AbortController();
+      timeoutControls.push(controller);
+      return controller.signal;
+    }
+  };
   let nextInterval = 1;
 
   function element(id) {
@@ -99,11 +108,11 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const fetch = async (url, options = {}) => {
     requests.push({ url, options });
     if (url === '/api/sites') {
-      return siteRequest ? siteRequest() :
+      return siteRequest ? siteRequest(options) :
         response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] });
     }
     if (url === '/api/health') {
-      if (healthRequest) return healthRequest();
+      if (healthRequest) return healthRequest(options);
       return response(health || { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
     }
     if (url.startsWith('/api/session/') &&
@@ -118,7 +127,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     throw new Error('unexpected portal request: ' + url);
   };
 
-  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, console }, {
+  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal, console }, {
     filename: 'zbrowse/gateway/public/app.js',
     timeout: 1000
   });
@@ -130,6 +139,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     intervals,
     document,
     fullscreenEvents,
+    timeoutControls,
     pagehide() {
       const callback = windowEvents.get('pagehide');
       assert.equal(typeof callback, 'function', 'portal must register pagehide cleanup');
@@ -365,6 +375,71 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(concurrentCatalogue.element('siteSuggestions').children.length, 1);
   assert.equal(concurrentCalls, 3,
     'resolved shared catalogue retry must not create duplicate fetches');
+
+  // The only guaranteed browser-side way to prevent a never-ending
+  // catalogue GET from freezing initial health/poll setup is a bounded
+  // AbortSignal. This harness triggers the abort deterministically without
+  // waiting seven seconds; it exercises actual shipped app.js.
+  let stalledSiteCalls = 0;
+  const stalledCatalogue = await bootPortal({
+    siteRequest(options) {
+      stalledSiteCalls++;
+      if (stalledSiteCalls === 1) {
+        return new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new DOMException('request expired', 'TimeoutError')), { once: true });
+        });
+      }
+      return response({ sites: [{ name: 'Recovered', url: 'https://approved.test/' }] });
+    }
+  });
+  assert.equal(stalledCatalogue.element('startButton').disabled, true,
+    'hanging bootstrap catalogue must not enable the TV start button');
+  assert.equal(stalledCatalogue.timeoutControls.length, 1,
+    'a hanging site request must have a bounded abort signal');
+  stalledCatalogue.timeoutControls[0].abort();
+  await settle();
+  assert.equal(stalledSiteCalls, 2,
+    'timed-out catalogue must retry during bootstrap health reconciliation');
+  assert.equal(stalledCatalogue.element('capacityText').textContent, 'Ready to browse',
+    'bounded site timeout must allow bootstrap health and catalogue recovery');
+  assert.equal(stalledCatalogue.element('startButton').disabled, false,
+    'healthy catalogued gateway must recover automatically after timed-out GET');
+  assert.ok([...stalledCatalogue.intervals.values()].some(x => x.milliseconds === 20000),
+    'after site request timeout, interval health polling must actually be installed');
+
+  let healthCalls = 0;
+  const hangingHealth = await bootPortal({
+    healthRequest(options) {
+      healthCalls++;
+      if (healthCalls === 2) {
+        return new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new DOMException('health timed out', 'TimeoutError')), { once: true });
+        });
+      }
+      return response({ status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
+    }
+  });
+  const healthTimeoutPoll = [...hangingHealth.intervals.values()]
+    .find(x => x.milliseconds === 20000);
+  assert.ok(healthTimeoutPoll, 'a valid initial health must register polling');
+  healthTimeoutPoll.callback();
+  await settle();
+  assert.equal(hangingHealth.timeoutControls.length, 3,
+    'the stalled second health GET must have its own bounded timeout signal');
+  hangingHealth.timeoutControls[2].abort();
+  await settle();
+  assert.equal(hangingHealth.element('capacityText').textContent, 'Browser engine offline',
+    'timed-out health must replace stale green readiness with honest offline status');
+  assert.equal(hangingHealth.element('startButton').disabled, true,
+    'timed-out health must fail closed without issuing new browser starts');
+  healthTimeoutPoll.callback();
+  await settle();
+  assert.equal(hangingHealth.element('capacityText').textContent, 'Ready to browse',
+    'a later healthy response must recover automatically after health timeout');
+  assert.equal(hangingHealth.element('startButton').disabled, false,
+    'successful health retry should unlock the reviewed TV start again');
 
   const validToken = 'A'.repeat(32);
   const validViewer = '/s/' + validToken + '/';
