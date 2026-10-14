@@ -274,6 +274,12 @@ async function testRealLoopbackCancellation() {
     if (scenario && req.url === scenario.path) {
       const active = scenario;
       res.once('close', () => { active.closed = true; });
+      if (active.noHeaders) {
+        // A stalled gateway may accept TCP but never produce HTTP headers.
+        // Only client cancellation can end this intentionally silent socket.
+        req.socket.once('close', () => { active.closed = true; });
+        return;
+      }
       res.writeHead(active.status, {
         'content-type': active.contentType,
         'cache-control': 'no-store',
@@ -364,6 +370,37 @@ async function testRealLoopbackCancellation() {
       }
       assert.equal(active.closed, true,
         path + ': timed-out client must close the real HTTP stream');
+    }
+    // Prove the same 7-second deadline when a gateway accepts HTTP
+    // connections but never sends even the status line/response headers.
+    for (const path of ['/api/health', '/api/sites']) {
+      scenario = {
+        name: 'silent pre-header gateway', path, status: 200,
+        contentType: 'application/json', headers: {}, bytes: '',
+        noHeaders: true, closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const began = Date.now();
+      try {
+        await assert.rejects(Promise.race([
+          checkPublicReadiness(loopbackFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without header timeout')), 11000);
+          })
+        ]), /aborted|time(?:d)? ?out/i,
+        path + ': silent HTTP headers must expire using the real client deadline');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      assert.ok(Date.now() - began >= 5500 && Date.now() - began < 10500,
+        path + ': missing HTTP headers must expire near the seven-second deadline');
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        path + ': silent real HTTP connection must close after timeout');
     }
     scenario = null;
     const recovered = await checkPublicReadiness(loopbackFetch);
