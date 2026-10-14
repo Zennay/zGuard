@@ -29,13 +29,19 @@ function normalizeMarkdownUrl(value) {
     .replace(/&colon;/gi, ":")
     .replace(/&sol;/gi, "/")
     .replace(/&bsol;/gi, "\\")
+    .replace(/&tab;/gi, "\t")
+    .replace(/&newline;/gi, "\n")
     .replace(/\\:/g, ":")
+    .replace(/[\t\n\r]/g, "")
     .trimStart();
 }
 
 assert.equal(normalizeMarkdownUrl("javascript&colon;alert(1)"), "javascript:alert(1)");
 assert.equal(normalizeMarkdownUrl("javascript&#58;alert(1)"), "javascript:alert(1)");
 assert.equal(normalizeMarkdownUrl("javascript\\:alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("java&#9;script:alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("java&tab;script:alert(1)"), "javascript:alert(1)");
+assert.equal(normalizeMarkdownUrl("http&newline;s://example.test"), "https://example.test");
 assert.equal(normalizeMarkdownUrl("&sol;&sol;example.test/path"), "//example.test/path");
 
 function assertBalancedCodeFences(file, source) {
