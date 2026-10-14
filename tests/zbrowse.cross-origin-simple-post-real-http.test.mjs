@@ -78,7 +78,9 @@ try {
     }
     const oldCreated = created;
     const oldReserved = reserved;
-    const headers = { 'content-type': contentType };
+    // Omitting the media type altogether matters: a browser can dispatch a
+    // bodyless cross-site POST without preflight and without JSON parsing.
+    const headers = contentType ? { 'content-type': contentType } : {};
     if (origin) {
       headers.origin = origin;
       headers['sec-fetch-site'] = 'cross-site';
@@ -106,6 +108,7 @@ try {
   // alone does not prevent the server-side session side effect. A malicious
   // form may also send a charset parameter or a sandboxed Origin: null.
   const simpleMedia = [
+    [null, undefined, 'https://attacker.invalid'],
     ['text/plain', 'launch=anything', 'https://attacker.invalid'],
     ['text/plain; charset=UTF-8', 'ignored=true', 'https://attacker.invalid'],
     ['application/x-www-form-urlencoded', 'url=https%3A%2F%2Fattacker.invalid%2F', 'https://attacker.invalid'],
@@ -127,7 +130,7 @@ try {
     const result = await submit(mediaType, body, origin);
     if (result.newContainers !== 0 || result.newReservations !== 0 ||
         result.status < 400) {
-      acceptedSimple.push(mediaType + ':HTTP_' + result.status);
+      acceptedSimple.push((mediaType ?? '(no Content-Type; empty body)') + ':HTTP_' + result.status);
     }
   }
   assert.equal(reserved, released,
@@ -136,7 +139,7 @@ try {
     assert.equal(reusedUnprotected, false,
       'cross-origin form POST must not reuse or expose a live session');
     assert.deepEqual(acceptedSimple, [],
-      'cross-site simple POST media types must never allocate a browser (CSRF admission risk)');
+      'cross-site POSTs without JSON media type, including bodyless requests, must never allocate a browser (CSRF admission risk)');
     console.log('Session admission rejects browser-simple cross-origin non-JSON POST bodies');
   } else {
     console.log('Actual gateway simple cross-origin POST source-bound probe: ' +
