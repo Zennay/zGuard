@@ -58,6 +58,20 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 503, { error: 'Gateway unavailable' });
         return;
       }
+      if (health === 'draining') {
+        sendJson(res, 200, {
+          status: 'draining', activeSessions: 0, startingSessions: 0, capacity: 1
+        });
+        return;
+      }
+      if (health === 'invalid') {
+        // A successful HTTP response with a broken capacity contract must
+        // never be mistaken for an available gateway in the real browser.
+        sendJson(res, 200, {
+          status: 'ok', activeSessions: '0', startingSessions: 0, capacity: 1
+        });
+        return;
+      }
       sendJson(res, 200, {
         status: 'ok', activeSessions: health === 'busy' ? 1 : 0,
         startingSessions: 0, capacity: 1
@@ -199,6 +213,16 @@ try {
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser currently in use', 'browser-full status should not look ready');
+  health = 'draining';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser temporarily unavailable', 'real UI must not advertise a draining gateway');
+  assert.equal(await evaluate('document.getElementById("capacityText").parentElement.className'),
+    'status', 'draining must not retain green readiness styling');
+  health = 'invalid';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline', 'malformed 200 JSON must never appear as ready');
   health = 'offline';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -263,7 +287,7 @@ try {
   assert.equal(starts, 2, 'one request per intentionally started browser');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
-    'recovery, reviewed sites, guarded starts, authenticated local iframe,' +
+    'draining/malformed health, recovery, reviewed sites, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' no duplicate allocation/release');
 } finally {
