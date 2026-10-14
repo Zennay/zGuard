@@ -25,6 +25,12 @@ async function request(url, options = {}) {
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");
     error.status = response.status;
+    // A proxy/router HTML 404 (or an arbitrary 410) does not prove that a
+    // browser container was destroyed. Only the gateway's documented JSON
+    // not-found contract may clear an uncertain session release.
+    error.confirmedSessionGone =
+      (response.status === 404 && body?.error === "Session not found.") ||
+      (response.status === 410 && body?.error === "Session expired.");
     throw error;
   }
   return body;
@@ -303,9 +309,10 @@ async function releasePendingSession() {
     setMessage();
     return true;
   } catch (error) {
-    // A 404 confirms this token is no longer an accessible session. Other
-    // failures, including transport errors, leave server teardown unknown.
-    if (error.status === 404 || error.status === 410) {
+    // Status alone is insufficient: an ingress 404/410 can come from a
+    // missing route while the old gateway session is still running.
+    // Require the gateway's specific not-found response before unlocking.
+    if (error.confirmedSessionGone === true) {
       pendingReleaseToken = null;
       sessionEnding = false;
       setMessage();
