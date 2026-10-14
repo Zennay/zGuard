@@ -49,6 +49,29 @@ async function refreshHealth() {
     const health = await request("/api/health");
     // A slower earlier poll cannot overwrite a newer capacity observation.
     if (sequence !== healthRequestSequence) return;
+    // A gateway in shutdown/drain mode must never be shown as available,
+    // even if no browser containers are currently running.
+    if (health?.status === "draining") {
+      status.className = "status";
+      $("capacityText").textContent = "Browser temporarily unavailable";
+      return;
+    }
+    // Fail closed on malformed or untrusted capacity information. JS numeric
+    // coercion ("0" + 0) and absent status fields can otherwise claim Ready
+    // for an unhealthy or inconsistent gateway.
+    if (
+      health?.status !== "ok" ||
+      !Number.isSafeInteger(health.activeSessions) ||
+      !Number.isSafeInteger(health.startingSessions) ||
+      !Number.isSafeInteger(health.capacity) ||
+      health.activeSessions < 0 ||
+      health.startingSessions < 0 ||
+      health.capacity < 1 ||
+      health.startingSessions > health.capacity ||
+      health.activeSessions > health.capacity - health.startingSessions
+    ) {
+      throw new Error("Invalid gateway health response.");
+    }
     const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
