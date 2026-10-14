@@ -80,7 +80,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     }
     if (url === '/api/health') {
       if (healthRequest) return healthRequest();
-      return response(health || { activeSessions: 0, startingSessions: 0, capacity: 1 });
+      return response(health || { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
     }
     if (url.startsWith('/api/session/') &&
         /^[A-Za-z0-9_-]{32}$/.test(url.slice('/api/session/'.length)) &&
@@ -119,13 +119,13 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
 
 (async () => {
   const available = await bootPortal({
-    health: { activeSessions: 0, startingSessions: 0, capacity: 1 }
+    health: { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 }
   });
   assert.equal(available.element('capacityText').textContent, 'Ready to browse');
   assert.equal(available.element('capacityText').parentElement.className, 'status available');
 
   const starting = await bootPortal({
-    health: { activeSessions: 0, startingSessions: 1, capacity: 1 }
+    health: { status: 'ok', activeSessions: 0, startingSessions: 1, capacity: 1 }
   });
   assert.equal(
     starting.element('capacityText').textContent,
@@ -135,9 +135,37 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   assert.equal(starting.element('capacityText').parentElement.className, 'status busy');
 
   const active = await bootPortal({
-    health: { activeSessions: 1, startingSessions: 0, capacity: 1 }
+    health: { status: 'ok', activeSessions: 1, startingSessions: 0, capacity: 1 }
   });
   assert.equal(active.element('capacityText').textContent, 'Browser currently in use');
+
+  // A shutdown or drain response is distinct from a busy but healthy gateway.
+  // Other unknown statuses and malformed capacity must never claim readiness.
+  const draining = await bootPortal({
+    health: { status: 'draining', activeSessions: 0, startingSessions: 0, capacity: 1 }
+  });
+  assert.equal(draining.element('capacityText').textContent,
+    'Browser temporarily unavailable');
+  assert.equal(draining.element('capacityText').parentElement.className, 'status');
+
+  const unsafeHealth = [
+    ['unknown status', { status: 'degraded', activeSessions: 0, startingSessions: 0, capacity: 1 }],
+    ['missing status', { activeSessions: 0, startingSessions: 0, capacity: 1 }],
+    ['coerced active count', { status: 'ok', activeSessions: '0', startingSessions: 0, capacity: 1 }],
+    ['fractional count', { status: 'ok', activeSessions: 0.5, startingSessions: 0, capacity: 1 }],
+    ['negative starting count', { status: 'ok', activeSessions: 0, startingSessions: -1, capacity: 1 }],
+    ['invalid capacity', { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 0 }],
+    ['overcapacity', { status: 'ok', activeSessions: 2, startingSessions: 0, capacity: 1 }],
+    ['unsafe integer', { status: 'ok', activeSessions: Number.MAX_SAFE_INTEGER + 1,
+      startingSessions: 0, capacity: 1 }]
+  ];
+  for (const [label, health] of unsafeHealth) {
+    const portal = await bootPortal({ health });
+    assert.equal(portal.element('capacityText').textContent, 'Browser engine offline',
+      label + ': invalid health must fail closed without a ready badge');
+    assert.equal(portal.element('capacityText').parentElement.className, 'status',
+      label + ': invalid health must remove old available/busy styling');
+  }
 
   const validToken = 'A'.repeat(32);
   const validViewer = '/s/' + validToken + '/';
@@ -156,7 +184,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   const racing = await bootPortal({
     healthRequest() {
       healthCount += 1;
-      if (healthCount === 1) return response({ activeSessions: 0, startingSessions: 0, capacity: 1 });
+      if (healthCount === 1) return response({ status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
       return healthCount === 2 ? slowReady.promise : fastBusy.promise;
     }
   });
@@ -164,10 +192,10 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   assert.ok(healthPoll, 'live portal must retain its periodic capacity refresh');
   healthPoll.callback();
   healthPoll.callback();
-  fastBusy.resolve(response({ activeSessions: 0, startingSessions: 1, capacity: 1 }));
+  fastBusy.resolve(response({ status: 'ok', activeSessions: 0, startingSessions: 1, capacity: 1 }));
   await settle();
   assert.equal(racing.element('capacityText').textContent, 'Browser currently in use');
-  slowReady.resolve(response({ activeSessions: 0, startingSessions: 0, capacity: 1 }));
+  slowReady.resolve(response({ status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 }));
   await settle();
   assert.equal(racing.element('capacityText').textContent, 'Browser currently in use',
     'late stale health success must not overwrite a newer busy state');
@@ -178,14 +206,14 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   const recovery = await bootPortal({
     healthRequest() {
       checks += 1;
-      if (checks === 1) return response({ activeSessions: 1, startingSessions: 0, capacity: 1 });
+      if (checks === 1) return response({ status: 'ok', activeSessions: 1, startingSessions: 0, capacity: 1 });
       return checks === 2 ? slowOffline.promise : fastReady.promise;
     }
   });
   const recoveryPoll = [...recovery.intervals.values()].find(({ milliseconds }) => milliseconds === 20000);
   recoveryPoll.callback();
   recoveryPoll.callback();
-  fastReady.resolve(response({ activeSessions: 0, startingSessions: 0, capacity: 1 }));
+  fastReady.resolve(response({ status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 }));
   await settle();
   slowOffline.reject(new Error('old connection timed out'));
   await settle();
