@@ -109,6 +109,10 @@ const matrix = [
     ['require_redacted_cleanup_errors', 'REQUIRE_REDACTED_CLEANUP_ERRORS',
       [['zbrowse.cleanup-error-log-privacy.test.mjs', '--require-redacted-cleanup-errors']]]
   ]],
+  ['zguard-real-firefox-acceptance.yml', [
+    ['require_pageworld', 'REQUIRE_PAGEWORLD',
+      [['zguard.firefox-real-browser.test.mjs', '--require-pageworld']]]
+  ]],
   ['zguard-real-chromium-acceptance.yml', [
     ['require_mainworld', 'REQUIRE_MAINWORLD',
       [['zguard.chromium-real-browser.test.mjs', '--require-mainworld']]],
