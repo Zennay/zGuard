@@ -152,6 +152,21 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     health: { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 }
   });
   assert.equal(available.element('capacityText').textContent, 'Ready to browse');
+  // A cached 200 health response can continue advertising a ready browser
+  // after the gateway becomes busy/draining. The client must bypass its
+  // own HTTP cache independently of server/CDN Cache-Control policy.
+  const initialHealth = available.requests.filter(({ url }) => url === '/api/health');
+  assert.equal(initialHealth.length, 1, 'boot must fetch actual gateway health');
+  assert.equal(initialHealth[0].options.cache, 'no-store',
+    'gateway health GET must bypass the browser HTTP cache');
+  const healthInterval = [...available.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 20000);
+  assert.ok(healthInterval, 'readiness must periodically refresh');
+  healthInterval.callback();
+  await settle();
+  assert.equal(available.requests.filter(({ url }) => url === '/api/health').length, 2);
+  assert.equal(available.requests.filter(({ url }) => url === '/api/health')[1].options.cache,
+    'no-store', 'every health poll must bypass the browser HTTP cache');
   assert.equal(available.element('capacityText').parentElement.className, 'status available');
   assert.equal(available.element('startButton').disabled, false,
     'healthy gateway should allow a browser start');
