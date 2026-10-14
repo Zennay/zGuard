@@ -57,8 +57,8 @@ function syncStartButton() {
 
 async function ensureSiteCatalogue() {
   if (siteCatalogueReady) return true;
-  // A slow /api/sites fetch can overlap multiple health ticks and BFCache
-  // restores. Share one request so every poll sees the same reviewed result.
+  // A slow /api/sites reply can overlap multiple health ticks and BFCache
+  // restores. Share one in-flight operation to preserve reviewed results.
   if (siteCatalogueRequest) return siteCatalogueRequest;
   const attempt = (async () => {
     try {
