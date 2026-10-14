@@ -78,10 +78,10 @@ const server = await new Promise((resolve, reject) => {
 });
 try {
   const target = 'http://' + ip + ':' + server.address().port + '/api/session';
-  const attempt = async (url = allowedStart) => {
+  const attempt = async (url = allowedStart, customHeaders) => {
     const response = await fetch(target, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: customHeaders ?? { 'content-type': 'application/json' },
       body: JSON.stringify({ url }),
       signal: AbortSignal.timeout(4000)
     });
@@ -114,6 +114,27 @@ try {
     'invalid site failure must not return any session bearer');
   assert.equal(starts, 1);
 
+  // Failure branches that execute BEFORE admission also carry session
+  // metadata-sensitive context. Both must declare no-store over real HTTP.
+  const unsupported = await attempt(allowedStart, {
+    'content-type': 'text/plain'
+  });
+  assert.equal(unsupported.status, 415,
+    'unsupported media type must be rejected without a browser allocation');
+  assert.equal(unsupported.payload.token, undefined,
+    'HTTP 415 must not return a session bearer');
+  const crossSite = await attempt(allowedStart, {
+    'content-type': 'application/json',
+    origin: 'https://attacker.invalid',
+    'sec-fetch-site': 'cross-site'
+  });
+  assert.equal(crossSite.status, 403,
+    'cross-site JSON must be denied before session admission');
+  assert.equal(crossSite.payload.token, undefined,
+    'HTTP 403 must not disclose a browser bearer');
+  assert.equal(starts, 1, 'denied requests must not launch additional browsers');
+  assert.equal(reservations, 1, 'denied requests must not reserve container capacity');
+
   rejectReason = 'pending';
   const pending = await attempt();
   assert.equal(pending.status, 409,
@@ -137,17 +158,17 @@ try {
   assert.equal(sessions.size, 0, 'failed browser startup must not publish a session');
   failBrowserStart = false;
 
-  const responses = [created, reused, invalid, pending, full, failed];
+  const responses = [created, reused, invalid, unsupported, crossSite, pending, full, failed];
   const noStore = responses.every(response => (
     typeof response.cache === 'string' &&
     response.cache.toLowerCase().split(',').map(x => x.trim()).includes('no-store')
   ));
   if (strict) {
     assert.equal(noStore, true,
-      'HTTP POST /api/session 201/200/400/409/503/500 must each include Cache-Control: no-store (issue #284)');
+      'HTTP POST /api/session 201/200/400/415/403/409/503/500 must each include Cache-Control: no-store (issue #284)');
     console.log('Real Express success and denial session HTTP cache policy PASS');
   } else {
-    console.log('Shipped session route served 201/200 and 400/409/503/500 over local HTTP; ' +
+    console.log('Shipped session route served 201/200 and 400/415/403/409/503/500 over local HTTP; ' +
       'all six no-store policies=' + noStore +
       ' (strict proof requires --require-no-store; issue #284 remains open)');
   }
