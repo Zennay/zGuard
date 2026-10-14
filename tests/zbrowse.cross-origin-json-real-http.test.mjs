@@ -26,7 +26,7 @@ function section(begin, end) {
 }
 const middleware = section('app.set("trust proxy", trustProxyHops);',
   'const sessionLimiter = rateLimit(');
-assert.match(middleware, /app\\.use\\(express\\.json\\(\\{ limit: "8kb" \\}\\)\\);/,
+assert.ok(middleware.includes('app.use(express.json({ limit: "8kb" }));'),
   'real gateway must retain a bounded JSON parser');
 const code = [
   middleware,
