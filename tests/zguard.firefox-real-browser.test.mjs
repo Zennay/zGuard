@@ -307,6 +307,18 @@ try{
   await until(()=>evaluate(
     'return document.querySelector("[data-mode=balanced]")?.classList.contains("active")'),
     'balanced mode restored through native popup');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  await until(()=>evaluate(
+    'const anchor=document.getElementById("ordinary");const n=window.qa.ordinaryClicks;'
+    +'anchor.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));'
+    +'return window.qa.ordinaryClicks===n+1;'),
+    'balanced policy restored inside existing Firefox tab');
+  const balancedBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await click('#ordinary');
+  const balancedAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedAfter.ordinaryClicks,balancedBefore.ordinaryClicks+1,
+    'Balanced mode must restore a native harmless cross-origin Firefox link');
+  await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
   const restoredHandles=await wd('GET','/session/'+session+'/window/handles');
