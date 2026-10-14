@@ -362,7 +362,8 @@ const server = http.createServer(async (req, res) => {
         // Shipped gateway rejects DELETE with 404 after lease expiry.
         // A second DELETE cannot make an already expired token more dead.
         deleteAlreadyGone = true;
-        sendJson(res, 410, { error: 'Synthetic session expired.' });
+        // Oversized error diagnostics must not be parsed by the kiosk.
+        sendJson(res, 410, { error: 'Synthetic session expired.' + 'x'.repeat(80000) });
       } else {
         sendJson(res, 200, { ok: true, expiresAt: Date.now() + 900_000 });
       }
@@ -1994,7 +1995,7 @@ try {
     nextStartFailure = {
       status,
       error: 'Proxy diagnostic for ' + forgedBearer +
-        ' https://user:password@upstream.invalid/login'
+        ' https://user:password@upstream.invalid/login' + 'x'.repeat(80000)
     };
     await evaluate('document.getElementById("browserForm").requestSubmit(); true');
     await until(() => starts === beforeUnsafeStart + 1,

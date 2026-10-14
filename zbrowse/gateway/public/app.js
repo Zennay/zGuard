@@ -71,6 +71,15 @@ async function request(url, options = {}) {
     error.status = response.status;
     throw error;
   }
+  // Session starts and heartbeat renewals never show raw upstream error
+  // bodies: their HTTP status is sufficient for reviewed TV guidance / safe
+  // lease teardown. Do not parse unbounded HTML/JSON proxy diagnostics.
+  if (!response.ok && (url === "/api/session" || url.endsWith("/heartbeat"))) {
+    try { await response.body?.cancel?.(); } catch { /* already closed */ }
+    const error = new Error("Gateway operation rejected.");
+    error.status = response.status;
+    throw error;
+  }
   // The gateway confirms a completed browser teardown with 204 No Content.
   // A proxy-generated 200/202/206 is not evidence of Docker cleanup, even
   // when its body looks successful. Keep the old token locked for retry.

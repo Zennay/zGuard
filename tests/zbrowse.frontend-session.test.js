@@ -1606,6 +1606,39 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     1, 'heartbeat failure must attempt one capacity release'
   );
 
+  // A real HTTP 410/503 heartbeat response does not need its diagnostic
+  // body; a proxy may stream an enormous error while the old viewer is live.
+  for (const code of [410, 503]) {
+    const failedLease = response({ error: 'do not decode ' + 'x'.repeat(100000) },
+      code, 'text/html');
+    failedLease.parsed = false;
+    failedLease.json = async () => { failedLease.parsed = true; return {}; };
+    const invalidLease = await bootPortal({
+      sessionRequest: async () => response(validSession),
+      heartbeatRequest: async () => failedLease
+    });
+    invalidLease.submit();
+    await settle();
+    const beat = [...invalidLease.intervals.values()].find(({ milliseconds }) =>
+      milliseconds === 30000);
+    assert.ok(beat, code + ': active viewer must schedule a heartbeat');
+    beat.callback();
+    await settle();
+    assert.equal(failedLease.cancelled, true,
+      code + ': failed renewal HTTP body must be cancelled');
+    assert.equal(failedLease.reads, 0,
+      code + ': failed renewal body cannot be streamed into TV');
+    assert.equal(failedLease.parsed, false,
+      code + ': renewal error diagnostics must not be JSON parsed');
+    assert.equal(invalidLease.element('browserView').hidden, true,
+      code + ': invalid lease must close viewer immediately');
+    assert.equal(invalidLease.element('browserFrame').src, 'about:blank',
+      code + ': revoked bearer must not remain in iframe');
+    assert.equal(invalidLease.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+    code + ': failed renewal must release capacity once');
+  }
+
   // The server-provided absolute expiry is enforced immediately, without
   // waiting for the first countdown tick or starting a lingering heartbeat.
   const expired = await bootPortal({
@@ -1666,10 +1699,15 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     const diagnostic = 'upstream failed at ' + syntheticSecret +
       ' https://user:password@upstream.invalid/ and Authorization: Basic c2VjcmV0';
     let attempts = 0;
+    const failureReplies = [];
     const unsafeError = await bootPortal({
       sessionRequest: async () => {
         attempts++;
-        return response({ error: diagnostic }, status);
+        const reply = response({ error: diagnostic + 'x'.repeat(100000) }, status);
+        reply.parsed = false;
+        reply.json = async () => { reply.parsed = true; return {}; };
+        failureReplies.push(reply);
+        return reply;
       }
     });
     // The tiny test DOM has no HTML parser to apply index.html's hidden
@@ -1693,6 +1731,14 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     await settle();
     assert.equal(attempts, 2,
       status + ': generic error messaging must not permanently poison safe retry');
+    for (const reply of failureReplies) {
+      assert.equal(reply.cancelled, true,
+        status + ': failed browser-start response body must be cancelled');
+      assert.equal(reply.reads, 0,
+        status + ': untrusted browser-start bytes must not be read');
+      assert.equal(reply.parsed, false,
+        status + ': backend diagnostic must not be JSON parsed');
+    }
   }
 
   // Session creation differs from an ordinary GET: a successful-looking
