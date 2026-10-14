@@ -37,7 +37,43 @@ function verifyTokenBoundary(pattern) {
     assert.equal(pattern.test(real), true,
       "standalone API token must still be detected regardless of wrapping");
   }
-  for (const harmless of [
+  // Unicode-encoded secrets must not bypass high-confidence detection.
+// Both byte orders, BOM-less buffers and odd/even byte alignment are covered;
+// a raw Latin-1-only scanner necessarily misses these test fixtures.
+for (const [name, synthetic] of examples) {
+  const le = Buffer.from(synthetic, "utf16le");
+  for (const [endian, encoded] of [
+    ["LE", le],
+    ["BE", Buffer.from(le).swap16()]
+  ]) {
+    for (const offset of [0, 1]) {
+      const binary = Buffer.concat([
+        Buffer.alloc(offset, 0xff), encoded, Buffer.from([0])
+      ]);
+      assert.ok(scanBytes(binary).includes(name),
+        name + ": UTF-16" + endian + " secret at byte offset " + offset +
+        " must be rejected even without a BOM");
+    }
+  }
+}
+for (const [name, synthetic] of examples.slice(0, 2)) {
+  const le = Buffer.from(synthetic, "utf16le");
+  const be = Buffer.from(le).swap16();
+  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xff, 0xfe]), le])).includes(name),
+    "UTF-16LE BOM must not mask " + name);
+  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xfe, 0xff]), be])).includes(name),
+    "UTF-16BE BOM must not mask " + name);
+}
+// Mutation control: a scanner restricted to raw byte-preserving Latin-1
+// would falsely accept a real UTF-16 encoded secret.
+assert.throws(() => {
+  const encoded = Buffer.from(examples[0][1], "utf16le");
+  assert.ok(signatures.some(signature =>
+    signature.name === examples[0][0] &&
+    signature.pattern.test(encoded.toString("latin1"))));
+}, undefined, "a Latin-1-only regression must fail Unicode token acceptance");
+
+for (const harmless of [
     "kiosk-coldstart-launch-real-shell.test.mjs",
     "prefix" + simulatedKey,
     "task" + simulatedKey,
@@ -59,12 +95,25 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
 
 assert.ok(tracked.length > 0, "at least one tracked file must be discovered");
 
-// Scan every tracked byte sequence, including files containing NUL and
-// invalid UTF-8. A secret's ASCII prefix is not made safe by adjacent binary
-// bytes; Latin-1 decoding preserves all byte values without replacement.
+// Secret bytes may appear as ASCII even inside a binary blob, or as UTF-16
+// text with a NUL after each ASCII code unit (e.g. PowerShell/Windows exports).
+// Preserve raw bytes in Latin-1; inspect both UTF-16 orders/alignment only
+// when binary NULs are actually present. Never silently skip any tracked file.
 function scanBytes(buffer) {
-  const content = buffer.toString("latin1");
-  return signatures.filter(signature => signature.pattern.test(content))
+  const views = [buffer.toString("latin1")];
+  if (buffer.includes(0)) {
+    for (const offset of [0, 1]) {
+      const aligned = buffer.subarray(offset);
+      const even = aligned.subarray(0, aligned.length - aligned.length % 2);
+      if (even.length === 0) continue;
+      views.push(even.toString("utf16le"));
+      // Buffer.swap16() mutates: make a copy so a probe cannot rewrite
+      // the caller's bytes (or alter a later file-integrity check).
+      views.push(Buffer.from(even).swap16().toString("utf16le"));
+    }
+  }
+  return signatures.filter(signature =>
+    views.some(view => signature.pattern.test(view)))
     .map(signature => signature.name);
 }
 
