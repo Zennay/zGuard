@@ -24,6 +24,8 @@ async function scenario({ failTokens = [], tokens = ['synthetic-a', 'synthetic-b
   let safetyTimers = 0;
   const context = {
     cleanupTimer: {},
+  shuttingDown: false,
+  inFlightSessionStarts: new Set(),
     sessions,
     clearInterval() { clears++; },
     setTimeout(_callback, ms) {
