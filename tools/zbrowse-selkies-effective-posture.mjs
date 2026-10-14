@@ -29,7 +29,7 @@ export function assessDockerInspect(document) {
   // fields; they must identify one actively running managed browser.
   assert.match(container.Id ?? '', /^[a-f0-9]{64}$/,
     'inspect must identify a real-format Docker container ID');
-  assert.match(container.Name ?? '', /^\\/zbrowse-[a-z0-9_-]{12}$/,
+  assert.match(container.Name ?? '', /^\/zbrowse-[a-z0-9_-]{12}$/,
     'inspect must target a named zBrowse session container');
   assert.equal(container.State?.Running, true,
     'inspect cannot certify a stopped browser container');
