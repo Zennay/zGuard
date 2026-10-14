@@ -55,4 +55,5 @@ jobs:
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.session-cache-privacy.test.mjs --require-no-store
             node tests/zbrowse.session-cache-real-http.test.mjs --require-no-store
+            node tests/zbrowse.session-lifecycle-real-http.test.mjs --require-no-store
           fi

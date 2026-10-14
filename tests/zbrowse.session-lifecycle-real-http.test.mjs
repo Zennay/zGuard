@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
+import { requireExactCachePrivacyFlag } from '../tools/cache-privacy-flags.mjs';
+
+const strictNoStore = requireExactCachePrivacyFlag(process.argv.slice(2));
 
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
@@ -47,6 +50,7 @@ const server = await new Promise((resolve, reject) => {
 });
 
 try {
+  const bearerPathResponses = [];
   const request = async (method, bearer, headers = {}) => {
     const url = 'http://' + ip + ':' + server.address().port +
       '/api/session/' + bearer + (method === 'POST' ? '/heartbeat' : '');
@@ -54,7 +58,10 @@ try {
       method, headers, signal: AbortSignal.timeout(4000)
     });
     const text = await response.text();
-    return { status: response.status, body: text };
+    const result = { status: response.status, body: text,
+      cache: response.headers.get('cache-control') };
+    bearerPathResponses.push({ method, status: result.status, cache: result.cache });
+    return result;
   };
 
   for (const method of ['POST', 'DELETE']) {
@@ -107,7 +114,22 @@ try {
     assert.equal(repeat.status, 404, 'ended session must never be reusable');
     assert.equal(destroys, 1, 'repeat close/heartbeat must not double-destroy');
   }
-  console.log('Real HTTP heartbeat + teardown token/IP/expiry isolation passed');
+  // Even a 204 response is heuristically cacheable under HTTP rules, and the
+  // request path itself contains the session bearer. Require no-store for
+  // success, denial, expiry and already-deleted paths under strict privacy.
+  const hasNoStore = cache => {
+    const directives = String(cache || '').toLowerCase()
+      .split(',').map(item => item.trim());
+    return directives.includes('no-store') && !directives.includes('public');
+  };
+  const safeCount = bearerPathResponses.filter(row => hasNoStore(row.cache)).length;
+  if (strictNoStore) {
+    assert.equal(safeCount, bearerPathResponses.length,
+      'heartbeat and DELETE bearer-URL responses (200, 204, 404) must all prohibit storage');
+  }
+  console.log('Real HTTP heartbeat + teardown token/IP/expiry isolation passed; ' +
+    'bearer-path no-store=' + safeCount + '/' + bearerPathResponses.length +
+    ' (strict requires --require-no-store)');
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
