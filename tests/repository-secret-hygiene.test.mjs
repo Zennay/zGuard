@@ -326,9 +326,25 @@ function validateEnvExample(content, source) {
       source + ": environment example entries must be valid KEY=value assignments");
     const [, key, rawValue] = assignment;
     const value = rawValue.trim();
-    assert.ok(value.length > 0,
+    // A nonempty source string can still define an EMPTY dotenv value:
+    // NAME=#comment, NAME=" " and NAME='' all resolve to no setting.
+    // Validate the effective value, without ever including its contents
+    // in CI diagnostics. Quoted values may contain literal # characters.
+    let effectiveValue;
+    if (value.startsWith('"') || value.startsWith("'")) {
+      const closing = value.indexOf(value[0], 1);
+      assert.ok(closing > 0,
+        source + ": " + JSON.stringify(key) + ": unterminated quoted default");
+      const suffix = value.slice(closing + 1).trim();
+      assert.ok(!suffix || suffix.startsWith("#"),
+        source + ": " + JSON.stringify(key) + ": invalid quoted default suffix");
+      effectiveValue = value.slice(1, closing).trim();
+    } else {
+      effectiveValue = value.split("#", 1)[0].trim();
+    }
+    assert.ok(effectiveValue.length > 0,
       source + ": " + JSON.stringify(key) +
-      ": tracked example values must be explicit placeholders/defaults");
+      ": tracked example values must be explicit nonempty placeholders/defaults");
     assert.doesNotMatch(
       key,
       /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$/i,

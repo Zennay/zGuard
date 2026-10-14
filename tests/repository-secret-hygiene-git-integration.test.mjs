@@ -260,6 +260,13 @@ try {
     ['tab-separated credential assignment', 'PORT=8090\nSERVICE_TOKEN\t=qa-placeholder\n'],
     ['missing explicit default', 'PORT=8090\nSERVICE_MODE=\n'],
     ['whitespace-only default', 'PORT=8090\nSERVICE_MODE=  \n'],
+    ['comment-only default', 'PORT=8090\nSERVICE_MODE=# unset\n'],
+    ['spaced comment-only default', 'PORT=8090\nSERVICE_MODE= # unset\n'],
+    ['empty double-quoted default', 'PORT=8090\nSERVICE_MODE=""\n'],
+    ['empty single-quoted default', "PORT=8090\nSERVICE_MODE=''\n"],
+    ['whitespace quoted default', 'PORT=8090\nSERVICE_MODE="   "\n'],
+    ['unterminated quoted default', 'PORT=8090\nSERVICE_MODE="pending\n'],
+    ['garbage after quoted default', 'PORT=8090\nSERVICE_MODE="ok"junk\n'],
     ['malformed declaration', 'PORT=8090\nSERVICE_MODE\n']
   ]) {
     fs.writeFileSync(envPath, stagedExample);
@@ -287,7 +294,7 @@ try {
   fs.writeFileSync(envPath, safeExample);
   // Optional export prefixes, harmless leading comments, and whitespace
   // around benign assignment delimiters are supported without false alarms.
-  const harmlessExample = '  # optional config\nexport PUBLIC_MODE = enabled\nPORT = 8090\n';
+  const harmlessExample = '  # optional config\nexport PUBLIC_MODE = "enabled#ok" # note\nPORT = 8090 # default\n';
   fs.writeFileSync(envPath, harmlessExample);
   git('add', '--', 'zbrowse/.env.example');
   accept('harmless comments and nonsecret spaced/export assignments');
