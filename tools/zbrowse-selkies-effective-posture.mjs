@@ -55,6 +55,73 @@ export function assessDockerInspect(document) {
   if (env.has('SELKIES_ENABLE_FILE_TRANSFER')) {
     gaps.push('SELKIES_ENABLE_FILE_TRANSFER');
   }
+  // Effective Docker isolation must not become an implicit PASS merely
+  // because the Selkies variables were set. No Docker mutation is done here.
+  // All emitted gap identifiers are fixed constants, never inspect values.
+  const host = container.HostConfig ?? {};
+  if (host.Privileged !== false) gaps.push('DOCKER_PRIVILEGED');
+  const network = host.NetworkMode;
+  if (typeof network !== 'string' ||
+      !/^[a-zA-Z][a-zA-Z0-9_.-]{1,62}$/.test(network) ||
+      ['host', 'bridge', 'none', 'default'].includes(network.toLowerCase())) {
+    gaps.push('DOCKER_NETWORK');
+  }
+  if (host.AutoRemove !== true) gaps.push('DOCKER_AUTO_REMOVE');
+  if (!Number.isSafeInteger(host.Memory) || host.Memory <= 0) gaps.push('DOCKER_MEMORY_LIMIT');
+  if (!Number.isSafeInteger(host.NanoCpus) || host.NanoCpus <= 0) gaps.push('DOCKER_CPU_LIMIT');
+  if (!Number.isSafeInteger(host.PidsLimit) || host.PidsLimit <= 0) gaps.push('DOCKER_PID_LIMIT');
+
+  const options = host.SecurityOpt;
+  if (!Array.isArray(options) ||
+      !options.includes('no-new-privileges:true') ||
+      options.some(option => typeof option !== 'string' ||
+        /^(?:seccomp|apparmor)=unconfined$|^label=disable$|^no-new-privileges:false$/i.test(option))) {
+    gaps.push('DOCKER_SECURITY_OPT');
+  }
+  if (!Array.isArray(host.CapAdd ?? []) || (host.CapAdd ?? []).length > 0 ||
+      host.UsernsMode === 'host' || host.PidMode === 'host' ||
+      host.IpcMode === 'host' || host.UTSMode === 'host') {
+    gaps.push('DOCKER_CAPABILITIES');
+  }
+  if (!Array.isArray(host.Binds ?? []) || (host.Binds ?? []).length > 0 ||
+      !Array.isArray(host.Mounts ?? []) || (host.Mounts ?? []).length > 0) {
+    gaps.push('DOCKER_HOST_MOUNTS');
+  }
+  if (!Array.isArray(host.Devices ?? []) || (host.Devices ?? []).length > 0 ||
+      !Array.isArray(host.DeviceRequests ?? []) || (host.DeviceRequests ?? []).length > 0) {
+    gaps.push('DOCKER_DEVICES');
+  }
+  if (!host.PortBindings || typeof host.PortBindings !== 'object' ||
+      Array.isArray(host.PortBindings) || Object.keys(host.PortBindings).length > 0 ||
+      (container.NetworkSettings?.Ports &&
+       Object.values(container.NetworkSettings.Ports).some(binding =>
+         Array.isArray(binding) && binding.length > 0))) {
+    gaps.push('DOCKER_PUBLISHED_PORTS');
+  }
+  // Docker inspect may list its own tmpfs mounts separately. Any mounted
+  // host file, Docker socket or persistent volume is forbidden for a kiosk.
+  if (!Array.isArray(container.Mounts ?? []) ||
+      (container.Mounts ?? []).some(mount =>
+        !mount || mount.Type !== 'tmpfs' ||
+        !['/config', '/tmp'].includes(mount.Destination))) {
+    gaps.push('DOCKER_EFFECTIVE_MOUNTS');
+  }
+  for (const [directory, maxBytes, label] of [
+    ['/config', 2 * 1024 ** 3, 'DOCKER_CONFIG_TMPFS'],
+    ['/tmp', 1024 ** 3, 'DOCKER_TMP_TMPFS']
+  ]) {
+    const raw = host.Tmpfs?.[directory];
+    const parts = typeof raw === 'string' ? raw.split(',') : [];
+    const size = parts.find(part => /^size=/.test(part));
+    const match = size?.match(/^size=(\d+)([kmg])$/i);
+    const units = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 };
+    const byteSize = match ? Number(match[1]) * units[match[2].toLowerCase()] : 0;
+    if (!parts.includes('noexec') || !parts.includes('nosuid') ||
+        !Number.isSafeInteger(byteSize) || byteSize <= 0 ||
+        byteSize > maxBytes || parts.includes('exec') || parts.includes('suid')) {
+      gaps.push(label);
+    }
+  }
   return { acceptable: gaps.length === 0, gaps };
 }
 
