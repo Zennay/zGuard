@@ -73,7 +73,15 @@
 
     const interceptPopupLink = (event) => {
       if (event.type === 'auxclick' && event.button !== 1) return;
-      const anchor = event.target && event.target.closest ? event.target.closest('a,area') : null;
+      // Document capture retargets open-shadow-root clicks to their host.
+      // Composed paths retain the inner link without crossing closed roots.
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      let anchor = null;
+      for (const node of [...path, event.target]) {
+        if (!node || typeof node.closest !== 'function') continue;
+        anchor = node.closest('a,area');
+        if (anchor) break;
+      }
       if (!anchor) return;
       const href = linkValue(anchor, 'href');
       const target = linkValue(anchor, 'target');

@@ -64,14 +64,19 @@ async function loadContentScript(relativePath, mode, enabled = true) {
   return {
     open: (url) => context.window.open(url),
     click(href, { target = '_blank', ctrlKey = false, metaKey = false,
-      button = 0, elementTag = 'a', eventType = 'click' } = {}) {
+      button = 0, elementTag = 'a', eventType = 'click', shadow = false } = {}) {
       const actions = [];
+      // Retarget to a host on document capture but preserve the inner link
+      // in composedPath(), exactly as open Shadow DOM does in the browser.
+      const clickedNode = {
+        closest: (selector) => selector.split(',').includes(elementTag)
+          ? { href, target } : null
+      };
+      const shadowHost = { closest: () => null };
       const event = {
         type: eventType,
-        target: {
-          closest: (selector) => selector.split(',').includes(elementTag)
-            ? { href, target } : null
-        },
+        target: shadow ? shadowHost : clickedNode,
+        composedPath() { return shadow ? [clickedNode, shadowHost] : [clickedNode]; },
         ctrlKey, metaKey, button,
         preventDefault() { actions.push('preventDefault'); },
         stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
@@ -311,6 +316,34 @@ async function verifyBrowser(relativePath) {
     relativePath + ': modified area gesture must be intercepted'
   );
 
+  // Source-executing browser parity: shadow-retargeted popup gestures.
+  assert.deepEqual(balanced.click('https://ads.al5sm.com/popup', { shadow: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile Shadow DOM popup must be intercepted');
+  assert.equal(balanced.events.at(-1)?.event, 'external-link',
+    relativePath + ': shadow interception preserves existing telemetry');
+  assert.deepEqual(balanced.click('https://example.org/watch', { shadow: true }),
+    [], relativePath + ': benign shadow popup stays available in balanced mode');
+  assert.deepEqual(balanced.click('https://ads.al5sm.com/popup',
+    { shadow: true, target: '_self', ctrlKey: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile shadow Ctrl-click must be intercepted');
+  assert.deepEqual(balanced.click('https://ads.al5sm.com/popup',
+    { shadow: true, target: '_self' }),
+    [], relativePath + ': ordinary same-tab shadow link stays available');
+  assert.deepEqual(balanced.click('https://ads.al5sm.com/popup',
+    { shadow: true, elementTag: 'span' }),
+    [], relativePath + ': unrelated shadow node is not a link');
+  assert.deepEqual(strict.click('https://example.org/watch', { shadow: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': strict mode blocks external shadow-root popups');
+  assert.deepEqual(strict.click('/next', { shadow: true }),
+    [], relativePath + ': strict mode allows same-origin shadow-root popups');
+  assert.deepEqual(strict.click('https://ads.al5sm.com/popup',
+    { shadow: true, elementTag: 'area' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': shadow-root image-map hotspot stays protected');
+
   // Actual browser middle-button release emits auxclick, not click.
   assert.deepEqual(
     balanced.click('https://ads.al5sm.com/popup',
@@ -399,6 +432,9 @@ async function verifyBrowser(relativePath) {
   assert.deepEqual(disabled.click('https://ads.al5sm.com/popup',
     { button: 1, eventType: 'auxclick' }), [],
   relativePath + ': disabled mode must preserve native middle click');
+  assert.deepEqual(disabled.click('https://ads.al5sm.com/popup',
+    { shadow: true }), [],
+    relativePath + ': disabled mode preserves native shadow popup behavior');
   assert.deepEqual(disabled.submit('https://ads.al5sm.com/popup'), [],
     relativePath + ': disabled extension must not intercept forms');
   assert.equal(disabled.events.length, 0);

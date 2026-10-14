@@ -96,6 +96,8 @@ jobs:
           node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
           node tests/zguard.chromium-real-browser.test.mjs --require-form-submit
           node tests/zguard.chromium-real-browser.test.mjs --require-auxclick
+          # Mandatory native Shadow DOM retargeting acceptance, not synthetic-only.
+          node tests/zguard.chromium-real-browser.test.mjs --require-shadow-dom
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
           fi
