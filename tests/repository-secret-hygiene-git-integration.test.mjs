@@ -248,7 +248,38 @@ try {
     'unstaged credential value must never appear in scanner logs');
 
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
-  accept('safe binary after contaminated fixture is removed');
+
+  // Config-policy bypass: staging a forbidden field (or an empty default),
+  // then restoring a safe worktree copy, must still fail the shipped checker.
+  const envPath = path.join(tmp, 'zbrowse', '.env.example');
+  const safeExample = 'PORT=8090\n';
+  for (const [label, stagedExample] of [
+    ['credential-bearing field name', 'PORT=8090\nSERVICE_PASSWORD=qa-placeholder\n'],
+    ['missing explicit default', 'PORT=8090\nSERVICE_MODE=\n']
+  ]) {
+    fs.writeFileSync(envPath, stagedExample);
+    git('add', '--', 'zbrowse/.env.example');
+    fs.writeFileSync(envPath, safeExample);
+    const result = runScanner();
+    assert.equal(result.status, 1,
+      label + ': a bad staged example must fail with clean worktree bytes');
+    assert.ok(result.stderr.includes('staged index example'),
+      label + ': failure must identify the index-policy evidence source');
+    assert.equal((result.stdout + result.stderr).includes('qa-placeholder'), false,
+      label + ': test output must not include sample field values');
+  }
+  // Inverse: a valid staged example cannot conceal an unsafe unstaged
+  // worktree modification. Restore both copies before successful recovery.
+  fs.writeFileSync(envPath, safeExample);
+  git('add', '--', 'zbrowse/.env.example');
+  fs.writeFileSync(envPath, 'PORT=8090\nSERVICE_PASSWORD=qa-placeholder\n');
+  const worktreePolicy = runScanner();
+  assert.equal(worktreePolicy.status, 1,
+    'credential-bearing worktree env example must fail despite safe index');
+  assert.ok(worktreePolicy.stderr.includes('worktree example'),
+    'error must identify the active worktree policy');
+  fs.writeFileSync(envPath, safeExample);
+  accept('safe binary and both clean example-config representations after recovery');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
     'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, committed-baseline staged/worktree and hostile-index-path checks, benign public headers, and recovery');
 } finally {

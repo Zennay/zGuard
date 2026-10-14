@@ -311,17 +311,30 @@ assert.deepEqual(
     findings.map(({ file, signature }) => `${JSON.stringify(file)} (${signature})`).join(", ")
 );
 
-const envExample = fs.readFileSync(path.join(root, "zbrowse/.env.example"), "utf8");
-for (const line of envExample.split(/\r?\n/)) {
-  if (!line || line.startsWith("#")) continue;
-  const [key, ...rest] = line.split("=");
-  const value = rest.join("=");
-  assert.ok(value.length > 0, `${key}: tracked example values must be explicit placeholders/defaults`);
-  assert.doesNotMatch(
-    key,
-    /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$/i,
-    `${key}: secret-bearing variables must not be committed with tracked example values`
-  );
+// The special example-config policy applies to the next COMMITTED index
+// blob too; a staged PASSWORD=placeholder is unsafe even if an unstaged
+// worktree rewrite removes the field before this check runs.
+function validateEnvExample(content, source) {
+  for (const line of content.split(/\r?\n/)) {
+    if (!line || line.startsWith("#")) continue;
+    const [key, ...rest] = line.split("=");
+    const value = rest.join("=");
+    assert.ok(value.length > 0,
+      source + ": " + JSON.stringify(key) +
+      ": tracked example values must be explicit placeholders/defaults");
+    assert.doesNotMatch(
+      key,
+      /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$/i,
+      source + ": secret-bearing variable names are forbidden in tracked example values"
+    );
+  }
+}
+validateEnvExample(fs.readFileSync(path.join(root, "zbrowse/.env.example"), "utf8"),
+  "worktree example");
+if (stagedPaths.includes("zbrowse/.env.example")) {
+  validateEnvExample(execFileSync("git", ["show", ":zbrowse/.env.example"], {
+    cwd: root, encoding: "utf8"
+  }), "staged index example");
 }
 
 console.log(`repository secret hygiene contract passed for ${tracked.length} tracked files`);
