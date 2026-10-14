@@ -12,6 +12,11 @@ const strict = requireExactCachePrivacyFlag(process.argv.slice(2));
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
+const approvedSites = JSON.parse(fs.readFileSync(
+  new URL('../zbrowse/gateway/config/sites.json', import.meta.url), 'utf8'));
+assert.ok(Array.isArray(approvedSites) && approvedSites.length > 0,
+  'source-tethered session test needs the reviewed gateway sites');
+const allowedStart = approvedSites[0].url;
 
 function sourceBetween(startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -41,14 +46,14 @@ const sandbox = {
   sessions, sessionsByIp, requestIp, trustProxyHops: 0,
   isSessionExpired() { return false; },
   destroySession() { throw new Error('unexpected teardown in fresh session test'); },
-  validStartUrl(value) { return value === 'https://fawesome.tv/' ? value : null; },
+  validStartUrl(value) { return value === allowedStart ? value : null; },
   sessionAdmission: {
     tryReserve() { reservations++; return { ok: true }; },
     release() { released++; }
   },
   async createSession(givenIp, startUrl) {
     assert.equal(givenIp, ip);
-    assert.equal(startUrl, 'https://fawesome.tv/');
+    assert.equal(startUrl, allowedStart);
     starts++;
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
@@ -69,7 +74,7 @@ try {
     const response = await fetch(target, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://fawesome.tv/' }),
+      body: JSON.stringify({ url: allowedStart }),
       signal: AbortSignal.timeout(4000)
     });
     const payload = await response.json();
