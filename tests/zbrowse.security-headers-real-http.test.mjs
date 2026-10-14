@@ -110,8 +110,9 @@ for (const [label, original, weakened] of [
   assert.ok(source.includes(original), label + ': mutation target missing');
   const changed = source.replace(original, weakened);
   assert.notEqual(changed, source, label + ': fixture must actually be weakened');
-  await assert.rejects(probe(changed), undefined,
-    label + ': weakening shipped Helmet must fail the real HTTP assertion');
+  await assert.rejects(probe(changed),
+    error => error?.code === 'ERR_ASSERTION' && /JSON success:/.test(error.message),
+    label + ': changed middleware must fail the actual HTTP header assertion, not syntax parsing');
   mutations++;
 }
 console.log('Shipped gateway Helmet real HTTP: 3 response classes and ' +
