@@ -222,6 +222,8 @@ try {
   )), 'available capacity on the real page');
   assert.equal(await evaluate('document.getElementById("urlInput").value'),
     approvedStart, 'real browser must choose first reviewed URL');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    false, 'ready gateway must enable the actual Open button');
   assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
     sites.length, 'real UI must populate reviewed curated sites');
 
@@ -240,24 +242,38 @@ try {
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser currently in use', 'browser-full status should not look ready');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    false, 'busy gateway must permit owner session reuse attempt');
   health = 'draining';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser temporarily unavailable', 'real UI must not advertise a draining gateway');
   assert.equal(await evaluate('document.getElementById("capacityText").parentElement.className'),
     'status', 'draining must not retain green readiness styling');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    true, 'draining must disable browser start in real Chromium');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(100);
+  assert.equal(starts, 0,
+    'even scripted form submission must not allocate a browser during drain');
   health = 'invalid';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser engine offline', 'malformed 200 JSON must never appear as ready');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    true, 'malformed health response must deny browser admission');
   health = 'offline';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser engine offline', 'gateway failure must differ from busy');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    true, 'HTTP 503 should prevent a doomed browser POST');
   health = 'ready';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Ready to browse', 'real portal must recover after temporary outage');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    false, 'successful recovery must immediately re-enable Open');
 
   await evaluate('document.getElementById("browserForm").requestSubmit();' +
     'document.getElementById("browserForm").requestSubmit(); true');
@@ -410,7 +426,7 @@ try {
   assert.equal(starts, 7, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
-    'draining/malformed health, recovery, reviewed sites, guarded starts, authenticated local iframe,' +
+    'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' unsafe/expired-viewer rejection, heartbeat failure/retry, no duplicate allocation/release');
 } finally {
