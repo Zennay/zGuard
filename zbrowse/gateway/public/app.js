@@ -89,7 +89,7 @@ async function request(url, options = {}) {
   // A reverse proxy may send an enormous 502 HTML/JSON error response: do not
   // parse or buffer it just to display the already reviewed offline state.
   if ((url === "/api/health" || url === "/api/sites") && !response.ok) {
-    try { await response.body?.cancel?.(); } catch { /* disconnected already */ }
+    await cancelQuietly(() => response.body?.cancel?.());
     const error = new Error("Gateway read unavailable.");
     error.status = response.status;
     throw error;
@@ -98,7 +98,7 @@ async function request(url, options = {}) {
   // bodies: their HTTP status is sufficient for reviewed TV guidance / safe
   // lease teardown. Do not parse unbounded HTML/JSON proxy diagnostics.
   if (!response.ok && (url === "/api/session" || url.endsWith("/heartbeat"))) {
-    try { await response.body?.cancel?.(); } catch { /* already closed */ }
+    await cancelQuietly(() => response.body?.cancel?.());
     const error = new Error("Gateway operation rejected.");
     error.status = response.status;
     throw error;
@@ -127,12 +127,16 @@ async function request(url, options = {}) {
   // returning 202/203/205/206 must not advertise readiness or populate a
   // trusted site catalogue from a status it cannot authoritatively confirm.
   if ((url === "/api/health" || url === "/api/sites") && response.ok) {
-    if (response.status !== 200) throw new Error("Unexpected gateway read status.");
+    if (response.status !== 200) {
+      await cancelQuietly(() => response.body?.cancel?.());
+      throw new Error("Unexpected gateway read status.");
+    }
     // A parseable JSON body with a proxy-provided HTML/plain-text label is
     // not an authoritative health or curated-site response. Both actual
     // Express routes send application/json, optionally with a charset.
     const mediaType = response.headers?.get?.("content-type") || "";
     if (!/^application\/json(?:\s*;|$)/i.test(mediaType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid gateway read response format.");
     }
   }
@@ -145,10 +149,12 @@ async function request(url, options = {}) {
     // A proxy-generated 202 Accepted, 203 Non-Authoritative Information or
     // 206 Partial Content is not confirmation, even with plausible JSON.
     if (response.status !== 200) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Unexpected heartbeat status.");
     }
     const contentType = response.headers?.get?.("content-type") || "";
     if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid heartbeat response format.");
     }
   }
