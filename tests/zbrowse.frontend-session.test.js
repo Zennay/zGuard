@@ -1097,6 +1097,12 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const manual = await bootPortal({ sessionRequest: async () => response(validSession) });
   manual.submit();
   await settle();
+  assert.equal(manual.element('fullscreenButton').focused, true,
+    'opening viewer must focus its first visible keyboard/TV remote control');
+  assert.equal(manual.element('browserView').hidden, false,
+    'focused toolbar control must belong to the visible viewer');
+  assert.equal(manual.element('homeView').hidden, true,
+    'the previously focused home form must be hidden after focus handoff');
   assert.equal(manual.element('browserView').hidden, false, 'manual-close fixture must mount a viewer');
   const close = manual.element('endButton').listeners.click;
   assert.equal(typeof close, 'function', 'End control must be wired to session teardown');
