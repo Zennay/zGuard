@@ -285,6 +285,25 @@ for (const relative of tracked) {
   for (const name of matches) findings.push({ file: relative, signature: name });
 }
 
+// Git commits capture the INDEX, not the worktree. A staged secret can
+// otherwise disappear from the worktree after `git add`, causing a false
+// clean result immediately before `git commit`. Inspect index blobs for
+// every added/copied/modified/renamed staged path as a separate data source.
+// Git's NUL separator preserves spaces, newlines and ANSI in paths; never
+// print matched values or raw path bytes into CI diagnostics.
+const stagedPaths = execFileSync("git",
+  ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], {
+    cwd: root, encoding: "utf8"
+  }).split("\0").filter(Boolean);
+for (const relative of stagedPaths) {
+  const blob = execFileSync("git", ["show", ":" + relative], {
+    cwd: root, encoding: "buffer", maxBuffer: 32 * 1024 * 1024
+  });
+  for (const signature of scanBytes(blob)) {
+    findings.push({ file: relative + " (staged index)", signature });
+  }
+}
+
 assert.deepEqual(
   findings,
   [],
