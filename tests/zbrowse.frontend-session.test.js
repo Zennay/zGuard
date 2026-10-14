@@ -1277,6 +1277,9 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
         return response({ error: diagnostic }, status);
       }
     });
+    // The tiny test DOM has no HTML parser to apply index.html's hidden
+    // attribute; initialise its browser panel to the real document state.
+    unsafeError.element('browserView').hidden = true;
     unsafeError.submit();
     await settle();
     assert.equal(unsafeError.element('formMessage').textContent, expectedMessage,
