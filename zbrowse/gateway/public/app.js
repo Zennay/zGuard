@@ -81,9 +81,14 @@ async function boundedGatewayJson(response, maximumBytes, signal) {
 }
 
 async function request(url, options = {}) {
+  // Gateway API calls are same-origin contracts, never browser navigation.
+  // Fetch follows 301/302/303/307/308 by default, which can turn a rejected
+  // operation into a success from an unrelated endpoint or replay POST/DELETE.
+  // A redirect must fail before any second HTTP request is dispatched.
   const response = await fetch(url, {
     headers: { "content-type": "application/json", ...(options.headers || {}) },
-    ...options
+    ...options,
+    redirect: "error"
   });
   // Read-only health/catalogue errors never contribute trustworthy UI data.
   // A reverse proxy may send an enormous 502 HTML/JSON error response: do not
