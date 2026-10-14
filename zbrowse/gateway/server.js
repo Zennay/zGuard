@@ -78,6 +78,9 @@ function publicSession(session) {
 function validStartUrl(input) {
   try {
     const url = new URL(input || config.startUrl);
+    // Origin excludes URL userinfo: reject Basic-auth credentials even for an
+    // otherwise approved host. This includes percent-encoded userinfo.
+    if (url.username || url.password) return null;
     if (url.protocol !== "https:" || !allowedOrigins.has(url.origin.toLowerCase())) return null;
     return url.href;
   } catch {
@@ -200,6 +203,12 @@ app.get("/api/sites", (req, res) => {
 app.post("/api/session", sessionLimiter, async (req, res) => {
   // Responses can contain browser bearer tokens or their viewer URLs.
   res.setHeader("Cache-Control", "no-store");
+  // Validate the requested URL BEFORE the same-owner reuse fast path, or an
+  // embedded credential can cause the existing bearer to be returned as 200.
+  const startUrl = validStartUrl(req.body?.url);
+  if (!startUrl) {
+    return res.status(400).json({ error: "This website is not on the allowed list." });
+  }
   const ip = requestIp(req, trustProxyHops);
   const existingToken = sessionsByIp.get(ip);
   if (existingToken && sessions.has(existingToken)) {
@@ -208,11 +217,6 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
       return res.json(publicSession(existingSession));
     }
     await destroySession(existingToken);
-  }
-
-  const startUrl = validStartUrl(req.body?.url);
-  if (!startUrl) {
-    return res.status(400).json({ error: "This website is not on the allowed list." });
   }
 
   const admission = sessionAdmission.tryReserve(ip, sessions.size);
