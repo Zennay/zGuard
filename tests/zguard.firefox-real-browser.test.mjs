@@ -4,6 +4,8 @@
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 
 const args=process.argv.slice(2);
@@ -120,6 +122,24 @@ async function keyboardActivate(selector){
   await wd('POST','/session/'+session+'/element/'+id+'/value',
     {text:'\uE007',value:['\uE007']});
 }
+async function popupOriginForInstalledAddon(addonId,profileDir){
+  assert.ok(profileDir && path.isAbsolute(profileDir),
+    'Real Firefox profile path required for installed MV2 popup acceptance');
+  let uuid;
+  await until(()=>{
+    try {
+      const prefs=fs.readFileSync(path.join(profileDir,'prefs.js'),'utf8');
+      const marker='user_pref("extensions.webextensions.uuids", ';
+      const line=prefs.split('\n').find(item=>item.startsWith(marker));
+      if(!line)return false;
+      const escaped=line.slice(marker.length).replace(/\);\s*$/,'');
+      const map=JSON.parse(JSON.parse(escaped));
+      uuid=map[addonId];
+      return typeof uuid==='string' && /^[a-f0-9-]{36}$/i.test(uuid);
+    }catch(_){return false;}
+  },'installed Firefox extension UUID in ephemeral profile',60);
+  return 'moz-extension://'+uuid+'/popup.html';
+}
 async function until(fn,description,tries=45){
   for(let i=0;i<tries;i++){if(await fn())return;await sleep(200);}
   throw new Error('Timeout waiting for '+description);
@@ -160,6 +180,7 @@ try{
   const addon=await wd('POST','/session/'+session+'/moz/addon/install',
     {path:xpi,temporary:true});
   assert.equal(typeof addon,'string','Must install the shipped Firefox MV2 extension');
+  const profileDir=started.capabilities?.['moz:profile'];
   await wd('POST','/session/'+session+'/url',{url:origin});
   await until(()=>evaluate('return document.readyState==="complete"'),'local fixture');
   // Only the readiness probe is synthetic. Actual acceptance uses WebDriver clicks.
@@ -234,8 +255,61 @@ try{
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
   const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
+  // A second real browser tab displays the actual installed extension popup.
+  // Preserve the original fixture tab: this is live storage propagation, not
+  // merely a fresh navigation after settings have changed.
+  const originalHandle=await wd('GET','/session/'+session+'/window');
+  const popupUrl=await popupOriginForInstalledAddon(addon,profileDir);
+  const created=await wd('POST','/session/'+session+'/window/new',{type:'tab'});
+  assert.ok(created.handle,'Real Firefox must create a separate popup settings tab');
+  await wd('POST','/session/'+session+'/url',{url:popupUrl});
+  await until(()=>evaluate(
+    'return document.querySelector("#status")?.textContent==="Actief" &&'
+    +'!document.querySelector("#enabled")?.disabled'),'actual Firefox popup hydration');
+  await click('.switch .track');
+  await until(()=>evaluate(
+    'return document.querySelector("#status")?.textContent==="Uitgeschakeld" &&'
+    +'document.querySelector("#enabled")?.checked===false'),'Firefox popup disable storage');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  await until(()=>evaluate(
+    'const anchor=document.getElementById("hostile");const n=window.qa.hostileClicks;'
+    +'anchor.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));'
+    +'return window.qa.hostileClicks===n+1;'),'disabled policy reaching already-open Firefox tab');
+  const disabledBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await click('#hostile');
+  const disabledAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(disabledAfter.hostileClicks,disabledBefore.hostileClicks+1,
+    'Actual Firefox popup disable must permit trusted native hostile click in existing tab');
+  await wd('POST','/session/'+session+'/window',{handle:created.handle});
+  await click('.switch .track');
+  await click('[data-mode="strict"]');
+  await until(()=>evaluate(
+    'return document.querySelector("#status")?.textContent==="Actief" &&'
+    +'document.querySelector("[data-mode=strict]")?.classList.contains("active")'),
+    'strict mode applied through native Firefox popup');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  await until(()=>evaluate(
+    'const anchor=document.getElementById("ordinary");const n=window.qa.ordinaryClicks;'
+    +'anchor.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));'
+    +'return window.qa.ordinaryClicks===n;'),'strict policy reaching already-open Firefox tab');
+  const strictBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await click('#ordinary');
+  const strictAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(strictAfter.ordinaryClicks,strictBefore.ordinaryClicks,
+    'Actual Firefox popup strict mode must stop trusted native ordinary external click');
+  await wd('POST','/session/'+session+'/window',{handle:created.handle});
+  await click('[data-mode="balanced"]');
+  await until(()=>evaluate(
+    'return document.querySelector("[data-mode=balanced]")?.classList.contains("active")'),
+    'balanced mode restored through native popup');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  const restoredHandles=await wd('GET','/session/'+session+'/window/handles');
+  assert.equal(restoredHandles.length,1,
+    'Temporary Firefox extension-popup tab must be closed cleanly');
   console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map, keyboard and cross-origin iframe protected; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
+  console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
