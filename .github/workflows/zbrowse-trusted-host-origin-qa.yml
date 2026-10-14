@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
+          node tests/zbrowse.host-origin-proof-integrity.test.mjs
           node tests/zbrowse.host-origin-isolation-real-http.test.mjs
           if [ "$REQUIRE_CANONICAL_HOST" = "true" ]; then
             node tests/zbrowse.host-origin-isolation-real-http.test.mjs --require-canonical-host
