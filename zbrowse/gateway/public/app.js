@@ -478,7 +478,7 @@ function showBrowser() {
   // Register the event listener *before* navigation, and close the browser
   // through the normal fail-closed teardown path when 30s elapse.
   frame.addEventListener("load", () => {
-    if (state.session?.token === session.token) {
+    if (state.session === session) {
       window.clearTimeout(state.viewerLoadTimeout);
       state.viewerLoadTimeout = null;
       $("browserLoading").hidden = true;
@@ -491,7 +491,7 @@ function showBrowser() {
     endSession().then(() => {
       // A release failure has its own stronger warning and retains admission
       // lock. Never overwrite that or a subsequent successful viewer.
-      if (!state.session && !pendingReleaseToken) {
+      if (!state.session && !pendingReleaseToken && !sessionStarting) {
         setMessage("Browser stream did not load. Try again.");
       }
     });
