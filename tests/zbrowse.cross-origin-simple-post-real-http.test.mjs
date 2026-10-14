@@ -118,13 +118,23 @@ try {
     ['text/plain', 'launch=anything', 'null']
   ];
   const acceptedSimple = [];
-  // A second cross-origin simple POST for the same client must also fail
-  // before the existing-session fast path can return a bearer-bearing 200.
-  const reused = await submit('application/x-www-form-urlencoded',
-    'url=ignored', 'https://attacker.invalid', true);
-  const reusedUnprotected = reused.status < 400 ||
-    reused.newContainers !== 0 || reused.newReservations !== 0 ||
-    /"token"\s*:|"viewerUrl"\s*:/.test(reused.responseBody);
+  // A pre-existing valid browser can be much more valuable to a cross-site
+  // caller than a fresh allocation. Exercise *every* simple Content-Type
+  // before the fast-path 200 token return, not just urlencoded submissions.
+  const ownerBeforeReuse = sessionsByIp.get(ip);
+  const reusedUnprotected = [];
+  for (const [mediaType, body, origin] of simpleMedia) {
+    const reused = await submit(mediaType, body, origin, true);
+    if (reused.status < 400 || reused.newContainers !== 0 ||
+        reused.newReservations !== 0 ||
+        /"token"\s*:|"viewerUrl"\s*:/.test(reused.responseBody)) {
+      reusedUnprotected.push(mediaType ?? '(no Content-Type; empty body)');
+    }
+    assert.equal(sessionsByIp.get(ip), ownerBeforeReuse,
+      'cross-site replay must not replace existing browser ownership');
+    assert.equal(sessions.size, 1,
+      'cross-site replay must never cause a second running container');
+  }
 
   for (const [mediaType, body, origin] of simpleMedia) {
     const result = await submit(mediaType, body, origin);
@@ -136,15 +146,16 @@ try {
   assert.equal(reserved, released,
     'all admissions, including unsafe request types, must release reservations');
   if (strict) {
-    assert.equal(reusedUnprotected, false,
-      'cross-origin form POST must not reuse or expose a live session');
+    assert.deepEqual(reusedUnprotected, [],
+      'all six cross-origin form variants must fail before token-bearing reuse');
     assert.deepEqual(acceptedSimple, [],
       'cross-site POSTs without JSON media type, including bodyless requests, must never allocate a browser (CSRF admission risk)');
     console.log('Session admission rejects browser-simple cross-origin non-JSON POST bodies');
   } else {
     console.log('Actual gateway simple cross-origin POST source-bound probe: ' +
       'unexpectedly admitted media types=' + acceptedSimple.join(', ') +
-      '; existing-session form reuse unprotected=' + reusedUnprotected +
+      '; existing-session form reuse unprotected=' + reusedUnprotected.length +
+      '/' + simpleMedia.length +
       '. Strict remediation proof: --require-json-only');
   }
 } finally {
