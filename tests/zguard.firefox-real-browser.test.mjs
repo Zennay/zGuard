@@ -20,10 +20,25 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<a id="ordinary" href="/safe" target="_blank">Ordinary</a>'
   +'<form id="hostileForm" action="https://ads.al5sm.com/form" target="_blank">'
   +'<button type="submit" id="submitHostile">Submit</button></form>'
-  +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0};'
-  +'for(const id of ["hostile","ordinary"]){'
+  +'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100">'
+  +'<a id="svgHostile" href="https://ads.al5sm.com/svg" target="_blank">'
+  +'<rect width="110" height="80" fill="red"/></a>'
+  +'<a id="svgOrdinary" href="/safe" target="_blank">'
+  +'<rect x="125" width="110" height="80" fill="green"/></a></svg>'
+  +'<div id="shadowHost"></div>'
+  +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0,'
+  +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0};'
+  +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary"]){'
   +'document.getElementById(id).addEventListener("click",e=>{'
-  +'window.qa[id==="hostile"?"hostileClicks":"ordinaryClicks"]++;e.preventDefault();});}'
+  +'window.qa[id+"Clicks"]++;e.preventDefault();});}'
+  +'const root=document.getElementById("shadowHost").attachShadow({mode:"open"});'
+  +'for(const kind of ["Hostile","Ordinary"]){'
+  +'const a=document.createElement("a");a.id="shadow"+kind;'
+  +'a.href=kind==="Hostile"?"https://ads.al5sm.com/shadow":"/safe";'
+  +'a.target="_blank";a.textContent="Shadow "+kind;'
+  +'a.style.cssText="display:inline-block;padding:20px";'
+  +'a.addEventListener("click",e=>{window.qa["shadow"+kind+"Clicks"]++;e.preventDefault();});'
+  +'root.appendChild(a);}'
   +'document.getElementById("hostileForm").addEventListener("submit",e=>{'
   +'window.qa.hostileSubmits++;e.preventDefault();});</script></body></html>';
 const server=http.createServer((_req,res)=>{
@@ -46,11 +61,14 @@ async function wd(method,route,body,timeout=20000){
   return json.value;
 }
 const evaluate=(script)=>wd('POST','/session/'+session+'/execute/sync',{script,args:[]});
+async function clickElement(e){
+  const id=e?.['element-6066-11e4-a52e-4f735466cecf'];
+  assert.ok(id,'Native WebDriver element reference required');
+  await wd('POST','/session/'+session+'/element/'+id+'/click',{});
+}
 async function click(selector){
   const e=await wd('POST','/session/'+session+'/element',{using:'css selector',value:selector});
-  const id=e['element-6066-11e4-a52e-4f735466cecf'];
-  assert.ok(id, 'Native element missing: '+selector);
-  await wd('POST','/session/'+session+'/element/'+id+'/click',{});
+  await clickElement(e);
 }
 async function until(fn,description,tries=45){
   for(let i=0;i<tries;i++){if(await fn())return;await sleep(200);}
@@ -100,6 +118,12 @@ try{
   await click('#hostile');
   await click('#ordinary');
   await click('#submitHostile');
+  await click('#svgHostile');
+  await click('#svgOrdinary');
+  await clickElement(await evaluate(
+    'return document.getElementById("shadowHost").shadowRoot.querySelector("#shadowHostile")'));
+  await clickElement(await evaluate(
+    'return document.getElementById("shadowHost").shadowRoot.querySelector("#shadowOrdinary")'));
   const after=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(after.hostileClicks,before.hostileClicks,
     'Native hostile Firefox link must be stopped before target');
@@ -107,10 +131,19 @@ try{
     'Ordinary Firefox link must still receive native click');
   assert.equal(after.hostileSubmits,before.hostileSubmits,
     'Native hostile target=_blank Firefox form must be stopped');
+  for(const [blocked,allowed,label] of [
+    ['svgHostileClicks','svgOrdinaryClicks','SVG link'],
+    ['shadowHostileClicks','shadowOrdinaryClicks','open Shadow DOM link']
+  ]){
+    assert.equal(after[blocked],before[blocked],
+      'Native Firefox hostile '+label+' must be stopped in capture phase');
+    assert.equal(after[allowed],before[allowed]+1,
+      'Native Firefox ordinary '+label+' must reach target as positive control');
+  }
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
   const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
-  console.log('Native Firefox MV2 PASS: hostile link blocked, ordinary link allowed, hostile form blocked, one tab.');
+  console.log('Native Firefox MV2 PASS: hostile HTML/SVG/Shadow DOM link and form blocked, ordinary controls allowed, one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
