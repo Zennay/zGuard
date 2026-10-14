@@ -46,11 +46,12 @@ function renderSuggestions() {
 
 let healthRequestSequence = 0;
 let gatewayCanStart = false;
+let siteCatalogueReady = false;
 
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
   // or draining gateway state must prevent an avoidable start POST.
-  startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart;
+  startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart || !siteCatalogueReady;
 }
 
 async function refreshHealth(retryPendingRelease = true) {
@@ -95,6 +96,11 @@ async function refreshHealth(retryPendingRelease = true) {
     }
     gatewayCanStart = true;
     syncStartButton();
+    if (!siteCatalogueReady) {
+      status.className = "status";
+      $("capacityText").textContent = "Site catalogue unavailable";
+      return;
+    }
     if (pendingReleaseToken) {
       status.className = "status";
       $("capacityText").textContent = "Finishing previous browser session";
@@ -140,7 +146,7 @@ let pageActive = true;
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
-  if (sessionStarting || sessionEnding || state.session || !gatewayCanStart) return;
+  if (sessionStarting || sessionEnding || state.session || !gatewayCanStart || !siteCatalogueReady) return;
   const requestGeneration = pageExitGeneration;
   sessionStarting = true;
   setMessage();
@@ -376,14 +382,39 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+function reviewedSiteCatalogue(data) {
+  if (!Array.isArray(data?.sites) || data.sites.length === 0) return false;
+  const urls = new Set();
+  return data.sites.every((site) => {
+    if (!site || typeof site.name !== "string" || !site.name.trim() ||
+        typeof site.url !== "string") return false;
+    try {
+      const url = new URL(site.url);
+      if (url.protocol !== "https:" || url.username || url.password ||
+          url.href !== site.url || urls.has(site.url)) return false;
+      urls.add(site.url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function init() {
   try {
     const data = await request("/api/sites");
+    if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
     state.sites = data.sites;
     renderSuggestions();
-    if (state.sites[0]) urlInput.value = state.sites[0].url;
-  } catch (error) {
-    setMessage(error.message);
+    urlInput.value = state.sites[0].url;
+    siteCatalogueReady = true;
+  } catch {
+    // A healthy /api/health without a usable curated catalogue is not a
+    // usable portal. Never start a browser against an unreviewed suggestion.
+    siteCatalogueReady = false;
+    state.sites = [];
+    renderSuggestions();
+    setMessage("Site catalogue unavailable. Reload to retry.");
   }
 
   await refreshHealth();
