@@ -271,7 +271,7 @@ function showBrowser() {
   state.heartbeat = window.setInterval(() => {
     request("/api/session/" + session.token + "/heartbeat", {
       method: "POST",
-      body: "{}"
+      body: "{}", signal: AbortSignal.timeout(10000)
     }).catch(() => {
       if (state.session?.token === session.token) endSession();
     });
