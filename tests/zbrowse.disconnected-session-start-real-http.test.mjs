@@ -142,6 +142,34 @@ try {
       'shipped baseline currently retains the browser after the client leaves');
     assert.equal(cleanups, 0,
       'shipped baseline has no disconnected-request reclaim');
+
+    // A *different real TCP peer*, not a forged X-Forwarded-For header,
+    // now cannot obtain capacity. Linux treats the full 127/8 prefix as
+    // loopback; binding 127.0.0.2 keeps this observation entirely local.
+    const crossOwner = await new Promise((resolve, reject) => {
+      const other = http.request(endpoint + '/api/session', {
+        method: 'POST',
+        localAddress: '127.0.0.2',
+        headers: { 'content-type': 'application/json' }
+      }, response => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => { body += chunk; });
+        response.on('end', () => resolve({ status: response.statusCode, body }));
+      });
+      other.setTimeout(3000, () =>
+        other.destroy(new Error('cross-owner loopback POST timed out')));
+      other.once('error', reject);
+      other.end(JSON.stringify({ url: startUrl }));
+    });
+    assert.equal(crossOwner.status, 503,
+      'another genuine loopback IP must be denied by retained orphan capacity');
+    assert.equal(JSON.parse(crossOwner.body).error,
+      'All browser sessions are currently in use. Please try again shortly.',
+      'cross-owner capacity denial must not return the lost bearer token');
+    assert.equal(creations, 1,
+      'cross-owner admission denial must happen before any second browser starts');
+
     // Positive control: same-IP recovery is currently possible, although
     // it cannot repair lost capacity for clients who never return.
     const retry = await fetch(endpoint + '/api/session', {
