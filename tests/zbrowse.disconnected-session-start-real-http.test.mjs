@@ -120,34 +120,41 @@ try {
   await until(() => closed.length === 1 && closed[0] === true,
     'server must witness actual HTTP response socket close before session creation');
   resolveStart();
-  await until(() => sessionAdmission.pendingCount === 0 && sessions.size === 1,
+  await until(() => sessionAdmission.pendingCount === 0,
     'server-side start finishes despite client disconnect');
+  // Allow any asynchronous server-side cancellation callback to finish.
+  await sleep(60);
+  const retainedAfterAbort = sessions.size;
   const health = await fetch(endpoint + '/api/health',
     { signal: AbortSignal.timeout(3000) });
   assert.equal(health.status, 200);
   const status = await health.json();
-  assert.equal(status.activeSessions, 1,
-    'actual health route now counts a browser whose original caller got no token');
   assert.equal(status.capacity, 1);
-  assert.equal(cleanups, 0,
-    'current shipped handler has not reclaimed the orphaned start');
-  const retainedAfterAbort = sessions.size;
-
-  // Positive control: the same client IP can later reuse the completed
-  // session, so test a real recovery HTTP route instead of just map state.
-  const retry = await fetch(endpoint + '/api/session', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url: startUrl }),
-    signal: AbortSignal.timeout(3000)
-  });
-  assert.equal(retry.status, 200, 'same-owner retry currently reuses the orphan');
-  const reused = await retry.json();
-  assert.equal(reused.token, token);
-  assert.equal(creations, 1, 'reconnection should not create a second browser');
+  assert.equal(status.activeSessions, retainedAfterAbort,
+    'actual health route must reflect server-owned session registry');
   if (strict) {
     assert.equal(retainedAfterAbort, 0,
-      'disconnected browser start must be reconciled before consuming capacity');
+      'a disconnected start must not retain an unreachable browser allocation');
+    assert.ok(cleanups >= 1,
+      'disconnect reconciliation must execute a real cleanup attempt');
+  } else {
+    assert.equal(retainedAfterAbort, 1,
+      'shipped baseline currently retains the browser after the client leaves');
+    assert.equal(cleanups, 0,
+      'shipped baseline has no disconnected-request reclaim');
+    // Positive control: same-IP recovery is currently possible, although
+    // it cannot repair lost capacity for clients who never return.
+    const retry = await fetch(endpoint + '/api/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: startUrl }),
+      signal: AbortSignal.timeout(3000)
+    });
+    assert.equal(retry.status, 200,
+      'same-owner retry currently reuses the orphan after disconnect');
+    const reused = await retry.json();
+    assert.equal(reused.token, token);
+    assert.equal(creations, 1, 'reconnection must not create a second browser');
   }
   console.log('Shipped real HTTP aborted-start acceptance: browser allocations=' +
     creations + ', retained after disconnect=' + retainedAfterAbort +
