@@ -18,6 +18,14 @@ export function requestIp(req, trustedProxyHops = 1) {
 
   if (chain.some((value) => !value) || chain.length < hops) return socketIp;
 
-  const candidate = chain[chain.length - hops];
-  return isIP(candidate) ? candidate : socketIp;
+  // The selected client address is only trustworthy if the entire configured
+  // right-side proxy chain is valid. A malformed intermediary must not be
+  // used to legitimize an attacker-controlled client further to its left.
+  // Scoped IPv6 zone identifiers are not portable client identities: Node's
+  // net.isIP() accepts them, but rate limiters and proxies may key differently.
+  const trustedChain = chain.slice(-hops);
+  if (trustedChain.some((value) => !isIP(value) || value.includes('%'))) {
+    return socketIp;
+  }
+  return trustedChain[0];
 }

@@ -161,6 +161,16 @@ const invalidTrustedHop = await scenario(i =>
   '198.51.100.' + (20 + i) + ', invalid-trusted-proxy');
 const portTaggedTrustedHop = await scenario(i =>
   '198.51.100.' + (20 + i) + ', 10.0.0.2:' + (4400 + i));
+// Independent of the unresolved Express limiter key mismatch, the shipped
+// gateway ownership resolver must always reject these malformed trusted hops.
+// Keep this as unconditional source-bound real HTTP acceptance in every CI run.
+assert.equal(zoneFallsBack, true,
+  'gateway must reject scoped IPv6 zone IDs from forwarded identities');
+assert.equal(invalidTrustedHop[0].identity.sessionIdentity, '127.0.0.1',
+  'invalid trusted proxy address must fail closed to the actual socket');
+assert.equal(portTaggedTrustedHop[0].identity.sessionIdentity, '127.0.0.1',
+  'trusted proxy addresses must not contain a source port');
+
 const additional = {
   emptyCandidate, quotedCandidate, ipv6ZoneCandidate,
   invalidTrustedHop, portTaggedTrustedHop
