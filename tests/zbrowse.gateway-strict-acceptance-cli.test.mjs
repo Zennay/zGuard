@@ -123,8 +123,9 @@ for (const { filename, flag, workflow, input, env } of cases) {
   const yaml = fs.readFileSync(path.resolve(here, '../.github/workflows', workflow), 'utf8');
   const inputStart = yaml.indexOf('      ' + input + ':');
   assert.ok(inputStart >= 0, filename + ': missing dispatch input');
-  const nextInput = yaml.indexOf('\n      ', inputStart + 8);
-  const inputBlock = yaml.slice(inputStart, nextInput < 0 ? undefined : nextInput);
+  // Dispatch input subfields use eight spaces; a following sibling input
+  // uses exactly six. Do not stop at the first nested description field.
+  const inputBlock = yaml.slice(inputStart).split(/\n {6}(?=\S)/)[0];
   assert.match(inputBlock, /\btype:\s*boolean\b/,
     filename + ': strict dispatch input must be typed boolean');
   assert.match(inputBlock, /\bdefault:\s*false\b/,
