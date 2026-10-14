@@ -1,0 +1,66 @@
+name: zGuard real Firefox acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      require_pageworld:
+        description: "Strict Firefox MAIN-world window.open acceptance (issue #3; expected to fail until fixed)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-real-firefox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firefox-acceptance:
+    name: Real Firefox MV2 link and form acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_PAGEWORLD: ${{ inputs.require_pageworld || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install pinned native Firefox
+        uses: browser-actions/setup-firefox@5914774dda97099441f02628f8d46411fcfbd208 # v1.7.0
+        with:
+          firefox-version: '144.0.2'
+      - name: Install pinned geckodriver
+        uses: browser-actions/setup-geckodriver@5ef1526ed36211ab6cb531ec1cfb11f924ca2dee
+        with:
+          geckodriver-version: '0.36.0'
+      - name: Run real Firefox MV2 acceptance against loopback only
+        shell: bash
+        env:
+          ZGUARD_FIREFOX_XPI: ${{ runner.temp }}/zguard-firefox.xpi
+        run: |
+          set -euo pipefail
+          firefox --version
+          geckodriver --version
+          node --check tests/zguard.firefox-real-browser.test.mjs
+          (
+            cd firefox
+            zip -q -r "$ZGUARD_FIREFOX_XPI"               manifest.json background.js content.js popup.html popup.css popup.js popup-a11y.js
+          )
+          test -s "$ZGUARD_FIREFOX_XPI"
+          node tests/zguard.firefox-real-browser.test.mjs
+          if [ "$REQUIRE_PAGEWORLD" = 'true' ]; then
+            node tests/zguard.firefox-real-browser.test.mjs --require-pageworld
+          fi
