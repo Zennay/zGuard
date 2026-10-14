@@ -33,12 +33,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Lock browser acquisition integrity and retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.portal-chrome-download-integrity.test.mjs
       - name: Install immutable Chrome for Testing
         shell: bash
         run: |
           set -euo pipefail
           CHROME_VERSION=155.0.8059.39
-          curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 150 \
+          curl --fail --silent --show-error --location --http1.1 --retry-all-errors --retry 4 --retry-delay 2 --connect-timeout 15 --max-time 150 \
             "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" \
             -o "$RUNNER_TEMP/chrome-for-testing.zip"
           printf '%s  %s\n' \
