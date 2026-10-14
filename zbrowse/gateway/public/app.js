@@ -466,6 +466,10 @@ function showBrowser() {
   }
   homeView.hidden = true;
   browserView.hidden = false;
+  // The previous Open button is now inside a hidden landmark. Move keyboard
+  // and TV-remote focus to a visible, operable viewer control immediately.
+  // End session remains the next Tab stop and restores focus to URL input.
+  $("fullscreenButton").focus();
   $("browserLoading").hidden = false;
 
   const frame = $("browserFrame");
