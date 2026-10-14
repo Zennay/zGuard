@@ -42,6 +42,12 @@ let route;
 
 const sandbox = {
   app: {
+    // The source extraction also includes the token-wide no-store middleware.
+    use(url, handler) {
+      assert.equal(url, '/api/session/:token',
+        'all methods on bearer session URLs must be covered before route handling');
+      assert.equal(typeof handler, 'function');
+    },
     post(url, limiter, handler) {
       assert.equal(url, '/api/session', 'test must execute the actual session URL');
       assert.equal(typeof handler, 'function', 'session route must be executable');
