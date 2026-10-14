@@ -49,6 +49,8 @@ jobs:
         run: |
           set -euo pipefail
           node tests/zbrowse.rate-limit-identity-parity.test.mjs
+          node tests/zbrowse.actual-session-limiter.test.mjs
           if [ "$REQUIRE_KEY_PARITY" = "true" ]; then
             node tests/zbrowse.rate-limit-identity-parity.test.mjs --require-key-parity
+            node tests/zbrowse.actual-session-limiter.test.mjs --require-source-parity
           fi
