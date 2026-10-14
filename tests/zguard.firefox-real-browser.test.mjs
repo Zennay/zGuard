@@ -118,8 +118,8 @@ try{
   await click('#hostile');
   await click('#ordinary');
   await click('#submitHostile');
-  await click('#svgHostile');
-  await click('#svgOrdinary');
+  await click('#svgHostile rect');
+  await click('#svgOrdinary rect');
   await clickElement(await evaluate(
     'return document.getElementById("shadowHost").shadowRoot.querySelector("#shadowHostile")'));
   await clickElement(await evaluate(
