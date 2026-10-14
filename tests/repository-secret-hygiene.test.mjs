@@ -37,42 +37,6 @@ function verifyTokenBoundary(pattern) {
     assert.equal(pattern.test(real), true,
       "standalone API token must still be detected regardless of wrapping");
   }
-  // Unicode-encoded secrets must not bypass high-confidence detection.
-// Both byte orders, BOM-less buffers and odd/even byte alignment are covered;
-// a raw Latin-1-only scanner necessarily misses these test fixtures.
-for (const [name, synthetic] of examples) {
-  const le = Buffer.from(synthetic, "utf16le");
-  for (const [endian, encoded] of [
-    ["LE", le],
-    ["BE", Buffer.from(le).swap16()]
-  ]) {
-    for (const offset of [0, 1]) {
-      const binary = Buffer.concat([
-        Buffer.alloc(offset, 0xff), encoded, Buffer.from([0])
-      ]);
-      assert.ok(scanBytes(binary).includes(name),
-        name + ": UTF-16" + endian + " secret at byte offset " + offset +
-        " must be rejected even without a BOM");
-    }
-  }
-}
-for (const [name, synthetic] of examples.slice(0, 2)) {
-  const le = Buffer.from(synthetic, "utf16le");
-  const be = Buffer.from(le).swap16();
-  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xff, 0xfe]), le])).includes(name),
-    "UTF-16LE BOM must not mask " + name);
-  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xfe, 0xff]), be])).includes(name),
-    "UTF-16BE BOM must not mask " + name);
-}
-// Mutation control: a scanner restricted to raw byte-preserving Latin-1
-// would falsely accept a real UTF-16 encoded secret.
-assert.throws(() => {
-  const encoded = Buffer.from(examples[0][1], "utf16le");
-  assert.ok(signatures.some(signature =>
-    signature.name === examples[0][0] &&
-    signature.pattern.test(encoded.toString("latin1"))));
-}, undefined, "a Latin-1-only regression must fail Unicode token acceptance");
-
 for (const harmless of [
     "kiosk-coldstart-launch-real-shell.test.mjs",
     "prefix" + simulatedKey,
@@ -138,6 +102,42 @@ for (const [name, synthetic] of examples) {
   assert.ok(scanBytes(Buffer.from(synthetic, "ascii")).includes(name),
     name + ": ordinary text must remain scanned too");
 }
+// Unicode-encoded secrets must not bypass high-confidence detection.
+// Both byte orders, BOM-less buffers and odd/even byte alignment are covered;
+// a raw Latin-1-only scanner necessarily misses these test fixtures.
+for (const [name, synthetic] of examples) {
+  const le = Buffer.from(synthetic, "utf16le");
+  for (const [endian, encoded] of [
+    ["LE", le],
+    ["BE", Buffer.from(le).swap16()]
+  ]) {
+    for (const offset of [0, 1]) {
+      const binary = Buffer.concat([
+        Buffer.alloc(offset, 0xff), encoded, Buffer.from([0])
+      ]);
+      assert.ok(scanBytes(binary).includes(name),
+        name + ": UTF-16" + endian + " secret at byte offset " + offset +
+        " must be rejected even without a BOM");
+    }
+  }
+}
+for (const [name, synthetic] of examples.slice(0, 2)) {
+  const le = Buffer.from(synthetic, "utf16le");
+  const be = Buffer.from(le).swap16();
+  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xff, 0xfe]), le])).includes(name),
+    "UTF-16LE BOM must not mask " + name);
+  assert.ok(scanBytes(Buffer.concat([Buffer.from([0xfe, 0xff]), be])).includes(name),
+    "UTF-16BE BOM must not mask " + name);
+}
+// Mutation control: a scanner restricted to raw byte-preserving Latin-1
+// would falsely accept a real UTF-16 encoded secret.
+assert.throws(() => {
+  const encoded = Buffer.from(examples[0][1], "utf16le");
+  assert.ok(signatures.some(signature =>
+    signature.name === examples[0][0] &&
+    signature.pattern.test(encoded.toString("latin1"))));
+}, undefined, "a Latin-1-only regression must fail Unicode token acceptance");
+
 for (const harmless of [
   Buffer.from([0, 255, 128, 0]),
   Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\0", "utf8"),
