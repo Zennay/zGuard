@@ -104,10 +104,17 @@ async function getJson(origin, route, fetcher) {
   // AbortSignal.timeout above also applies while consuming the actual body.
   const maximumBytes = route === '/api/health' ? 4096 : 65536;
   const length = response.headers.get('content-length');
-  if (length !== null) {
-    assert.match(length, /^[0-9]+$/, route + ': invalid Content-Length header');
-    assert.ok(BigInt(length) <= BigInt(maximumBytes),
-      route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
+  try {
+    if (length !== null) {
+      assert.match(length, /^[0-9]+$/, route + ': invalid Content-Length header');
+      assert.ok(BigInt(length) <= BigInt(maximumBytes),
+        route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
+    }
+  } catch (error) {
+    // Reject on advertised size before reading a single byte. Cancel the
+    // source as well so a misrouted public gateway cannot keep downloading.
+    try { await response.body?.cancel(); } catch { /* Preserve the original failure. */ }
+    throw error;
   }
   assert.ok(response.body, route + ': gateway JSON response body is missing');
   const reader = response.body.getReader();
@@ -120,12 +127,16 @@ async function getJson(origin, route, fetcher) {
       if (done) break;
       received += value.byteLength;
       if (received > maximumBytes) {
-        await reader.cancel();
         throw new Error(route + ': JSON body exceeds ' + maximumBytes + ' bytes');
       }
       decoded += decoder.decode(value, { stream: true });
     }
     decoded += decoder.decode();
+  } catch (error) {
+    // Oversized chunks, invalid UTF-8 and stream failures must stop the
+    // transfer before releasing the lock. Cancellation may itself reject.
+    try { await reader.cancel(); } catch { /* Preserve the original failure. */ }
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -260,6 +271,50 @@ async function selfTest() {
     url.endsWith('/api/health') ? response(sampleHealth)
       : httpJson(JSON.stringify({ ...sampleSites, filler: 'X'.repeat(66000) }))),
   /JSON body exceeds 65536 bytes/);
+
+  // Prove early cancellation for both public readiness GETs. This must
+  // stop an untrusted stream (not merely fail the readiness JSON assertion).
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const [kind, bodyBytes, headers, expected] of [
+      ['declared oversized', '{"status":"ok"}', { 'content-length': '999999' },
+        /advertised JSON body exceeds/],
+      ['invalid declared length', '{"status":"ok"}', { 'content-length': 'NaN' },
+        /invalid Content-Length/],
+      ['received oversized', ' '.repeat(route === '/api/health' ? 4097 : 65537),
+        {}, /JSON body exceeds/],
+      ['malformed UTF-8', new Uint8Array([0xc3, 0x28]), {},
+        /encoded data was not valid|UTF-8|not valid/i]
+    ]) {
+      let cancellations = 0;
+      let readAttempts = 0;
+      const bad = new Response(new ReadableStream({
+        pull(controller) {
+          readAttempts++;
+          if (readAttempts === 1) {
+            controller.enqueue(typeof bodyBytes === 'string'
+              ? new TextEncoder().encode(bodyBytes) : bodyBytes);
+          } else {
+            // The intentionally unending remainder must never be consumed.
+            throw new Error('follow-on stream unexpectedly consumed');
+          }
+        },
+        cancel() { cancellations++; }
+      }), { headers: { 'content-type': 'application/json', ...headers } });
+      const fetcher = async url => url.endsWith(route) ? bad : response(sampleHealth);
+      await assert.rejects(checkPublicReadiness(fetcher), expected,
+        route + ' ' + kind + ' must fail closed');
+      assert.equal(cancellations, 1, route + ' ' + kind + ' must cancel the response body');
+      assert.equal(readAttempts, kind.includes('declared') ? 0 : 1,
+        route + ' ' + kind + ' must not read unexpected follow-on bytes');
+    }
+  }
+  // Cancellation errors cannot hide the genuine oversized-header rejection.
+  const rejectsCancel = new Response(new ReadableStream({
+    cancel() { throw new Error('synthetic cancellation exception'); }
+  }), { headers: { 'content-type': 'application/json',
+    'content-length': '999999' } });
+  await assert.rejects(checkPublicReadiness(async () => rejectsCancel),
+    /advertised JSON body exceeds 4096 bytes/);
 
   const streamedOversize = async url => url.endsWith('/api/health')
     ? response(sampleHealth)
