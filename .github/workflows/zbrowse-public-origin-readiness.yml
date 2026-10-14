@@ -50,6 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           node tests/zbrowse.public-origin-readiness.test.mjs --self-test
+          node tests/zbrowse.public-tv-static-release.test.mjs --self-test
           node tests/zbrowse.gateway-public-api-real-http.test.mjs
           node tests/zbrowse.wait-for-browser-readiness.test.mjs
           if [ "$REQUIRE_VALID_READINESS" = "true" ]; then
@@ -57,4 +58,5 @@ jobs:
           fi
           if [ "$LIVE_PROBE_EVENT" = "workflow_dispatch" ]; then
             node tests/zbrowse.public-origin-readiness.test.mjs --live
+            node tests/zbrowse.public-tv-static-release.test.mjs --live
           fi
