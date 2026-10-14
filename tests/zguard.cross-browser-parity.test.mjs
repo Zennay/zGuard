@@ -118,4 +118,62 @@ assert.ok(
   "cross-browser checkout must not persist credentials"
 );
 
+
+// Real-browser acceptance is authoritative only if it still exercises the
+// shipped popup-target repairs. Lock its negative AND allowed navigation
+// controls, so editing the browser fixture cannot yield a false green CI run.
+const chromiumAcceptance = read("tests/zguard.chromium-real-browser.test.mjs");
+const firefoxAcceptance = read("tests/zguard.firefox-real-browser.test.mjs");
+function verifyPopupBrowserEvidence(chromium, firefox) {
+  for (const needle of [
+    "const targets = { mixedCase: '_BlAnK', named: 'adPopupWindow' };",
+    "observed.popupTargets = targetResult.result?.value;",
+    "matrix?.hostile, { blocked: true, cancelled: true }",
+    "for (const safe of ['ordinary', 'sameOrigin'])",
+    "matrix?.[safe], { blocked: false, cancelled: true }",
+    "anchor.addEventListener('click', cancelAllowed);",
+    "anchor.dispatchEvent(event);"
+  ]) {
+    assert.ok(chromium.includes(needle),
+      "real Chromium must exercise protected + allowed named popup targets: " + needle);
+  }
+  for (const needle of [
+    "['namedHostile','adPopupWindow'",
+    "['namedOrdinary','adPopupWindow'",
+    "['mixedHostile','_BlAnK'",
+    "['mixedOrdinary','_BlAnK'",
+    "for(const [id] of targetCases)await click('#qa'+id);",
+    "assert.equal(after.popupTargetClicks[id],0",
+    "assert.equal(after.popupTargetClicks[id],1",
+    "event.preventDefault();"
+  ]) {
+    assert.ok(firefox.includes(needle),
+      "real native Firefox must exercise protected + allowed popup targets: " + needle);
+  }
+}
+verifyPopupBrowserEvidence(chromiumAcceptance, firefoxAcceptance);
+for (const [label, base, needle, replacement] of [
+  ['Chrome hostile assertion', chromiumAcceptance,
+    "matrix?.hostile, { blocked: true, cancelled: true }",
+    "matrix?.hostile, { blocked: false, cancelled: true }"],
+  ['Chrome navigation positive control', chromiumAcceptance,
+    "for (const safe of ['ordinary', 'sameOrigin'])",
+    "for (const safe of [])"],
+  ['Firefox native click entrypoint', firefoxAcceptance,
+    "for(const [id] of targetCases)await click('#qa'+id);",
+    "for(const [id] of [])await click('#qa'+id);"],
+  ['Firefox hostile assertion', firefoxAcceptance,
+    "assert.equal(after.popupTargetClicks[id],0",
+    "assert.equal(after.popupTargetClicks[id],1"]
+]) {
+  assert.ok(base.includes(needle), label + ": mutation fixture must exist");
+  const mutated = base.replace(needle, replacement);
+  assert.notEqual(mutated, base, label + ": mutated source must change");
+  assert.throws(() => verifyPopupBrowserEvidence(
+    base === chromiumAcceptance ? mutated : chromiumAcceptance,
+    base === firefoxAcceptance ? mutated : firefoxAcceptance
+  ), { code: 'ERR_ASSERTION' },
+  label + ": weakened browser evidence must fail QA");
+}
+
 console.log("zGuard cross-browser contract parity passed");
