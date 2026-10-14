@@ -1411,6 +1411,40 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       status + ': generic error messaging must not permanently poison safe retry');
   }
 
+  // Session creation differs from an ordinary GET: a successful-looking
+  // response may already have minted a real gateway token. Do not mount a
+  // bearer viewer from a mislabeled proxy response, and never orphan the
+  // minted token merely because its JSON media type was not trusted.
+  for (const [label, type] of [
+    ['HTML-type with valid session', 'text/html'],
+    ['missing JSON declaration', null],
+    ['unreviewed problem JSON', 'application/problem+json']
+  ]) {
+    let starts = 0;
+    const malformedStartType = await bootPortal({
+      sessionRequest: async () => {
+        starts++;
+        return response({ ...validSession }, 201, type);
+      }
+    });
+    malformedStartType.element('browserView').hidden = true;
+    malformedStartType.submit();
+    await settle();
+    assert.equal(malformedStartType.element('browserView').hidden, true,
+      label + ': not a trustworthy mounted browser');
+    assert.equal(malformedStartType.element('browserFrame').srcHistory.length, 0,
+      label + ': untrusted proxy media type must never navigate to bearer iframe');
+    assert.equal(malformedStartType.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+      1, label + ': still release minted token through canonical gateway DELETE');
+    assert.equal(malformedStartType.element('formMessage').textContent,
+      'Invalid browser session response.',
+      label + ': generic reviewed guidance, not raw proxy response');
+    assert.equal(malformedStartType.element('startButton').disabled, false,
+      label + ': confirmed cleanup must permit ordinary retry');
+    assert.equal(starts, 1, label + ': no unintended second session POST');
+  }
+
   const invalidSessions = [
     ['absolute viewer', { ...validSession, viewerUrl: 'https://untrusted.example/viewer' }],
     ['javascript viewer', { ...validSession, viewerUrl: 'javascript:alert(1)' }],
