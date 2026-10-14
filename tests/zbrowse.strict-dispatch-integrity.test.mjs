@@ -205,9 +205,15 @@ tamper(fixture, fixture.replace('default: false', 'default: true'),
 tamper(fixture, fixture.replace('REQUIRE_ORIGIN_ISOLATION: ' +
   '$' + "{{ inputs.require_origin_isolation || 'false' }}", 'REQUIRE_ORIGIN_ISOLATION: false'),
   'dispatch-to-environment disconnect');
-tamper(fixture, fixture.replace(
-  'node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation',
-  'node tests/zbrowse.cross-origin-json-real-http.test.mjs'),
+// This strict check is also mandatory on PRs. Mutate the *opt-in* copy,
+// otherwise the unconditional gate is accidentally changed instead and the
+// dispatch-integrity self-test would report a false green.
+const optInStrict = 'node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation';
+const optInOffset = fixture.lastIndexOf(optInStrict);
+assert.ok(optInOffset >= 0, 'the reviewed opt-in strict command must exist');
+tamper(fixture, fixture.slice(0, optInOffset) +
+  'node tests/zbrowse.cross-origin-json-real-http.test.mjs' +
+  fixture.slice(optInOffset + optInStrict.length),
 'false green from baseline-only execution');
 tamper(fixture, fixture.replace(
   'node tests/zbrowse.cross-origin-json-real-http.test.mjs\n',

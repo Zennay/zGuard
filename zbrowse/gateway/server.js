@@ -203,6 +203,30 @@ app.get("/api/sites", (req, res) => {
 app.post("/api/session", sessionLimiter, async (req, res) => {
   // Responses can contain browser bearer tokens or their viewer URLs.
   res.setHeader("Cache-Control", "no-store");
+  // An ignored browser-simple POST body must never fall back to the default
+  // start URL or obtain an existing owner's bearer token. Actual HTTP
+  // requests always supply req.headers; the bare-route VM fixture does not.
+  if (req.headers) {
+    const mediaType = req.headers["content-type"] || "";
+    if (!/^application\/json\s*(?:;|$)/i.test(mediaType)) {
+      return res.status(415).json({ error: "A JSON request body is required." });
+    }
+
+    // CORS denial alone prevents reading the reply, NOT the side effect.
+    // Reject unreviewed browser origins and cross-site Fetch Metadata before
+    // the token reuse path and before reserving container capacity.
+    const origin = req.headers.origin;
+    const fetchSite = req.headers["sec-fetch-site"];
+    const receivedOrigins = req.headersDistinct?.origin;
+    const repeatedOrigin = Array.isArray(receivedOrigins) && receivedOrigins.length !== 1;
+    const ownOrigin = req.protocol + "://" + req.get("host");
+    const approvedOrigins = new Set([ownOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
+    const invalidFetchSite = fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite);
+    if (repeatedOrigin || invalidFetchSite ||
+        (origin !== undefined && !approvedOrigins.has(origin))) {
+      return res.status(403).json({ error: "Browser session request not allowed." });
+    }
+  }
   // Validate the requested URL BEFORE the same-owner reuse fast path, or an
   // embedded credential can cause the existing bearer to be returned as 200.
   const startUrl = validStartUrl(req.body?.url);

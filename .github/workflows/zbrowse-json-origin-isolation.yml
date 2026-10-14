@@ -49,6 +49,8 @@ jobs:
         run: |
           set -euo pipefail
           node tests/zbrowse.cross-origin-json-real-http.test.mjs
+          # Enforce authorization before even a successful preflight/JSON body.
+          node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
           if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then
             node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
           fi
