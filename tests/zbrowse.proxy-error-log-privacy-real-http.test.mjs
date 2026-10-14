@@ -36,7 +36,10 @@ const errors = [
   new Error('proxy failure on /s/' + token +
     '/websockify Authorization: Basic ' + basicAuth),
   new Error('upstream URL https://sample-user:sample-pass@example.invalid/' +
-    '?viewerToken=' + token + ' password=' + password)
+    '?viewerToken=' + token + ' password=' + password),
+  // A proxy exception can also carry arbitrary line breaks; a diagnostic
+  // must never let untrusted text forge additional log records.
+  new Error('synthetic proxy failure\n[INFO] fake-success /s/' + token)
 ];
 let forwards = 0;
 const sandbox = {
@@ -84,35 +87,36 @@ try {
   const viewer = '/s/' + token + '/assets/player.js?quality=1';
   const first = await get(viewer);
   const second = await get(viewer);
-  for (const response of [first, second]) {
+  const third = await get(viewer);
+  for (const response of [first, second, third]) {
     assert.equal(response.status, 502,
       'real gateway must report synthetic upstream connection failure');
     assert.equal(response.body, 'Browser connection interrupted.',
       'the public 502 error must remain generic and credential-free');
   }
-  assert.equal(captured.length, 2, 'every upstream failure should record a diagnostic');
+  assert.equal(captured.length, 3, 'every upstream failure should record a diagnostic');
   assert.ok(captured.every(line => line.includes('Browser proxy error')),
     'logging must keep a generic upstream failure signal');
 
   const denied = await get('/s/' + 'U'.repeat(32) + '/assets/player.js');
   assert.equal(denied.status, 403,
     'invalid token must be blocked before any upstream error path');
-  assert.equal(forwards, 2, 'denied tokens must never be forwarded upstream');
+  assert.equal(forwards, 3, 'denied tokens must never be forwarded upstream');
 
   const restored = await get(viewer);
   assert.deepEqual(restored, { status: 200, body: 'recovered' },
     'a connection failure must not disable later authorized browser use');
-  assert.equal(forwards, 3);
+  assert.equal(forwards, 4);
 
   // Deliberately inspect only in memory. Do not include any synthetic bearer
   // or credential text in CI diagnostics; the pass/fail count is sufficient.
   const sensitiveCanaries = [token, password, basicAuth,
     'sample-user', 'sample-pass', 'viewerToken='];
   const leaking = captured.filter(line =>
-    sensitiveCanaries.some(needle => line.includes(needle)));
+    sensitiveCanaries.some(needle => line.includes(needle)) || /[\r\n]/.test(line));
   if (strict) {
     assert.equal(leaking.length, 0,
-      'viewer proxy diagnostics must redact bearer paths, Basic auth and URL userinfo (new QA owner handoff)');
+      'viewer proxy diagnostics must redact bearer paths, credentials and injected log lines');
   }
   console.log('Shipped viewer proxy error logging over localhost: ' +
     captured.length + ' synthetic upstream failures; privacy-safe logs=' +
