@@ -13,6 +13,10 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zbrowse-conditional-health-cache.yml', [
+    ['require_health_no_store', 'REQUIRE_HEALTH_NO_STORE',
+      [['zbrowse.health-conditional-real-http.test.mjs', '--require-health-no-store']]]
+  ]],
   ['zbrowse-json-origin-isolation.yml', [
     ['require_origin_isolation', 'REQUIRE_ORIGIN_ISOLATION',
       [['zbrowse.cross-origin-json-real-http.test.mjs', '--require-origin-isolation']]]
@@ -162,7 +166,8 @@ function testWorkflow(name, gates, yaml) {
 
 // Mutation self-tests prove the sentinel catches misleading green gates
 // rather than only matching currently-valid source text.
-const [sample, sampleGates] = matrix[0];
+const [sample, sampleGates] = matrix.find(([name]) =>
+  name === 'zbrowse-json-origin-isolation.yml');
 const fixture = fs.readFileSync(path.join(workflowDir, sample), 'utf8');
 const tamper = (original, replacement, reason) => {
   assert.notEqual(original, replacement, reason + ': mutation must change fixture');
