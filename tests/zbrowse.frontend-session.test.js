@@ -1260,8 +1260,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   // reviewed status guidance while retaining safe retry behavior.
   const syntheticSecret = '/s/' + 'S'.repeat(32) + '/?password=fake';
   for (const [status, expectedMessage] of [
-    [400, 'Browser request rejected.'],
-    [403, 'Browser request rejected.'],
+    [400, 'Browser start rejected.'],
+    [403, 'Browser start rejected.'],
     [409, 'Browser currently in use. Try again shortly.'],
     [429, 'Too many browser requests. Try again later.'],
     [503, 'Browser engine unavailable. Try again shortly.'],
