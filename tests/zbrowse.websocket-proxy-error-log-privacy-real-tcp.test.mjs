@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import vm from 'node:vm';
+import { format } from 'node:util';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
 import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
@@ -41,6 +42,7 @@ const errors = [
 // Simulate a network library that wraps credential-bearing auth metadata in
 // a nested exception rather than placing it in the top-level message.
 const nestedFailure = new Error('websocket upstream failed');
+nestedFailure.code = token; // unreviewed transport code must never become a log field
 nestedFailure.cause = new Error('upstream /s/' + token +
   '/websockify Authorization: Basic ' + basic);
 nestedFailure.request = {
@@ -58,7 +60,9 @@ const sandbox = {
   server, sessions, requestIp, requestPath, trustProxyHops: 0,
   config: { idleMs: 300_000 },
   isSessionExpired() { return false; },
-  console: { error(...args) { recorded.push(args.map(String).join(' ')); } },
+  // Match Node console.error's real formatting: String(error) silently omits
+  // nested causes, request metadata and enumerable properties.
+  console: { error(...args) { recorded.push(format(...args)); } },
   browserProxy: {
     async ws(req, socket, options, head) {
       forwards++;
@@ -156,12 +160,20 @@ try {
   // in CI output, even when the strict remediation check fails.
   const canaries = [token, password, basic, 'sample-user', 'sample-pass',
     'qa-user', 'qa-pass', 'Authorization: Basic', 'Bearer '];
+  // Negative control: serializing a full Error through the native Node
+  // console formatter WOULD expose the canaries below. If this assertion
+  // stops holding, the fixture no longer proves the leak it guards against.
+  const unsafeObjectLog = format('Browser proxy error', nestedFailure);
+  assert.ok(canaries.some(needle => unsafeObjectLog.includes(needle)),
+    'native Error object formatting must expose the synthetic nested bearer');
   const leaking = recorded.filter(line =>
     canaries.some(needle => line.includes(needle)) ||
     /[\r\n\x1b\u2028\u2029]/.test(line));
   if (strict) {
     assert.equal(leaking.length, 0,
       'WebSocket proxy diagnostics must not expose upstream credentials, bearer paths or forged log lines');
+    assert.ok(recorded.every(line => line === 'Browser proxy error UPSTREAM_FAILURE'),
+      'unknown upstream codes and nested Error objects must collapse to the reviewed literal category');
   }
   console.log('Shipped real-TCP WebSocket proxy-error privacy: synthetic failures=' +
     recorded.length + ', safe diagnostics=' + (recorded.length - leaking.length) +
