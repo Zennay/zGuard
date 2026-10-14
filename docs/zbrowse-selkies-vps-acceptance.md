@@ -6,13 +6,7 @@ The source-only gate `node tests/zbrowse.selkies-hardening-posture.test.mjs --re
 
 ## Safe execution on the authorized VPS
 
-From the deployed zGuard repository directory, with Docker read permissions, and **only when a reviewed zBrowse browser session already exists**, run:
-
-```sh
-container_ids="$(docker ps --quiet --filter label=zbrowse.managed=true --filter status=running)"
-test "$(printf '%s\n' "$container_ids" | sed '/^$/d' | wc -l)" -eq 1
-docker inspect "$container_ids" | node tools/zbrowse-selkies-effective-posture.mjs --require-selkies-effective
-```
+From the deployed zGuard repository directory, with Docker read permissions, and **only when a reviewed zBrowse browser session already exists**, run the strict operator command `node tools/zbrowse-live-docker-acceptance.mjs --require-live-docker`. It discovers exactly one managed running container, validates the complete Docker ID, calls `docker inspect` using an argument array (never a shell), checks that the inspected ID matches, and evaluates the reviewed Selkies and Docker isolation posture. It never writes or displays the raw inspection document. The previous manual `docker inspect | node` pipeline remains available through `tools/zbrowse-selkies-effective-posture.mjs`, but is no longer the preferred operator path.
 
 The command refuses missing/multiple managed sessions and exits nonzero if any of the eight reviewed settings is absent/weakened, if the legacy transfer variable remains, or if the inspection does not identify a live managed zBrowse container. It also refuses Docker privilege escalation, host/default/container networking, host namespaces, host bind mounts or injected devices, published browser ports, absent CPU/RAM/PID limits, missing `no-new-privileges`, unexpected persistent effective mounts and unbounded/executable `/config` or `/tmp` filesystems. The tool outputs only generic failure categories and the **names** of reviewed missing settings or fixed Docker isolation gap labels, never configuration values.
 
