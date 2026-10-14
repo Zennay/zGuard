@@ -12,7 +12,9 @@ const strictNoStore = requireExactCachePrivacyFlag(process.argv.slice(2));
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
-const first = source.indexOf('app.post("/api/session/:token/heartbeat"');
+// Execute token-wide middleware too: method-denied/OPTIONS requests bypass
+// POST/DELETE route handlers but still contain a bearer in the URL.
+const first = source.indexOf('app.use("/api/session/:token"');
 const last = source.indexOf('app.use("/s/",', first);
 assert.ok(first >= 0 && last > first,
   'production heartbeat and delete handlers must remain extractable');
