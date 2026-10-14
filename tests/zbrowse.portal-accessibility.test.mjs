@@ -68,8 +68,8 @@ assert.match(
 );
 assert.match(
   html,
-  /id="fullscreenButton"[^>]*aria-controls="browserStage"/,
-  "fullscreen control must identify the controlled browser region"
+  /id="fullscreenButton"[^>]*aria-controls="browserView"[^>]*aria-pressed="false"/,
+  "fullscreen control must identify the full toolbar-containing viewer and expose a toggle state"
 );
 assert.match(
   html,

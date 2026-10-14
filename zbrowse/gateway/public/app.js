@@ -285,6 +285,11 @@ async function endSession() {
   $("capacityText").textContent = "Finishing previous browser session";
   state.session = null;
 
+  // End remains available in fullscreen and must return to a normal document
+  // before hiding the viewer and releasing its bearer session.
+  if (document.fullscreenElement === browserView) {
+    document.exitFullscreen().catch(() => {});
+  }
   window.clearInterval(state.heartbeat);
   window.clearInterval(state.countdown);
   state.heartbeat = null;
@@ -312,10 +317,22 @@ form.addEventListener("submit", (event) => {
 
 $("endButton").addEventListener("click", endSession);
 
+function syncFullscreenButton() {
+  const active = document.fullscreenElement === browserView;
+  const button = $("fullscreenButton");
+  button.textContent = active ? "Exit fullscreen" : "Fullscreen";
+  button.setAttribute("aria-pressed", String(active));
+}
+
+document.addEventListener("fullscreenchange", syncFullscreenButton);
+syncFullscreenButton();
+
 $("fullscreenButton").addEventListener("click", async () => {
+  // Fullscreen the entire viewer, not only the iframe stage: the TV toolbar,
+  // its exit control and End session must remain visible and focusable.
   if (!document.fullscreenElement) {
-    await $("browserStage").requestFullscreen().catch(() => {});
-  } else {
+    await browserView.requestFullscreen().catch(() => {});
+  } else if (document.fullscreenElement === browserView) {
     await document.exitFullscreen().catch(() => {});
   }
 });

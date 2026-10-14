@@ -445,6 +445,54 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
 
+  // Actual Fullscreen API + trusted keyboard activation: fullscreen on the
+  // iframe-only stage would hide the toolbar and strand TV users. Chrome must
+  // retain real keyboard-accessible Exit fullscreen and End session controls.
+  const fullscreenFocused = await evaluate('(() => { const b = document.getElementById("fullscreenButton"); b.focus(); return document.activeElement === b; })()');
+  assert.equal(fullscreenFocused, true, 'TV fullscreen control must accept focus');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
+    });
+  }
+  await until(async () => await evaluate(
+    'document.fullscreenElement?.id === "browserView"'
+  ), 'real Chrome fullscreen includes the browser toolbar');
+  assert.deepEqual(await evaluate(`(() => {
+    const root = document.fullscreenElement;
+    const toggle = document.getElementById("fullscreenButton");
+    const end = document.getElementById("endButton");
+    const frame = document.getElementById("browserFrame");
+    const rect = toggle.getBoundingClientRect();
+    return {
+      toolbarInside: root.contains(toggle),
+      endInside: root.contains(end),
+      iframeInside: root.contains(frame),
+      toggleHitTest: document.elementFromPoint(rect.left + rect.width / 2,
+        rect.top + rect.height / 2) === toggle,
+      toggleLabel: toggle.textContent,
+      pressed: toggle.getAttribute("aria-pressed")
+    };
+  })()`), {
+    toolbarInside: true, endInside: true, iframeInside: true,
+    toggleHitTest: true, toggleLabel: 'Exit fullscreen', pressed: 'true'
+  }, 'full-screen TV stream must retain visible interactive toolbar controls');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
+    });
+  }
+  await until(async () => await evaluate(
+    'document.fullscreenElement === null'
+  ), 'real Chrome fullscreen exit through its visible toolbar');
+  assert.equal(await evaluate('document.getElementById("fullscreenButton").textContent'),
+    'Fullscreen', 'fullscreen exit restores control label');
+  assert.equal(await evaluate('document.getElementById("fullscreenButton").getAttribute("aria-pressed")'),
+    'false', 'fullscreen exit restores the accessible toggle state');
+  assert.equal(starts, 1, 'fullscreen toggles must not create a second browser session');
+
   // TV viewers must be able to leave the stream controls with real Escape
   // and land on End session without searching for the button with a pointer.
   // Start from a different focused toolbar control, not a scripted End focus.

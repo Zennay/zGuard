@@ -41,6 +41,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const intervals = new Map();
   const windowEvents = new Map();
   const fullscreenEvents = [];
+  const documentEvents = new Map();
   let nextInterval = 1;
 
   function element(id) {
@@ -50,11 +51,14 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
         disabled: false, src: '', parentElement: { className: '' },
         listeners: {},
         addEventListener(event, callback) { this.listeners[event] = callback; },
+        setAttribute(name, value) { (this.attributes ||= {})[name] = String(value); },
+        getAttribute(name) { return this.attributes?.[name] ?? null; },
         replaceChildren(...children) { this.children = children; },
         focus() { this.focused = true; },
         async requestFullscreen() {
           fullscreenEvents.push('enter:' + id);
           document.fullscreenElement = this;
+          documentEvents.get('fullscreenchange')?.();
         }
       });
       if (id === 'browserFrame') {
@@ -75,11 +79,12 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const document = {
     getElementById: element,
     createElement: () => element('option-' + elements.size),
-    addEventListener() {},
+    addEventListener(event, callback) { documentEvents.set(event, callback); },
     fullscreenElement: null,
     async exitFullscreen() {
       fullscreenEvents.push('exit');
       this.fullscreenElement = null;
+      documentEvents.get('fullscreenchange')?.();
     }
   };
   const window = {
@@ -442,22 +447,38 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     'the TV fullscreen button must register an activation handler');
   await toggleFullscreen();
   assert.equal(fullscreenPortal.document.fullscreenElement,
-    fullscreenPortal.element('browserStage'),
-    'first activation must request fullscreen for the browser stage');
+    fullscreenPortal.element('browserView'),
+    'fullscreen must include toolbar and end-session controls');
+  assert.equal(fullscreenPortal.element('fullscreenButton').textContent, 'Exit fullscreen',
+    'active fullscreen must announce a useful exit control');
+  assert.equal(fullscreenPortal.element('fullscreenButton').getAttribute('aria-pressed'), 'true',
+    'active fullscreen must expose its toggle state');
   await toggleFullscreen();
   assert.equal(fullscreenPortal.document.fullscreenElement, null,
     'second activation must exit fullscreen without losing the browser session');
   assert.deepEqual(fullscreenPortal.fullscreenEvents,
-    ['enter:browserStage', 'exit'],
+    ['enter:browserView', 'exit'],
     'fullscreen enter and exit must each invoke the correct browser API once');
+  assert.equal(fullscreenPortal.element('fullscreenButton').textContent, 'Fullscreen',
+    'exit control must return to the accessible default label');
+  assert.equal(fullscreenPortal.element('fullscreenButton').getAttribute('aria-pressed'), 'false',
+    'fullscreen toggle must reset aria-pressed after exit');
   assert.equal(fullscreenPortal.element('browserFrame').src, validViewer,
     'fullscreen toggling must preserve the authenticated viewer iframe');
   assert.equal(fullscreenPortal.requests.filter(({ url }) =>
     url === '/api/session').length, 1,
   'fullscreen toggling must never allocate another gateway browser');
+  await toggleFullscreen();
+  assert.equal(fullscreenPortal.document.fullscreenElement,
+    fullscreenPortal.element('browserView'), 'end-in-fullscreen fixture must be active');
   await fullscreenPortal.element('endButton').listeners.click();
+  assert.equal(fullscreenPortal.document.fullscreenElement, null,
+    'ending a fullscreen session must exit fullscreen before hiding the viewer');
   assert.equal(fullscreenPortal.element('browserView').hidden, true,
-    'normal End must still work after fullscreen is explicitly exited');
+    'End must release the live session without requiring a prior fullscreen exit');
+  assert.deepEqual(fullscreenPortal.fullscreenEvents,
+    ['enter:browserView', 'exit', 'enter:browserView', 'exit'],
+    'End in fullscreen must call exitFullscreen exactly once');
 
   // When the user ends a viewer, a slow DELETE must hold start admission.
   // Otherwise the same-IP gateway can reuse the about-to-be-revoked token.
