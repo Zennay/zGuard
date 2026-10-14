@@ -53,6 +53,17 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
         focus() { this.focused = true; },
         requestFullscreen: async () => {}
       });
+      if (id === 'browserFrame') {
+        // Record every iframe assignment, not only its final value:
+        // a stale viewer navigation followed by about:blank is still unsafe.
+        const frame = elements.get(id);
+        let currentSrc = frame.src;
+        frame.srcHistory = [];
+        Object.defineProperty(frame, 'src', {
+          get() { return currentSrc; },
+          set(value) { currentSrc = value; frame.srcHistory.push(value); }
+        });
+      }
     }
     return elements.get(id);
   }
@@ -325,6 +336,8 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   await settle();
   assert.equal(expired.element('browserFrame').src, 'about:blank',
     'already-expired session must not leave a viewer mounted');
+  assert.equal(expired.element('browserFrame').srcHistory.includes(validViewer), false,
+    'already-expired bearer URL must never be assigned to the iframe even briefly');
   assert.equal(expired.element('browserView').hidden, true);
   assert.deepEqual(
     [...expired.intervals.values()].map(({ milliseconds }) => milliseconds),
