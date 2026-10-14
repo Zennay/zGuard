@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +12,32 @@ const tracked = execFileSync('git', ['ls-files', '-z'], {
   encoding: 'utf8'
 }).split('\0').filter(Boolean);
 
+const NODE_SHEBANG = /^#!.*(?:\/|\s)node(?:\s|$)/;
+
+function firstLine(file) {
+  const fd = fs.openSync(path.join(root, file), 'r');
+  try {
+    const buffer = Buffer.alloc(256);
+    const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytes).toString('utf8').split(/\r?\n/, 1)[0];
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function isJavaScriptFile(file) {
+  return /\.(?:cjs|mjs|js)$/i.test(file) || NODE_SHEBANG.test(firstLine(file));
+}
+
+assert.match('#!/usr/bin/env node', NODE_SHEBANG);
+assert.match('#!/usr/bin/env -S node --trace-warnings', NODE_SHEBANG);
+assert.match('#!/usr/bin/node', NODE_SHEBANG);
+assert.doesNotMatch('#!/usr/bin/env bash', NODE_SHEBANG);
+assert.match('fixture.JS', /\.(?:cjs|mjs|js)$/i);
+assert.doesNotMatch('fixture.js.map', /\.(?:cjs|mjs|js)$/i);
+
 const javascriptFiles = tracked
-  .filter((file) => /\.(?:cjs|mjs|js)$/.test(file))
+  .filter(isJavaScriptFile)
   .sort();
 
 assert.ok(javascriptFiles.length > 0, 'at least one tracked JavaScript file must be discovered');
