@@ -62,6 +62,7 @@ let heartbeats = 0;
 let rejectHeartbeat = false;
 let hangNextHeartbeat = false;
 let hungHeartbeatCalls = 0;
+let nextHeartbeatReply = null;
 let deleteAlreadyGone = false;
 let nextDeleteProxyError = null;
 let releaseStart = null;
@@ -227,6 +228,16 @@ const server = http.createServer(async (req, res) => {
         hungHeartbeatCalls++;
         // Hold the real loopback HTTP response until the browser's own
         // 10-second lease deadline aborts it. No Docker or VPS involved.
+        return;
+      }
+      if (nextHeartbeatReply) {
+        const reply = nextHeartbeatReply;
+        nextHeartbeatReply = null;
+        if (reply.status === 204) {
+          res.writeHead(204, { 'cache-control': 'no-store' }).end();
+        } else {
+          sendJson(res, reply.status, reply.body);
+        }
         return;
       }
       if (rejectHeartbeat) {
@@ -1559,6 +1570,46 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'confirmed cleanup after timed-out heartbeat must restore normal start');
+
+  // Browser-real guard against false successful lease renewals. All three
+  // responses succeed at the HTTP transport layer, but none confirms a
+  // usable viewer session. Exercise the actual app.js heartbeat interval,
+  // loopback fetch, viewer unmount and one DELETE per invalid reply.
+  for (const [label, reply] of [
+    ['no-content', { status: 204 }],
+    ['negative-json', { status: 200, body: { ok: false, expiresAt: Date.now() + 900_000 } }],
+    ['expired-json', { status: 200, body: { ok: true, expiresAt: Date.now() - 1000 } }]
+  ]) {
+    const startBefore = starts;
+    const deleteBefore = deletions;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startBefore + 1,
+      label + ': start new synthetic browser through localhost POST');
+    assert.ok(releaseStart, label + ': test fixture should hold browser start');
+    releaseStart();
+    releaseStart = null;
+    await until(async () => await evaluate(
+      '!document.getElementById("browserView").hidden'
+    ), label + ': real viewer must mount before heartbeat');
+    await until(async () => await evaluate(
+      'document.getElementById("browserLoading").hidden'
+    ), label + ': viewer must finish loading');
+    assert.equal(await evaluate('typeof window.__qaHeartbeat'), 'function',
+      label + ': test must invoke actual registered heartbeat callback');
+    nextHeartbeatReply = reply;
+    await evaluate('window.__qaHeartbeat(); true');
+    await until(async () => await evaluate(
+      'document.getElementById("browserView").hidden && ' +
+      'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+    ), label + ': successful HTTP with invalid lease must drop iframe');
+    await until(() => deletions === deleteBefore + 1,
+      label + ': invalid lease must send one cleanup DELETE');
+    assert.equal(starts, startBefore + 1,
+      label + ': invalid renewal must not create another browser');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), label + ': completed genuine cleanup permits deliberate retry');
+  }
 
   // Real Chromium must never render raw error JSON from a failed browser
   // POST. A reverse proxy might echo a bearer route or credentials into its
