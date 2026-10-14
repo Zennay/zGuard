@@ -17,7 +17,7 @@ export function parseStrictMode(args) {
 const strict = parseStrictMode(process.argv.slice(2));
 const failures = [];
 
-async function boot(packageName, initial) {
+async function boot(packageName, initial, options = {}) {
   const content = fs.readFileSync(path.join(root, packageName, 'content.js'), 'utf8');
   const stored = { enabled: initial.enabled, mode: initial.mode };
   const changeListeners = [];
@@ -31,6 +31,14 @@ async function boot(packageName, initial) {
       local: {
         get(defaults, callback) {
           const current = { ...defaults, ...stored };
+          if (options.hydrationRaceChange) {
+            // Snapshot is deliberately stale by the time async storage.get
+            // resolves. The subsequent change event must win that race.
+            return new Promise((resolve) => setTimeout(() => {
+              if (typeof callback === 'function') callback(current);
+              resolve(current);
+            }, 5));
+          }
           if (typeof callback === 'function') callback(current);
           return Promise.resolve(current);
         },
@@ -66,6 +74,10 @@ async function boot(packageName, initial) {
   vm.runInNewContext(content, context, {
     filename: packageName + '/content.js', timeout: 1000
   });
+  if (options.hydrationRaceChange) {
+    await api.storage.local.set(options.hydrationRaceChange);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   await Promise.resolve();
   await Promise.resolve();
 
@@ -108,6 +120,16 @@ async function boot(packageName, initial) {
 }
 
 for (const pkg of packages) {
+  const raced = await boot(pkg, { enabled: true, mode: 'balanced' }, {
+    hydrationRaceChange: { enabled: false, mode: 'strict' }
+  });
+  if (raced.open('https://ads.al5sm.com/blocked') === null) {
+    failures.push(pkg + ': stale storage hydration overwrote disabled state');
+  }
+  await raced.change({ enabled: true });
+  if (raced.open('https://example.org/external') !== null) {
+    failures.push(pkg + ': stale storage hydration overwrote strict mode');
+  }
   const active = await boot(pkg, { enabled: true, mode: 'balanced' });
   assert.notEqual(active.open('https://example.org/watch'), null,
     pkg + ': initial balanced mode should allow ordinary external navigation');
