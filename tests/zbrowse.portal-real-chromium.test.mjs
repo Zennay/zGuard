@@ -24,6 +24,23 @@ assert.ok(browser, 'real Chromium is mandatory: never silently skip portal brows
 assert.equal(typeof WebSocket, 'function', 'Node runtime must supply a CDP WebSocket');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// DevToolsActivePort can exist before Chromium finishes writing its value.
+// A partially written file must not cause a false-negative real-browser test.
+function parseDevToolsPort(source) {
+  const firstLine = source.split(/\r?\n/, 1)[0];
+  if (!/^[1-9][0-9]{0,4}$/.test(firstLine)) return null;
+  const port = Number(firstLine);
+  return port <= 65535 ? port : null;
+}
+for (const [sample, expected] of [
+  ['', null], ['0\n', null], ['\n/devtools/browser', null],
+  ['48920\n/devtools/browser/example', 48920],
+  ['65536\n', null], ['17extra\n', null]
+]) {
+  assert.equal(parseDevToolsPort(sample), expected,
+    'TV Chrome debugger port parser must reject partial/malformed files');
+}
 const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
@@ -187,14 +204,22 @@ child.stderr.on('data', data => {
 let socket;
 try {
   const portFile = path.join(profile, 'DevToolsActivePort');
-  for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) {
-    if (child.exitCode !== null) break;
+  let port = null;
+  for (let i = 0; i < 100; i++) {
+    if (fs.existsSync(portFile)) {
+      try {
+        port = parseDevToolsPort(fs.readFileSync(portFile, 'utf8'));
+      } catch (error) {
+        // A new profile file may be replaced between existsSync and read.
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+    if (port !== null || child.exitCode !== null) break;
     await sleep(100);
   }
-  assert.ok(fs.existsSync(portFile),
-    'test Chromium DevTools missing (exit=' + child.exitCode + '): ' + stderr.slice(-1500));
-  const port = Number(fs.readFileSync(portFile, 'utf8').split('\n')[0]);
-  assert.ok(Number.isSafeInteger(port) && port > 0);
+  assert.ok(port !== null,
+    'test Chromium did not publish a valid CDP port (exit=' + child.exitCode +
+      '): ' + stderr.slice(-1500));
   let target;
   for (let i = 0; i < 60; i++) {
     const response = await fetch('http://127.0.0.1:' + port + '/json/list');
