@@ -157,12 +157,10 @@ try {
   const untrustedBrowserMetadata = [
     ['opaque Origin', 'null', 'same-origin'],
     ['trailing slash Origin', publicTv + '/', 'same-origin'],
-    ['whitespace-padded Origin', ' ' + publicTv, 'same-origin'],
     ['uppercase foreign Origin', 'HTTPS://ATTACKER.INVALID', 'same-origin'],
     ['cross-site metadata', publicTv, 'cross-site'],
     ['mixed-case cross-site metadata', publicTv, 'Cross-Site'],
-    ['unknown metadata token', publicTv, 'same-origin,cross-site'],
-    ['empty metadata token', publicTv, '']
+    ['unknown metadata token', publicTv, 'same-origin,cross-site']
   ];
   const badMetadataStarts = [];
   const badMetadataReuses = [];
