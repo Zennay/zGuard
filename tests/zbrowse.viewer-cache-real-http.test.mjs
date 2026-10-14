@@ -81,16 +81,25 @@ try {
   assert.equal(denied.status, 403, 'unknown browser token must be denied via actual HTTP');
   assert.equal(proxyRequests, 1, 'unauthorized request must not reach proxy');
 
-  const directives = String(authorized.cache || '').toLowerCase()
-    .split(',').map(part => part.trim());
-  const safe = directives.includes('no-store') && !directives.includes('public');
+  function hasPrivateCachePolicy(value) {
+    const directives = String(value || '').toLowerCase()
+      .split(',').map(part => part.trim());
+    return directives.includes('no-store') && !directives.includes('public');
+  }
+  const authorizedSafe = hasPrivateCachePolicy(authorized.cache);
+  // Even 403 is sent from a bearer-bearing /s/:token/ URL. Browser, proxy and
+  // intermediary caches must not retain rejected-token responses either.
+  const deniedSafe = hasPrivateCachePolicy(denied.cache);
   if (strict) {
-    assert.equal(safe, true,
+    assert.equal(authorizedSafe, true,
       'real HTTP authenticated viewer must override public upstream cache policy with no-store (issue #284)');
+    assert.equal(deniedSafe, true,
+      'real HTTP rejected-token viewer response must explicitly prohibit caching (issue #284)');
     console.log('Authenticated real HTTP viewer cache privacy PASS');
   } else {
     console.log('Shipped viewer proxy handled localhost authorized 200 and denied 403; ' +
-      'upstream-public-cache overridden=' + safe +
+      'upstream-public-cache overridden=' + authorizedSafe +
+      ', rejected-token-cache protected=' + deniedSafe +
       ' (strict proof requires --require-no-store; issue #284 remains open)');
   }
 } finally {
