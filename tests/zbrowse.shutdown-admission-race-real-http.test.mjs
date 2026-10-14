@@ -24,6 +24,7 @@ assert.ok(parser, 'gateway must retain a bounded JSON parser');
 const handler = [
   parser,
   section('function publicSession(', 'function validStartUrl('),
+  section('app.get("/api/health",', 'app.post("/api/session",'),
   section('app.post("/api/session",', 'app.post("/api/session/:token/heartbeat"'),
   section('async function shutdown() {', 'process.on("SIGTERM"')
 ].join('\n') + '\nshutdown';
@@ -48,7 +49,7 @@ const shutdownExit = new Promise(resolve => { resolveShutdownExit = resolve; });
 
 const context = {
   app, express, Math, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
-  config: { ttlMs: 900_000, idleMs: 600_000 },
+  config: { ttlMs: 900_000, idleMs: 600_000, maxSessions: 1 },
   cleanupTimer: {},
   clearInterval() {},
   setTimeout(_callback, milliseconds) {
@@ -61,6 +62,7 @@ const context = {
   isSessionExpired() { return false; },
   validStartUrl(value) { return value === 'https://fawesome.tv/' ? value : null; },
   sessionAdmission: {
+    pendingCount: 0,
     tryReserve() { reserves++; return { ok: true }; },
     release() { releases++; }
   },
@@ -96,6 +98,9 @@ const listening = new Promise((resolve, reject) => {
 });
 await listening;
 const endpoint = 'http://' + ip + ':' + server.address().port + '/api/session';
+const healthEndpoint = 'http://' + ip + ':' + server.address().port + '/api/health';
+let healthReportsReady = false;
+let healthCode = null;
 let status = null;
 let rejectedByClosedListener = false;
 let shutdownPromise;
@@ -106,6 +111,20 @@ try {
     new Promise((_, reject) => setTimeout(() =>
       reject(new Error('shutdown never entered old-session cleanup')), 2000))
   ]);
+  // Prove readiness semantics during cleanup, not merely that the HTTP
+  // listener eventually closes. A load balancer can still see status=ok
+  // while the browser teardown is paused in the actual shutdown() function.
+  try {
+    const health = await fetch(healthEndpoint, {
+      headers: { connection: 'close' },
+      signal: AbortSignal.timeout(2500)
+    });
+    healthCode = health.status;
+    const body = await health.json();
+    healthReportsReady = health.status === 200 && body.status === 'ok';
+  } catch (error) {
+    if (error?.name !== 'TypeError' || server.listening) throw error;
+  }
   try {
     const reply = await fetch(endpoint, {
       method: 'POST',
@@ -138,6 +157,8 @@ const rejected = rejectedByClosedListener ||
   (status !== null && status >= 400 && starts === 0);
 const orphan = sessions.has(newToken);
 if (strict) {
+  assert.equal(healthReportsReady, false,
+    'real gateway health must not advertise ok while shutdown is actively draining (issue #7)');
   assert.equal(rejected && starts === 0 && !orphan, true,
     'session POST racing shutdown must be drained/rejected before browser creation (issue #7)');
   console.log('Real localhost HTTP shutdown-admission race is fail-closed');
@@ -146,5 +167,7 @@ if (strict) {
     (status ?? 'listener-closed') + ', browserStarts=' + starts +
     ', unmanagedLateSession=' + orphan +
     ', rejectedBeforeCreation=' + rejected +
+    ', healthCodeDuringDrain=' + (healthCode ?? 'listener-closed') +
+    ', healthClaimsReadyDuringDrain=' + healthReportsReady +
     '. Strict proof requires --require-shutdown-drain; issue #7 remains open');
 }
