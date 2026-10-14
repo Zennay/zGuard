@@ -166,7 +166,8 @@ function testWorkflow(name, gates, yaml) {
 
 // Mutation self-tests prove the sentinel catches misleading green gates
 // rather than only matching currently-valid source text.
-const [sample, sampleGates] = matrix[0];
+const [sample, sampleGates] = matrix.find(([name]) =>
+  name === 'zbrowse-json-origin-isolation.yml');
 const fixture = fs.readFileSync(path.join(workflowDir, sample), 'utf8');
 const tamper = (original, replacement, reason) => {
   assert.notEqual(original, replacement, reason + ': mutation must change fixture');
