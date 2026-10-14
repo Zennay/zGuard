@@ -24,6 +24,20 @@ const cases = [
     env: 'REQUIRE_CANONICAL_HOST'
   },
   {
+    filename: 'zbrowse.websocket-upgrade-auth-real-tcp.test.mjs',
+    flag: '--require-websocket-host',
+    workflow: 'zbrowse-viewer-cache-privacy.yml',
+    input: 'require_websocket_host',
+    env: 'REQUIRE_WEBSOCKET_HOST'
+  },
+  {
+    filename: 'zbrowse.websocket-upgrade-auth-real-tcp.test.mjs',
+    flag: '--require-websocket-origin',
+    workflow: 'zbrowse-viewer-cache-privacy.yml',
+    input: 'require_websocket_origin',
+    env: 'REQUIRE_WEBSOCKET_ORIGIN'
+  },
+  {
     filename: 'zbrowse.teardown-failclosed.test.mjs',
     flag: '--require-fail-closed',
     workflow: 'zbrowse-teardown-failclosed.yml',

@@ -60,6 +60,7 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.viewer-cache-privacy.test.mjs
           node tests/zbrowse.viewer-cache-real-http.test.mjs
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs
           if [ "$REQUIRE_WEBSOCKET_ORIGIN" = "true" ]; then
             node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs --require-websocket-origin
