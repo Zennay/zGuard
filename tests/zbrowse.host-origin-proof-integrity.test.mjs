@@ -34,7 +34,10 @@ function verify(source, yaml) {
     'conflictingOrigins.every(denied)',
     'conflictingOriginReuses.every(denied)',
     'conflictingFetchSites.every(denied)',
-    'conflictingFetchSiteReuses.every(denied)'
+    'conflictingFetchSiteReuses.every(denied)',
+    'untrustedBrowserMetadata',
+    'badMetadataStarts.every(([, outcome]) => denied(outcome))',
+    'badMetadataReuses.every(([, outcome]) => denied(outcome))'
   ]) {
     assert.ok(source.includes(needle),
       'duplicate browser metadata must deny start and reuse: ' + needle);
@@ -85,7 +88,13 @@ for (const [label, needle, replacement] of [
     'conflictingOriginReuses.some(denied)'],
   ['duplicate Fetch Metadata start evidence removed',
     'conflictingFetchSites.every(denied)',
-    'conflictingFetchSites.some(denied)']
+    'conflictingFetchSites.some(denied)'],
+  ['untrusted Origin start denial bypassed',
+    'badMetadataStarts.every(([, outcome]) => denied(outcome))',
+    'badMetadataStarts.some(([, outcome]) => denied(outcome))'],
+  ['untrusted Origin reuse denial bypassed',
+    'badMetadataReuses.every(([, outcome]) => denied(outcome))',
+    'badMetadataReuses.some(([, outcome]) => denied(outcome))']
 ]) {
   assert.ok(testSource.includes(needle), label + ': mutation target missing');
   const changed = testSource.replace(needle, replacement);
