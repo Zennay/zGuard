@@ -91,8 +91,8 @@ for (const [name, synthetic] of examples) {
 }
 for (const harmless of [
   Buffer.from([0, 255, 128, 0]),
-  Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\\0", "utf8"),
-  Buffer.from("sk" + "-" + "A".repeat(19) + "\\0", "utf8")
+  Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\0", "utf8"),
+  Buffer.from("sk" + "-" + "A".repeat(19) + "\0", "utf8")
 ]) {
   assert.deepEqual(scanBytes(harmless), [],
     "benign binary and embedded/short markers must remain allowed");
