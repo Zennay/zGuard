@@ -17,6 +17,28 @@ function requireAutomaticValidation(events) {
   }
 }
 
+function requireMainPush(source) {
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex(line => /^  push:\s*(?:#.*)?$/.test(line));
+  assert.ok(start >= 0, 'workflow must retain a block-style push event');
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end];
+    if (line.trim() && !/^\s*#/.test(line) && !/^   /.test(line)) break;
+    end++;
+  }
+  const block = lines.slice(start + 1, end);
+  const branches = block.findIndex(line => /^    branches:\s*(?:#.*)?$/.test(line));
+  assert.ok(branches >= 0, 'push validation must specify main branch');
+  let main = false;
+  for (let i = branches + 1; i < block.length; i++) {
+    const line = block[i];
+    if (line.trim() && !/^\s*#/.test(line) && !/^     /.test(line)) break;
+    if (/^      - (['"]?)main\1\s*(?:#.*)?$/.test(line)) main = true;
+  }
+  assert.ok(main, 'push validation must include main, not only other branches/tags');
+}
+
 function workflowEvents(source) {
   const lines = source.split(/\r?\n/);
   const onIndexes = lines
@@ -84,6 +106,21 @@ for (const [name, events] of [
 requireAutomaticValidation(['pull_request', 'push']);
 requireAutomaticValidation(['workflow_dispatch', 'push', 'pull_request']);
 
+const validPushFixture = [
+  'on:', '  pull_request:', '  push:', '    branches:',
+  '      - main', '  workflow_dispatch:', 'jobs:'
+].join('\n');
+requireMainPush(validPushFixture);
+for (const [label, weakened] of [
+  ['different branch', validPushFixture.replace('      - main', '      - develop')],
+  ['tag only', validPushFixture.replace('    branches:', '    tags:')],
+  ['missing branch selector', validPushFixture.replace('    branches:\n      - main\n', '')],
+  ['push disabled', validPushFixture.replace('  push:', '  workflow_dispatch:')]
+]) {
+  assert.throws(() => requireMainPush(weakened), /push validation|block-style push/,
+    label + ' must not silently bypass main push validation');
+}
+
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
   .sort();
@@ -95,6 +132,7 @@ for (const name of workflows) {
   const source = fs.readFileSync(path.join(workflowDir, name), 'utf8');
   const events = workflowEvents(source);
   requireAutomaticValidation(events);
+  requireMainPush(source);
   const disallowed = [...new Set(events.filter((event) => !allowedEvents.has(event)))]
     .sort();
 
