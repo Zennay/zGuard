@@ -321,6 +321,14 @@ function showBrowser() {
           ack.expiresAt <= Date.now()) {
         throw new Error("Invalid heartbeat acknowledgement.");
       }
+      // A gateway may shorten a session's permitted lifetime. Keep the
+      // original expiry as the upper bound, but immediately enforce a
+      // stricter lease instead of displaying time the browser no longer has.
+      if (state.session?.token === session.token &&
+          ack.expiresAt < session.expiresAt) {
+        session.expiresAt = ack.expiresAt;
+        updateTimer();
+      }
     }).catch(() => {
       if (state.session?.token === session.token) endSession();
     });
