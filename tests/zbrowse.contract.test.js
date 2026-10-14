@@ -136,9 +136,15 @@ assert.ok(
 );
 assert.match(
   createSessionSource,
-  /catch \(error\) \{\s*await stopContainer\(container\);\s*throw error;/,
-  'failed starts must clean up the unpublished container directly'
+  /catch \(error\) \{\s*try \{\s*await stopContainer\(container\);\s*\} catch \{/,
+  'failed starts must attempt direct cleanup before publishing any quarantine'
 );
+assert.match(createSessionSource,
+  /session\.cleanupFailed = true;\s*sessions\.set\(token, session\);\s*sessionsByIp\.set\(ip, token\);/,
+  'unremovable failed starts must be quarantined and consume capacity');
+assert.match(createSessionSource,
+  /throw error;\s*\}\s*\}\s*async function destroySession|throw error;\s*\}\s*$/,
+  'successful cleanup must preserve the original startup failure');
 
 assert.match(browserDockerfile, /COPY zguard \/opt\/zguard/);
 assert.match(browserDockerfile, /COPY policies\/policy\.json \/etc\/chromium\/policies\/managed\/zbrowse-policy\.json/);
