@@ -30,6 +30,7 @@ const session = {
 };
 const sessions = new Map([[token, session]]);
 let proxyRequests = 0;
+let proxyResponseHook;
 const sandbox = {
   app, sessions, requestPath, requestIp, trustProxyHops: 0,
   config: { idleMs: 300_000 },
@@ -37,16 +38,22 @@ const sandbox = {
   console: { error() { throw new Error('unexpected viewer proxy error'); } },
   createProxyServer() {
     return {
+      on(event, handler) {
+        assert.equal(event, 'proxyRes', 'browser cache guard must use the real proxyRes event');
+        proxyResponseHook = handler;
+      },
       async web(req, res, options) {
         proxyRequests++;
         assert.equal(options.target, 'https://fixture-browser:3001',
           'viewer proxy must target the authorized synthetic session');
         assert.equal(options.auth, 'viewer:fixture-only');
-        // Deliberately model a hostile upstream's public caching headers.
-        res.writeHead(200, {
+        // Simulate the actual http-proxy proxyRes hook before header copying.
+        const upstream = { headers: {
           'Cache-Control': 'public, max-age=3600',
           'Content-Type': 'text/plain; charset=utf-8'
-        });
+        } };
+        if (proxyResponseHook) proxyResponseHook(upstream, req, res);
+        res.writeHead(200, upstream.headers);
         res.end('local viewer fixture');
       }
     };

@@ -50,6 +50,8 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.viewer-cache-real-http.test.mjs
           node tests/zbrowse.viewer-conditional-range-real-http.test.mjs
+          # Preserve no-store across 200/206/304/401/403/416/502 and HEAD.
+          node tests/zbrowse.viewer-conditional-range-real-http.test.mjs --require-no-store
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.viewer-conditional-range-real-http.test.mjs --require-no-store
           fi
