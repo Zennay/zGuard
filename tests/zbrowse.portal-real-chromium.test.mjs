@@ -336,6 +336,35 @@ try {
       mode + ': rejected payload must not delete someone else\'s session');
   }
 
+  // Reproduce a pagehide event *while* the real browser's session POST is
+  // waiting on the local gateway. This keeps the QA tab alive so the late
+  // response can resolve; it does not claim navigation-away guarantees for
+  // an aborted network request. The returned token must still be released.
+  viewerResponseMode = 'valid';
+  const viewerGetsBeforeAbandon = viewerRequests;
+  const startsBeforeAbandon = starts;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeAbandon + 1,
+    'in-flight browser start at pagehide');
+  assert.ok(releaseStart, 'synthetic gateway must still be allocating a browser');
+  await evaluate('window.dispatchEvent(new Event("pagehide")); true');
+  assert.equal(deletions, 1, 'pagehide must not delete an as-yet unknown token');
+  releaseStart();
+  releaseStart = null;
+  await until(() => deletions === 2,
+    'late gateway response must release its newly issued token');
+  assert.equal(viewerRequests, viewerGetsBeforeAbandon,
+    'abandoned in-flight start must never initiate viewer GET');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'abandoned start must leave iframe cleared');
+  assert.equal(await evaluate(
+    'state.session === null && state.heartbeat === null && state.countdown === null'
+  ), true, 'abandoned start must never arm session-owned timers');
+  await evaluate('window.dispatchEvent(new Event("pagehide")); true');
+  await sleep(120);
+  assert.equal(deletions, 2,
+    'repeated pagehide after late release must not duplicate teardown');
+
   // A response can be structurally valid yet already expired by the time
   // Chromium receives it. It must still release the server allocation but
   // must not even begin a GET for the expired bearer-bearing viewer iframe.
@@ -348,7 +377,7 @@ try {
   assert.ok(releaseStart, 'synthetic expiry must be returned through real HTTP');
   releaseStart();
   releaseStart = null;
-  await until(() => deletions === 2,
+  await until(() => deletions === 3,
     'expired response must immediately release the issued browser token');
   await sleep(200);
   assert.equal(viewerRequests, viewersBeforeExpiry,
@@ -385,12 +414,12 @@ try {
   await until(() => heartbeats === 1, 'successful real HTTP heartbeat');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     false, 'successful heartbeat must not close a working browser');
-  assert.equal(deletions, 2, 'successful lease renewal must not release a session');
+  assert.equal(deletions, 3, 'successful lease renewal must not release a session');
 
   rejectHeartbeat = true;
   await evaluate('window.__qaHeartbeat(); true');
   await until(() => heartbeats === 2, 'rejected real HTTP heartbeat');
-  await until(() => deletions === 3, 'rejected lease must trigger capacity release');
+  await until(() => deletions === 4, 'rejected lease must trigger capacity release');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     true, 'rejected lease must immediately return user to home');
   assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
@@ -400,15 +429,15 @@ try {
   ), true, 'rejected lease must clear session and all lease timers');
   rejectHeartbeat = false;
   await sleep(150);
-  assert.equal(deletions, 3, 'rejected heartbeat must not double-delete');
+  assert.equal(deletions, 4, 'rejected heartbeat must not double-delete');
 
   // Browser-native page navigation must trigger the shipped pagehide
   // keepalive DELETE rather than leaving a session alive until TTL. This
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 7, 'valid retry after rejected gateway lease');
-  assert.equal(deletions, 3, 'a pending fresh browser must not double-delete released sessions');
+  await until(() => starts === 8, 'valid retry after rejected gateway lease');
+  assert.equal(deletions, 4, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -419,16 +448,16 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 4,
+  await until(() => deletions === 5,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 4, 'browser pagehide must release the final browser exactly once');
-  assert.equal(starts, 7, 'only explicitly requested browser attempts should be sent');
+  assert.equal(deletions, 5, 'browser pagehide must release the final browser exactly once');
+  assert.equal(starts, 8, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' unsafe/expired-viewer rejection, heartbeat failure/retry, no duplicate allocation/release');
+    ' pending-unload cleanup, unsafe/expired viewer, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
