@@ -1182,9 +1182,9 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     'Finishing previous browser session');
   assert.match(failedViewer.element('formMessage').textContent, /Retrying automatically/,
     'cleanup failure must not be obscured by generic stream error');
-  const retry = [...failedViewer.intervals.values()].find(x => x.milliseconds === 20000);
-  assert.ok(retry, 'periodic readiness must remain available for cleanup retries');
-  retry.callback();
+  const viewerReleasePoll = [...failedViewer.intervals.values()].find(x => x.milliseconds === 20000);
+  assert.ok(viewerReleasePoll, 'periodic readiness must remain available for cleanup retries');
+  viewerReleasePoll.callback();
   await settle();
   assert.equal(timeoutDeletes, 2, 'readiness retry must reconcile failed cleanup');
   assert.equal(failedViewer.element('startButton').disabled, false,
