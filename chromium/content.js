@@ -49,6 +49,14 @@
     return '';
   }
 
+
+  // Named browsing contexts can create a new tab/window when absent.
+  // Reserve same-context navigation for the HTML special target keywords.
+  function opensSeparateContext(target) {
+    const name = String(target || '').toLowerCase();
+    return Boolean(name) && !['_self', '_parent', '_top', '_unfencedtop'].includes(name);
+  }
+
   // Content scripts cannot rely on a one-time storage snapshot: settings
   // changes from the popup must take effect in already-open tabs. Subscribe
   // before hydrating storage, so events racing the async read are not lost.
@@ -134,7 +142,7 @@
       const href = linkValue(anchor, 'href');
       const target = linkValue(anchor, 'target');
       if (!href) return;
-      const newTab = target.toLowerCase() === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
+      const newTab = opensSeparateContext(target) || event.ctrlKey || event.metaKey || event.button === 1;
       if (!newTab || !liveSettings.enabled || !shouldBlock(href, liveSettings.mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -154,7 +162,7 @@
         typeof submitter.hasAttribute === 'function' && submitter.hasAttribute(name));
       const target = override('formtarget') ? submitter.formTarget : form.target;
       const action = override('formaction') ? submitter.formAction : form.action;
-      if (String(target).toLowerCase() !== '_blank' || !liveSettings.enabled ||
+      if (!opensSeparateContext(target) || !liveSettings.enabled ||
           !shouldBlock(action || '', liveSettings.mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
