@@ -22,7 +22,11 @@ async function request(url, options = {}) {
   });
   if (response.status === 204) return null;
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || "Something went wrong.");
+  if (!response.ok) {
+    const error = new Error(body.error || "Something went wrong.");
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -49,7 +53,12 @@ function syncStartButton() {
   startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart;
 }
 
-async function refreshHealth() {
+async function refreshHealth(retryPendingRelease = true) {
+  // A failed DELETE must not become a second same-IP POST that reuses the
+  // supposedly ended browser. Retry its release on the regular health poll.
+  if (retryPendingRelease && pendingReleaseToken) {
+    await releasePendingSession();
+  }
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -115,6 +124,8 @@ function checkedSessionPayload(payload) {
 
 let sessionStarting = false;
 let sessionEnding = false;
+let pendingReleaseToken = null;
+let releaseAttemptInFlight = false;
 let pageExitGeneration = 0;
 
 async function startSession(url) {
@@ -197,14 +208,40 @@ function updateTimer() {
   if (remaining <= 0) endSession();
 }
 
+async function releasePendingSession() {
+  if (!pendingReleaseToken || releaseAttemptInFlight) return false;
+  const token = pendingReleaseToken;
+  releaseAttemptInFlight = true;
+  try {
+    await request("/api/session/" + token, { method: "DELETE", keepalive: true });
+    pendingReleaseToken = null;
+    sessionEnding = false;
+    setMessage();
+    return true;
+  } catch (error) {
+    // A 404 confirms this token is no longer an accessible session. Other
+    // failures, including transport errors, leave server teardown unknown.
+    if (error.status === 404 || error.status === 410) {
+      pendingReleaseToken = null;
+      sessionEnding = false;
+      setMessage();
+      return true;
+    }
+    setMessage("Could not confirm browser shutdown. Retrying automatically.");
+    return false;
+  } finally {
+    releaseAttemptInFlight = false;
+    syncStartButton();
+  }
+}
+
 async function endSession() {
   if (!state.session || sessionEnding) return;
-  // The gateway can reuse an existing same-IP token while DELETE is still
-  // in flight. Starting another browser before teardown finishes could mount
-  // a viewer that the previous DELETE subsequently revokes.
+  // Never unlock a fresh start if the old same-owner browser might still be
+  // alive. The next health poll retries an unsuccessful DELETE.
   sessionEnding = true;
+  pendingReleaseToken = state.session.token;
   syncStartButton();
-  const token = state.session.token;
   state.session = null;
 
   window.clearInterval(state.heartbeat);
@@ -216,16 +253,9 @@ async function endSession() {
   browserView.hidden = true;
   homeView.hidden = false;
 
-  try {
-    await request("/api/session/" + token, {
-      method: "DELETE", keepalive: true
-    }).catch(() => {});
-    await refreshHealth();
-  } finally {
-    sessionEnding = false;
-    syncStartButton();
-    urlInput.focus();
-  }
+  await releasePendingSession();
+  await refreshHealth(false);
+  urlInput.focus();
 }
 
 form.addEventListener("submit", (event) => {
@@ -251,10 +281,11 @@ $("fullscreenButton").addEventListener("click", async () => {
 
 window.addEventListener("pagehide", () => {
   pageExitGeneration++;
-  if (state.session) {
-    // Page exit must release capacity, not extend the now-abandoned session.
-    // A keepalive DELETE can be dispatched during document teardown.
-    request("/api/session/" + state.session.token, {
+  const token = state.session?.token || pendingReleaseToken;
+  if (token) {
+    // The previous release may have failed or remained in-flight. Dispatch a
+    // last idempotent keepalive attempt on page exit without granting start.
+    request("/api/session/" + token, {
       method: "DELETE",
       keepalive: true
     }).catch(() => {});
