@@ -314,6 +314,22 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       { name: 'Primary', url: 'https://approved.test/' },
       { name: 'Duplicate', url: 'https://approved.test/' }
     ] })],
+    ['same visible name with different URLs', () => response({ sites: [
+      { name: 'Fawesome', url: 'https://approved.test/' },
+      { name: 'Fawesome', url: 'https://another.test/' }
+    ] })],
+    ['case-folded display collision', () => response({ sites: [
+      { name: 'Fawesome', url: 'https://approved.test/' },
+      { name: 'FAWESOME', url: 'https://another.test/' }
+    ] })],
+    ['compatibility fullwidth display collision', () => response({ sites: [
+      { name: 'Fawesome', url: 'https://approved.test/' },
+      { name: '\uFF26\uFF41\uFF57\uFF45\uFF53\uFF4F\uFF4D\uFF45', url: 'https://another.test/' }
+    ] })],
+    ['space-padded display collision', () => response({ sites: [
+      { name: 'Fawesome', url: 'https://approved.test/' },
+      { name: ' Fawesome ', url: 'https://another.test/' }
+    ] })],
     ['excessive suggestions', () => response({ sites: Array.from({ length: 33 },
       (_, index) => ({ name: 'Approved #' + index, url: 'https://site' + index + '.test/' }))
     })],
