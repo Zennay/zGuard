@@ -39,7 +39,16 @@ for (const site of sites) {
     allowedOrigins.has(new URL(site.url).origin.toLowerCase()),
     "the runtime allowlist must derive from every reviewed site origin"
   );
+  assert.equal(new URL(site.url).username, '',
+    'reviewed allowlist entries cannot embed usernames');
+  assert.equal(new URL(site.url).password, '',
+    'reviewed allowlist entries cannot embed passwords');
 }
+// The public catalogue and runtime origin allowlist must remain matched
+// against the exact audited URL strings: a duplicate hostname on a new port
+// must not inherit authority merely because it shares the base domain.
+assert.equal(new Set(sites.map(site => site.url)).size, sites.length,
+  'curated site URLs must not have duplicate entries');
 
 const defaultSite = sites[0].url;
 for (const value of [undefined, null, "", defaultSite]) {
@@ -84,6 +93,14 @@ for (const [kind, candidate] of [
   ["host suffix", "https://" + hostname + ".attacker.test/"],
   ["deceptive host before @", "https://" + hostname + "@attacker.test/"],
   ["unrelated private host", "https://127.0.0.1/"],
+  ["private RFC1918 host", "https://192.168.1.1/"],
+  ["link-local metadata IP", "https://169.254.169.254/latest/meta-data/"],
+  ["IPv6 loopback", "https://[::1]/"],
+  ["IPv4-mapped IPv6 loopback", "https://[::ffff:127.0.0.1]/"],
+  ["shortened IPv4 loopback", "https://127.1/"],
+  ["integer IPv4 loopback", "https://2130706433/"],
+  ["hexadecimal IPv4 loopback", "https://0x7f000001/"],
+  ["octal IPv4 loopback", "https://0177.0.0.1/"],
   ["DNS root-dot origin", "https://" + hostname + "./"],
   ["invalid bracket syntax", "https://[bad-host/"],
   ["non-string object", { url: defaultSite }]
