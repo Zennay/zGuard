@@ -140,6 +140,12 @@ try {
   const changedHost = await submit({ host: forgedHost, origin: forgedOrigin });
   const reusedHost = await submit({ host: forgedHost, origin: forgedOrigin,
     reuse: true });
+  // A reviewed browser Origin must not authorize requests delivered through
+  // an unreviewed Host either. This tests both allocation and token reuse
+  // instead of only matching a forged Host to a forged Origin.
+  const tvViaForeignHost = await submit({ host: forgedHost, origin: publicTv });
+  const tvReusedViaForeignHost = await submit({ host: forgedHost, origin: publicTv,
+    reuse: true });
   const stillAllowed = await submit({ host: legitimateHost, origin: publicTv });
   assert.ok(admitted(stillAllowed, 201),
     'browser admission must recover after the adversarial Host probe');
@@ -150,10 +156,16 @@ try {
       'unreviewed Host and matching forged Origin must not create a browser');
     assert.ok(denied(reusedHost),
       'unreviewed Host and matching forged Origin must not return a bearer');
+    assert.ok(denied(tvViaForeignHost),
+      'reviewed TV Origin cannot authorize a browser through an unreviewed Host');
+    assert.ok(denied(tvReusedViaForeignHost),
+      'reviewed TV Origin cannot reuse a bearer through an unreviewed Host');
     console.log('Shipped gateway trusted-host origin isolation PASS');
   } else {
     console.log('Actual localhost Host/Origin admission: foreign Host new denied=' +
       denied(changedHost) + '; foreign Host reuse denied=' + denied(reusedHost) +
+      '; foreign Host with reviewed TV Origin new denied=' + denied(tvViaForeignHost) +
+      '; foreign Host with reviewed TV Origin reuse denied=' + denied(tvReusedViaForeignHost) +
       '; canonical-Host negative control denied=' + denied(mismatch) +
       '. No public reverse-proxy or deployed DNS exposure tested.');
   }
