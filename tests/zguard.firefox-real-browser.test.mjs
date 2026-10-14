@@ -94,6 +94,16 @@ async function nativePointer(selector,{button=0,x=0,y=0}={}){
   }]});
   await wd('DELETE','/session/'+session+'/actions');
 }
+async function keyboardActivate(selector){
+  const element=await wd('POST','/session/'+session+'/element',
+    {using:'css selector',value:selector});
+  const id=element?.['element-6066-11e4-a52e-4f735466cecf'];
+  assert.ok(id,'Native keyboard target must exist: '+selector);
+  // W3C WebDriver sends a *trusted* keyboard Enter to the focused element,
+  // unlike synthetic dispatchEvent() or JavaScript .click().
+  await wd('POST','/session/'+session+'/element/'+id+'/value',
+    {text:'\uE007',value:['\uE007']});
+}
 async function until(fn,description,tries=45){
   for(let i=0;i<tries;i++){if(await fn())return;await sleep(200);}
   throw new Error('Timeout waiting for '+description);
@@ -172,10 +182,21 @@ try{
     assert.equal(after[allowed],before[allowed]+1,
       'Native Firefox ordinary '+label+' must reach target as positive control');
   }
+  const beforeKeyboard=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await keyboardActivate('#hostile');
+  await keyboardActivate('#ordinary');
+  await keyboardActivate('#submitHostile');
+  const afterKeyboard=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(afterKeyboard.hostileClicks,beforeKeyboard.hostileClicks,
+    'Trusted Firefox Enter on hostile link must be captured before target');
+  assert.equal(afterKeyboard.ordinaryClicks,beforeKeyboard.ordinaryClicks+1,
+    'Trusted Firefox Enter must still activate an ordinary link');
+  assert.equal(afterKeyboard.hostileSubmits,beforeKeyboard.hostileSubmits,
+    'Trusted Firefox Enter on submit button must not launch hostile form');
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
   const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
-  console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick and image-map hotspot blocked; ordinary controls pass; one tab.');
+  console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map and trusted keyboard Enter form/link blocked; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
