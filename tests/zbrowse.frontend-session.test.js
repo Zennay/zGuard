@@ -286,14 +286,24 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await bootPortal({ siteRequest: async () => oversizedCatalogue });
   assert.equal(oversizedCatalogue.cancelled, true,
     'oversized streamed catalogue must cancel the upstream body');
-  const badCatalogueWire = response(validSites, 200, 'application/json', {
-    chunks: [Uint8Array.from([0xff]), new Uint8Array(10000)]
-  });
-  await bootPortal({ siteRequest: async () => badCatalogueWire });
-  assert.equal(badCatalogueWire.cancelled, true,
-    'malformed catalogue stream must cancel unread bytes');
-  assert.equal(badCatalogueWire.reads, 1,
-    'malformed catalogue stream must never consume subsequent bytes');
+  const badCatalogueReplies = [];
+  await bootPortal({ siteRequest: async () => {
+    // Bootstrap retries /api/sites on health refresh. Model a fresh body per
+    // HTTP response; never reuse the same already-cancelled stream.
+    const reply = response(validSites, 200, 'application/json', {
+      chunks: [Uint8Array.from([0xff]), new Uint8Array(10000)]
+    });
+    badCatalogueReplies.push(reply);
+    return reply;
+  } });
+  assert.ok(badCatalogueReplies.length >= 2,
+    'bootstrap should retry a transiently unavailable catalogue');
+  for (const reply of badCatalogueReplies) {
+    assert.equal(reply.cancelled, true,
+      'malformed catalogue stream must cancel unread bytes on every response');
+    assert.equal(reply.reads, 1,
+      'malformed catalogue stream must never consume subsequent bytes');
+  }
   // A valid UTF-8 multibyte character split across read() chunks is safe.
   const unicodeCatalogue = { sites: [{ name: 'Élite', url: 'https://approved.test/' }] };
   const encoded = new TextEncoder().encode(JSON.stringify(unicodeCatalogue));
