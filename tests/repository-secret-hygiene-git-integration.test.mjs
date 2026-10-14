@@ -148,7 +148,7 @@ try {
   // synthetic secret must not cause a newline/ANSI injection in CI logs.
   // Exercise the exact scanner with a real pathname containing both.
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
-  const unsafeName = 'newline\\nbold-\\x1b[31m.bin'.replace('\\\\n', '\\n');
+  const unsafeName = 'newline\nbold-\x1b[31m.bin';
   const unsafeRelative = 'fixtures/' + unsafeName;
   fs.writeFileSync(path.join(tmp, unsafeRelative), Buffer.from(first, 'ascii'));
   git('add', '--', unsafeRelative);
@@ -159,7 +159,7 @@ try {
     'diagnostics must quote and escape the actual tracked filename');
   assert.equal(unsafeResult.stderr.includes(unsafeRelative), false,
     'raw newline/control bytes from Git paths must never appear in diagnostics');
-  assert.equal(unsafeResult.stderr.includes('\\x1b'), false,
+  assert.equal(unsafeResult.stderr.includes('\x1b'), false,
     'literal terminal escape must never be emitted into CI logs');
   assert.equal((unsafeResult.stdout + unsafeResult.stderr).includes(first), false,
     'diagnostics must not print the matched synthetic secret');
