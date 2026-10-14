@@ -47,6 +47,7 @@ function renderSuggestions() {
 let healthRequestSequence = 0;
 let gatewayCanStart = false;
 let siteCatalogueReady = false;
+let siteCatalogueRequest = null;
 
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
@@ -54,7 +55,43 @@ function syncStartButton() {
   startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart || !siteCatalogueReady;
 }
 
+async function ensureSiteCatalogue() {
+  if (siteCatalogueReady) return true;
+  // A slow /api/sites fetch can overlap multiple health ticks and BFCache
+  // restores. Share one request so every poll sees the same reviewed result.
+  if (siteCatalogueRequest) return siteCatalogueRequest;
+  const attempt = (async () => {
+    try {
+      const data = await request("/api/sites", { cache: "no-store" });
+      if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
+      state.sites = data.sites;
+      renderSuggestions();
+      if (!urlInput.value.trim()) urlInput.value = state.sites[0].url;
+      siteCatalogueReady = true;
+      setMessage();
+      return true;
+    } catch {
+      siteCatalogueReady = false;
+      state.sites = [];
+      renderSuggestions();
+      setMessage("Site catalogue unavailable. Reload to retry.");
+      return false;
+    } finally {
+      syncStartButton();
+    }
+  })();
+  siteCatalogueRequest = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (siteCatalogueRequest === attempt) siteCatalogueRequest = null;
+  }
+}
+
 async function refreshHealth(retryPendingRelease = true) {
+  // A temporarily missing catalogue can recover during the regular health
+  // cycle; TV users should not need to reload the kiosk to unlock Open.
+  if (!siteCatalogueReady) await ensureSiteCatalogue();
   // A failed DELETE must not become a second same-IP POST that reuses the
   // supposedly ended browser. Retry its release on the regular health poll.
   if (retryPendingRelease && pendingReleaseToken) {
@@ -422,22 +459,7 @@ function reviewedSiteCatalogue(data) {
 }
 
 async function init() {
-  try {
-    const data = await request("/api/sites");
-    if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
-    state.sites = data.sites;
-    renderSuggestions();
-    urlInput.value = state.sites[0].url;
-    siteCatalogueReady = true;
-  } catch {
-    // A healthy /api/health without a usable curated catalogue is not a
-    // usable portal. Never start a browser against an unreviewed suggestion.
-    siteCatalogueReady = false;
-    state.sites = [];
-    renderSuggestions();
-    setMessage("Site catalogue unavailable. Reload to retry.");
-  }
-
+  await ensureSiteCatalogue();
   await refreshHealth();
   window.setInterval(refreshHealth, 20000);
 }
