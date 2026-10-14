@@ -99,7 +99,9 @@ const server = http.createServer(async (req, res) => {
         stalledSiteGets++;
         return;
       }
-      if (sitesMode === 'oversized-stream') {
+      if (sitesMode === 'oversized-error') {
+        sendJson(res, 502, { error: 'Upstream failure', padding: 'x'.repeat(75000) });
+      } else if (sitesMode === 'oversized-stream') {
         // Node sends chunked HTTP without Content-Length; Chrome must stop
         // after 64KiB even when the JSON contains a plausible curated list.
         sendJson(res, 200, { sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000) });
@@ -176,6 +178,10 @@ const server = http.createServer(async (req, res) => {
       if (health === 'hang-once') {
         health = 'ready';
         stalledHealthGets++;
+        return;
+      }
+      if (health === 'oversized-error') {
+        sendJson(res, 502, { error: 'Upstream failure', padding: 'x'.repeat(8000) });
         return;
       }
       if (health === 'oversized-stream') {
@@ -509,6 +515,31 @@ try {
     'canonical bounded catalogue must restore browser admission');
   assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
     sites.length, 'reviewed site suggestions return only after bounded JSON read');
+
+  // Untrusted large HTTP error bodies should fail closed without being
+  // parsed by the TV. Test actual browser fetch and origin HTTP, then prove
+  // a healthy GET restores Open rather than poisoning future navigation.
+  health = 'oversized-error';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline', 'chunked 502 health must not claim readiness');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'failed health must disable real Open');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid recovery GET must restore Open after large health error');
+  sitesMode = 'oversized-error';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized 502 site error must lock browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    0, 'failed catalogue must never render spoofed choices');
+  assert.equal(starts, 0, 'failed read-only gateway responses cannot allocate browsers');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'canonical site JSON restores reviewed browser admission');
 
   // Real Chromium/loopback GETs: misleading proxy 202/206 JSON may carry
   // superficially valid health or curated sites, but cannot unlock Open.
