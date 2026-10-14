@@ -19,7 +19,7 @@ for(const bin of ['firefox','geckodriver']){
 }
 const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<a id="hostile" href="https://ads.al5sm.com/private" target="_blank">Hostile</a>'
-  +'<a id="ordinary" href="/safe" target="_blank">Ordinary</a>'
+  +'<a id="ordinary" href="__QA_ORDINARY_EXTERNAL__" target="_blank">Ordinary external</a>'
   +'<form id="hostileForm" action="https://ads.al5sm.com/form" target="_blank">'
   +'<button type="submit" id="submitHostile">Submit</button></form>'
   +'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100">'
@@ -74,7 +74,9 @@ const server=http.createServer((_req,res)=>{
   res.writeHead(200,{'content-type':'text/html; charset=utf-8',
     'cache-control':'no-store','x-content-type-options':'nosniff'});
   const frameUrl='http://127.0.0.1:'+frameServer.address().port+'/child';
-  res.end(fixture.replace('__QA_FRAME_URL__',frameUrl));
+  res.end(fixture.replace('__QA_FRAME_URL__',frameUrl)
+    .replace('__QA_ORDINARY_EXTERNAL__',
+      'http://127.0.0.1:'+frameServer.address().port+'/safe'));
 });
 let driver=null,session=null,port=null,log='';
 async function wd(method,route,body,timeout=20000){
