@@ -95,10 +95,34 @@ try {
       Buffer.from(Buffer.from(second, 'utf16le')).swap16(),
       Buffer.from([0])]));
 
+  // The real tracked-file scan must also reject private-key header forms
+  // frequently produced by encrypted PKCS#8, legacy DSA and OpenPGP tools.
+  // Build fake markers at runtime so no credential-like literals are tracked.
+  for (const [description, marker] of [
+    ['encrypted PKCS#8', 'ENCRYPTED PRIVATE KEY'],
+    ['legacy DSA', 'DSA PRIVATE KEY'],
+    ['OpenPGP', 'PGP PRIVATE KEY BLOCK']
+  ]) {
+    const header = '-----BEGIN ' + marker + '-----';
+    reject(description + ' raw tracked key header', 'PEM private key',
+      Buffer.concat([Buffer.from([0, 255]), Buffer.from(header, 'ascii')]));
+    reject(description + ' tracked UTF-16BE key header', 'PEM private key',
+      Buffer.concat([Buffer.from([0x80, 0xfe, 0xff]),
+        Buffer.from(Buffer.from(header, 'utf16le')).swap16()]));
+  }
+
+  // The policy must not mistake public keys or ordinary certificates for
+  // private credentials even when they are tracked as binary fixtures.
+  for (const marker of ['PUBLIC KEY', 'CERTIFICATE', 'PGP PUBLIC KEY BLOCK']) {
+    writeAndTrack(Buffer.concat([Buffer.from([0, 255]),
+      Buffer.from('-----BEGIN ' + marker + '-----', 'ascii')]));
+    accept('benign tracked ' + marker + ' header');
+  }
+
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
-    'four rejected binary/UTF-16 tracked secrets, and successful recovery');
+    'ten rejected binary/UTF-16/private-key tracked secrets, benign public headers, and recovery');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
