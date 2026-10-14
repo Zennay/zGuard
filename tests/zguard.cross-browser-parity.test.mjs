@@ -77,16 +77,20 @@ assert.deepEqual(
 );
 
 const expectedEvents = ["external-link", "window-open"].sort();
-assert.deepEqual(
-  emittedEvents(chromiumContent),
-  expectedEvents,
-  "Chromium blocked-event telemetry contract must remain complete"
-);
-assert.deepEqual(
-  emittedEvents(firefoxContent),
-  expectedEvents,
-  "Firefox blocked-event telemetry contract must remain complete"
-);
+const chromiumEvents = emittedEvents(chromiumContent);
+const firefoxEvents = emittedEvents(firefoxContent);
+for (const [name, events] of [["Chromium", chromiumEvents], ["Firefox", firefoxEvents]]) {
+  assert.deepEqual(
+    [...new Set(events)].sort(), expectedEvents,
+    name + " blocked-event telemetry types must remain complete"
+  );
+  assert.equal(
+    events.filter((event) => event === "external-link").length, 2,
+    name + " must emit the same reviewed external-link event for both clicks and forms"
+  );
+}
+assert.deepEqual(chromiumEvents, firefoxEvents,
+  "Chromium and Firefox telemetry entry points must retain exact parity");
 
 for (const [name, source] of [
   ["Chromium background", chromiumBackground],
