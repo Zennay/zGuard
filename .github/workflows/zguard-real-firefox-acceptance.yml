@@ -3,7 +3,8 @@ name: zGuard real Firefox acceptance
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       require_pageworld:
@@ -61,6 +62,6 @@ jobs:
           )
           test -s "$ZGUARD_FIREFOX_XPI"
           node tests/zguard.firefox-real-browser.test.mjs
-          if [ "$REQUIRE_PAGEWORLD" = 'true' ]; then
+          if [ "$REQUIRE_PAGEWORLD" = "true" ]; then
             node tests/zguard.firefox-real-browser.test.mjs --require-pageworld
           fi
