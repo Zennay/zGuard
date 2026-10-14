@@ -24,6 +24,17 @@ export function assessDockerInspect(document) {
     'inspect container must be an object');
   assert.equal(container.Config?.Labels?.['zbrowse.managed'], 'true',
     'inspect must identify a managed zBrowse browser');
+  // An offline record or a fabricated non-container object is not runtime
+  // inspection evidence. Docker inspect provides these stable identity/state
+  // fields; they must identify one actively running managed browser.
+  assert.match(container.Id ?? '', /^[a-f0-9]{64}$/,
+    'inspect must identify a real-format Docker container ID');
+  assert.match(container.Name ?? '', /^\\/zbrowse-[a-z0-9_-]{12}$/,
+    'inspect must target a named zBrowse session container');
+  assert.equal(container.State?.Running, true,
+    'inspect cannot certify a stopped browser container');
+  assert.equal(container.State?.Status, 'running',
+    'inspect must describe the running Docker lifecycle state');
   const entries = container.Config?.Env;
   assert.ok(Array.isArray(entries) && entries.length > 0 && entries.length <= 256,
     'inspect must contain a bounded effective Docker environment');
