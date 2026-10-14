@@ -59,21 +59,55 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
 
 assert.ok(tracked.length > 0, "at least one tracked file must be discovered");
 
+// Scan every tracked byte sequence, including files containing NUL and
+// invalid UTF-8. A secret's ASCII prefix is not made safe by adjacent binary
+// bytes; Latin-1 decoding preserves all byte values without replacement.
+function scanBytes(buffer) {
+  const content = buffer.toString("latin1");
+  return signatures.filter(signature => signature.pattern.test(content))
+    .map(signature => signature.name);
+}
+
+// Synthetic secrets are assembled at runtime, never committed as token-like
+// literals. This test covers binary concealment as well as legitimate text.
+const examples = [
+  ["OpenAI-style secret", "sk" + "-" + "A".repeat(32)],
+  ["GitHub classic token", "gh" + "p_" + "B".repeat(30)],
+  ["GitHub fine-grained token", "github" + "_pat_" + "C".repeat(30)],
+  ["AWS access key id", "AK" + "IA" + "D".repeat(16)],
+  ["Slack bot token", "xox" + "b-" + "E".repeat(30)],
+  ["PEM private key", "-----BEGIN " + "PRIVATE KEY-----"]
+];
+for (const [name, synthetic] of examples) {
+  const binary = Buffer.concat([
+    Buffer.from([0x00, 0xff, 0x80]),
+    Buffer.from("prefix " + synthetic + " suffix", "ascii"),
+    Buffer.from([0x00, 0x01])
+  ]);
+  assert.ok(scanBytes(binary).includes(name),
+    name + ": NUL and non-UTF8 padding must not hide a tracked secret");
+  assert.ok(scanBytes(Buffer.from(synthetic, "ascii")).includes(name),
+    name + ": ordinary text must remain scanned too");
+}
+for (const harmless of [
+  Buffer.from([0, 255, 128, 0]),
+  Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\\0", "utf8"),
+  Buffer.from("sk" + "-" + "A".repeat(19) + "\\0", "utf8")
+]) {
+  assert.deepEqual(scanBytes(harmless), [],
+    "benign binary and embedded/short markers must remain allowed");
+}
+// The previous NUL early-return must demonstrably fail the binary fixture.
+assert.throws(() => {
+  const sample = Buffer.concat([Buffer.from([0]), Buffer.from(examples[0][1])]);
+  const skipped = sample.includes(0) ? [] : scanBytes(sample);
+  assert.ok(skipped.includes(examples[0][0]));
+}, undefined, "the old binary-skip scanner is not an acceptable regression");
+
 const findings = [];
-
 for (const relative of tracked) {
-  const buffer = fs.readFileSync(path.join(root, relative));
-
-  // Git may track binary assets; NUL is a conservative binary signal for this
-  // high-confidence text signature scan.
-  if (buffer.includes(0)) continue;
-
-  const content = buffer.toString("utf8");
-  for (const signature of signatures) {
-    if (signature.pattern.test(content)) {
-      findings.push({ file: relative, signature: signature.name });
-    }
-  }
+  const matches = scanBytes(fs.readFileSync(path.join(root, relative)));
+  for (const name of matches) findings.push({ file: relative, signature: name });
 }
 
 assert.deepEqual(
