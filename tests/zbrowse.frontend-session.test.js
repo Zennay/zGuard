@@ -292,6 +292,80 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(reviewedSite.element('siteSuggestions').children.length, 1,
     'valid reviewed catalogue must still render its suggested site');
 
+  // Once /api/sites returns, the regular health poll must be able to
+  // recover a temporarily unavailable TV without a human or remote reload.
+  // Initial boot intentionally makes two attempts (startup + health), each
+  // failing; the later periodic poll is the first successful catalogue fetch.
+  let catalogueAttempts = 0;
+  const recoveredCatalogue = await bootPortal({
+    siteRequest() {
+      catalogueAttempts++;
+      return catalogueAttempts <= 2
+        ? Promise.reject(new TypeError('temporary catalogue outage'))
+        : response({ sites: [{ name: 'Recovered', url: 'https://approved.test/' }] });
+    }
+  });
+  assert.equal(catalogueAttempts, 2,
+    'bootstrap must attempt the catalogue before showing healthy capacity');
+  assert.equal(recoveredCatalogue.element('startButton').disabled, true,
+    'missing initial catalogue must fail closed until a verified retry');
+  const catalogueHealthPoll = [...recoveredCatalogue.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 20000);
+  assert.ok(catalogueHealthPoll, 'catalogue recovery must reuse normal health polling');
+  catalogueHealthPoll.callback();
+  await settle();
+  assert.equal(catalogueAttempts, 3,
+    'periodic health tick must retry an unavailable catalogue');
+  assert.equal(recoveredCatalogue.element('capacityText').textContent, 'Ready to browse',
+    'successful reviewed catalogue retry must recover TV readiness');
+  assert.equal(recoveredCatalogue.element('startButton').disabled, false,
+    'successful site-list recovery must unlock Open automatically');
+  assert.equal(recoveredCatalogue.element('urlInput').value, 'https://approved.test/',
+    'recovered catalogue must populate its reviewed start URL');
+  assert.equal(recoveredCatalogue.element('siteSuggestions').children.length, 1,
+    'reviewed suggestions must be restored after an offline interval');
+  assert.equal(recoveredCatalogue.element('formMessage').textContent, '',
+    'successful recovery must clear stale catalogue-error guidance');
+
+  // Two overlapping health calls and a BFCache return must share a single
+  // in-flight catalogue request. Neither a forged ready status nor a delayed
+  // read can enable session creation before the catalogue is verified.
+  const slowCatalogue = deferred();
+  let concurrentCalls = 0;
+  const concurrentCatalogue = await bootPortal({
+    siteRequest() {
+      concurrentCalls++;
+      return concurrentCalls <= 2
+        ? response({ sites: [] })
+        : slowCatalogue.promise;
+    }
+  });
+  const concurrentHealthPoll = [...concurrentCatalogue.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 20000);
+  concurrentHealthPoll.callback();
+  concurrentHealthPoll.callback();
+  concurrentCatalogue.pageshow(true);
+  await settle();
+  assert.equal(concurrentCalls, 3,
+    'overlapping health/BFCache retries must share one catalogue HTTP request');
+  assert.equal(concurrentCatalogue.element('startButton').disabled, true,
+    'an in-flight catalogue response may not unlock session admission');
+  concurrentCatalogue.element('urlInput').value = 'https://approved.test/';
+  concurrentCatalogue.submit();
+  await settle();
+  assert.equal(concurrentCatalogue.requests.filter(({ url }) => url === '/api/session').length, 0,
+    'scripted submit during catalogue retry must not create a browser');
+  slowCatalogue.resolve(response({
+    sites: [{ name: 'Verified', url: 'https://approved.test/' }]
+  }));
+  await settle();
+  assert.equal(concurrentCatalogue.element('startButton').disabled, false,
+    'shared recovery success must unlock the real form once');
+  assert.equal(concurrentCatalogue.element('capacityText').textContent, 'Ready to browse');
+  assert.equal(concurrentCatalogue.element('siteSuggestions').children.length, 1);
+  assert.equal(concurrentCalls, 3,
+    'resolved shared catalogue retry must not create duplicate fetches');
+
   const validToken = 'A'.repeat(32);
   const validViewer = '/s/' + validToken + '/';
   const validSession = {
