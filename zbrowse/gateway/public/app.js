@@ -304,6 +304,14 @@ function showBrowser() {
     request("/api/session/" + session.token + "/heartbeat", {
       method: "POST",
       body: "{}", signal: AbortSignal.timeout(10000)
+    }).then((ack) => {
+      // HTTP success is not proof of a renewed lease: proxies can return
+      // empty 204 responses or malformed/negative JSON while the browser
+      // is no longer valid. Require the gateway's explicit acknowledgement.
+      if (ack?.ok !== true || !Number.isSafeInteger(ack.expiresAt) ||
+          ack.expiresAt <= Date.now()) {
+        throw new Error("Invalid heartbeat acknowledgement.");
+      }
     }).catch(() => {
       if (state.session?.token === session.token) endSession();
     });
