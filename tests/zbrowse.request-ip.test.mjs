@@ -211,4 +211,53 @@ for (const malformed of [
   );
 }
 
+// The session owner must never trust alternate client-IP headers or
+// noncanonical spellings of IP literals at the reviewed two-hop boundary.
+// Proxies and rate-limit middleware may interpret those values differently;
+// assert the actual gateway resolver's deterministic TCP fallback here.
+const invalidBoundaryValues = [
+  ['quoted IPv4', '"198.51.100.20"'],
+  ['quoted IPv6', '"2001:db8::20"'],
+  ['IPv4 with source port', '198.51.100.20:4100'],
+  ['bracketed IPv6 and port', '[2001:db8::20]:4100'],
+  ['IPv6 zone suffix', 'fe80::1%eth0'],
+  ['shortened IPv4', '127.1'],
+  ['decimal IPv4', '2130706433'],
+  ['hexadecimal IPv4', '0x7f000001'],
+  ['octal IPv4', '0177.0.0.1'],
+  ['ASCII NUL', '198.51.100.20\\u0000extra'.replace('\\u0000', '\u0000')],
+  ['nested comma', '198.51.100.20,,10.0.0.2']
+];
+let checkedBoundary = 0;
+for (const [label, value] of invalidBoundaryValues) {
+  const forwarded = '203.0.113.77, ' + value + ', 10.0.0.2';
+  const req = {
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { 'x-forwarded-for': forwarded }
+  };
+  assert.equal(requestIp(req, 2), '10.0.0.3',
+    label + ': invalid forwarded client must not create a new session owner');
+  checkedBoundary++;
+}
+
+// RFC 7239 Forwarded and vendor X-Real-IP must never override the selected
+// X-Forwarded-For chain or manufacture a client when that chain is absent.
+for (const metadata of [
+  { forwarded: 'for=203.0.113.11' },
+  { 'x-real-ip': '203.0.113.11' },
+  { forwarded: 'for=203.0.113.11', 'x-real-ip': '203.0.113.12' }
+]) {
+  assert.equal(requestIp({
+    socket: { remoteAddress: '10.0.0.3' }, headers: metadata
+  }, 2), '10.0.0.3',
+  'untrusted alternate proxy headers must not define session ownership');
+  assert.equal(requestIp({
+    socket: { remoteAddress: '10.0.0.3' },
+    headers: { ...metadata, 'x-forwarded-for': '198.51.100.20, 10.0.0.2' }
+  }, 2), '198.51.100.20',
+  'validated XFF trust boundary must take precedence over alternate headers');
+}
+
+console.log('Noncanonical XFF trust-boundary cases checked=' + checkedBoundary);
+
 console.log('zBrowse request IP tests passed');
