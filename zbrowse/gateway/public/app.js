@@ -114,11 +114,13 @@ function checkedSessionPayload(payload) {
 }
 
 let sessionStarting = false;
+let pageExitGeneration = 0;
 
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
   if (sessionStarting || state.session || !gatewayCanStart) return;
+  const requestGeneration = pageExitGeneration;
   sessionStarting = true;
   setMessage();
   syncStartButton();
@@ -128,11 +130,22 @@ async function startSession(url) {
       method: "POST",
       body: JSON.stringify({ url })
     }));
+    // A start may finish after pagehide, when no token existed for the
+    // pagehide handler to release. Do not mount a browser on an abandoned
+    // page; use keepalive DELETE if the response still arrives.
+    if (pageExitGeneration !== requestGeneration) {
+      await request("/api/session/" + session.token, {
+        method: "DELETE", keepalive: true
+      }).catch(() => {});
+      return;
+    }
     state.session = session;
     showBrowser();
   } catch (error) {
-    setMessage(error.message);
-    await refreshHealth();
+    if (pageExitGeneration === requestGeneration) {
+      setMessage(error.message);
+      await refreshHealth();
+    }
   } finally {
     sessionStarting = false;
     syncStartButton();
@@ -224,6 +237,7 @@ $("fullscreenButton").addEventListener("click", async () => {
 });
 
 window.addEventListener("pagehide", () => {
+  pageExitGeneration++;
   if (state.session) {
     // Page exit must release capacity, not extend the now-abandoned session.
     // A keepalive DELETE can be dispatched during document teardown.
