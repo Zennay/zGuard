@@ -46,6 +46,26 @@ function setMessage(text = "") {
   message.textContent = text;
 }
 
+// Error JSON from a reverse proxy is not presentation-safe: it can echo a
+// bearer viewer route, URL credentials or other upstream implementation data.
+// Map only the HTTP status to reviewed, short TV-facing guidance.
+function safeStartFailure(error) {
+  switch (error?.status) {
+    case 400:
+    case 403: return "Browser request rejected.";
+    case 409: return "Browser currently in use. Try again shortly.";
+    case 429: return "Too many browser requests. Try again later.";
+    case 503: return "Browser engine unavailable. Try again shortly.";
+    default:
+      // Locally generated validation errors are not network error bodies.
+      if (error?.status === undefined &&
+          error?.message === "Invalid browser session response.") {
+        return "Invalid browser session response.";
+      }
+      return "Could not start browser. Try again.";
+  }
+}
+
 function renderSuggestions() {
   const datalist = $("siteSuggestions");
   datalist.replaceChildren(...state.sites.map((site) => {
@@ -247,7 +267,7 @@ async function startSession(url) {
     if (pageExitGeneration === requestGeneration) {
       setMessage(pendingReleaseToken
         ? "Could not confirm browser shutdown. Retrying automatically."
-        : error.message);
+        : safeStartFailure(error));
       // Do not immediately issue a second DELETE as part of error reporting:
       // failed releases remain locked until the normal health retry.
       await refreshHealth(false);
