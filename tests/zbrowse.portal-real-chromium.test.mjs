@@ -270,6 +270,38 @@ try {
     assert.equal(starts, 0, label + ': native Enter must not allocate a remote browser');
   }
 
+  // A disabled Open button must also suppress real Chrome pointer activation.
+  // A scripted disabled property check alone cannot prove that a mouse or TV
+  // pointer will not dispatch a start click while the backend is unavailable.
+  async function nativePointerWhileUnavailable(label) {
+    const setup = await evaluate(`(() => {
+      const button = document.getElementById("startButton");
+      window.__qaDisabledOpenClicked = false;
+      button.addEventListener("click", () => {
+        window.__qaDisabledOpenClicked = true;
+      }, { once: true });
+      button.scrollIntoView({ block: "center" });
+      const bounds = button.getBoundingClientRect();
+      return { disabled: button.disabled,
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2 };
+    })()`);
+    assert.equal(setup.disabled, true, label + ': Open must be disabled before pointer hit');
+    assert.ok(Number.isFinite(setup.x) && Number.isFinite(setup.y),
+      label + ': disabled button must remain physically hit-testable');
+    for (const params of [
+      { type: 'mouseMoved', button: 'none', buttons: 0 },
+      { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1 }
+    ]) {
+      await cdp('Input.dispatchMouseEvent', { x: setup.x, y: setup.y, ...params });
+    }
+    await sleep(90);
+    assert.equal(await evaluate('window.__qaDisabledOpenClicked'), false,
+      label + ': native pointer must not dispatch a click on disabled Open');
+    assert.equal(starts, 0, label + ': pointer must not allocate browser while unavailable');
+  }
+
   health = 'draining';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -283,6 +315,7 @@ try {
   assert.equal(starts, 0,
     'even scripted form submission must not allocate a browser during drain');
   await nativeEnterWhileUnavailable('draining');
+  await nativePointerWhileUnavailable('draining');
   health = 'invalid';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -297,6 +330,7 @@ try {
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     true, 'HTTP 503 should prevent a doomed browser POST');
   await nativeEnterWhileUnavailable('gateway-offline');
+  await nativePointerWhileUnavailable('gateway-offline');
   health = 'ready';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -596,7 +630,7 @@ try {
   assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
-    'draining/malformed health, blocked native Enter while unavailable, recovery, guarded starts, authenticated local iframe,' +
+    'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
 } finally {
