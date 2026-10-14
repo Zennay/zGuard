@@ -139,9 +139,9 @@ function testWorkflow(name, gates, yaml) {
     for (const [test, flag] of commands) {
       const normal = 'node tests/' + test;
       const strict = normal + ' ' + flag;
-      assert.ok(yaml.slice(0, blockStart).includes('\n          ' + normal + '\n'),
+      assert.ok(yaml.slice(0, blockStart).split('\n').some(line => line.trim() === normal),
         name + ': baseline acceptance must run before strict ' + flag);
-      assert.ok(block.includes('\n            ' + strict + '\n'),
+      assert.ok(block.split('\n').some(line => line.trim() === strict),
         name + ': strict CLI missing in gate ' + input);
       const sourcePath = path.join(root, 'tests', test);
       assert.ok(fs.statSync(sourcePath).isFile(), test + ': actual test must exist');
