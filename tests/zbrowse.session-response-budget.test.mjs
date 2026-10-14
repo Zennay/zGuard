@@ -32,8 +32,10 @@ const browserFetch = (route, options) => {
     'QA fetch must stay on synthetic session routes');
   return fetch(origin + route, { ...options, redirect: 'error' });
 };
+let fetchAdapter = browserFetch;
 const context = {
-  fetch: browserFetch, TextDecoder, Uint8Array, URL, AbortSignal,
+  fetch: (route, options) => fetchAdapter(route, options),
+  TextDecoder, Uint8Array, URL, AbortSignal,
   setTimeout, clearTimeout
 };
 vm.runInNewContext(requestCode + '\nglobalThis.testRequest = request;', context,
@@ -173,8 +175,48 @@ try {
       await assert.rejects(promise);
     });
 
+  // Some stream adapters never acknowledge cancel(). The TV must still
+  // settle rejected responses instead of hanging its offline/end-session UI.
+  for (const [route, method, status] of [
+    ['/api/health', 'GET', 503],
+    ['/api/sites', 'GET', 502],
+    ['/api/session', 'POST', 500],
+    [routeHeartbeat, 'POST', 503],
+    [routeHeartbeat, 'POST', 202],
+    ['/api/health', 'GET', 206]
+  ]) {
+    let cancels = 0;
+    let parsed = 0;
+    fetchAdapter = async () => ({
+      status, ok: status >= 200 && status < 300,
+      headers: { get: () => 'application/json' },
+      body: { cancel: () => { cancels++; return new Promise(() => {}); } },
+      json: () => { parsed++; throw Error('must not parse proxy diagnostic'); }
+    });
+    let watchdog;
+    try {
+      const settled = Promise.race([
+        request(route, { method }),
+        new Promise((_, reject) => {
+          watchdog = setTimeout(() => reject(new Error('cancel() stalled TV response')), 1000);
+        })
+      ]);
+      await assert.rejects(settled, error => {
+        assert.notEqual(error.message, 'cancel() stalled TV response',
+          'gateway error handler must not wait forever for cancel()');
+        return true;
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+    assert.equal(cancels, 1, route + ' ' + status + ': exactly one bounded cancel');
+    assert.equal(parsed, 0, route + ' ' + status + ': no unreviewed proxy parsing');
+  }
+  fetchAdapter = browserFetch;
+
   console.log('Session JSON response budgets passed: real loopback gzip/Brotli, ' +
-    'chunked overflow, strict teardown 404/410, and stalled heartbeat abort');
+    'chunked overflow, strict teardown 404/410, stalled heartbeat abort, ' +
+    'and bounded cancellation of rejected responses');
 } finally {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
