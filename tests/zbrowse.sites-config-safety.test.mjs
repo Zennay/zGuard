@@ -9,10 +9,45 @@ const sites = JSON.parse(
   fs.readFileSync(path.join(root, "zbrowse/gateway/config/sites.json"), "utf8")
 );
 
-assert.ok(Array.isArray(sites) && sites.length > 0, "sites.json must contain at least one site");
+assert.ok(Array.isArray(sites) && sites.length > 0 && sites.length <= 32,
+  "sites.json must contain 1–32 curated sites to match the TV suggestions cap");
 
 const seenNames = new Set();
 const seenOrigins = new Set();
+
+// Keep the source curated-site list deployable in the shipped TV. An invalid
+// display name must fail in repository CI rather than disable Open in a kiosk.
+function addReviewedLabel(name, names) {
+  assert.ok(typeof name === "string" && name.trim() && name.length <= 96,
+    "site label must be a nonempty string of at most 96 characters");
+  assert.doesNotMatch(name,
+    /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/,
+    "site label cannot contain control, zero-width or bidi-spoofing characters");
+  const key = name.normalize("NFKC").trim().toLowerCase();
+  assert.ok(!names.has(key), "visually duplicate curated site name");
+  names.add(key);
+}
+
+// Negative contract examples ensure this test actually rejects label variants
+// that the browser's data-list guard now refuses; accepted normal Unicode is
+// an independent positive control.
+for (const [label, values] of [
+  ["mixed-case duplicates", ["Fawesome", "FAWESOME"]],
+  ["fullwidth duplicates", ["Fawesome", "\uFF26\uFF41\uFF57\uFF45\uFF53\uFF4F\uFF4D\uFF45"]],
+  ["zero-width format", ["Fawesome\u200b"]],
+  ["bidi marker", ["Fawesome\u200f"]],
+  ["soft hyphen", ["Faw\u00adesome"]],
+  ["empty label", ["  "]],
+  ["excessively long label", ["A".repeat(97)]]
+]) {
+  const names = new Set();
+  assert.throws(() => values.forEach(name => addReviewedLabel(name, names)),
+    undefined, label + " must be rejected before deployment");
+}
+const allowedDisplay = new Set();
+assert.doesNotThrow(() => ["Fawesome", "Series Élite"].forEach(
+  name => addReviewedLabel(name, allowedDisplay)),
+  "ordinary distinct readable Unicode names remain supported");
 
 function normalizedIpHost(hostname) {
   return hostname.startsWith("[") && hostname.endsWith("]")
@@ -182,9 +217,9 @@ for (const [index, site] of sites.entries()) {
     assert.ok(site[key].length > 0, `${site.name ?? index}: ${key} must not be empty`);
   }
 
-  const normalizedName = site.name.toLowerCase();
-  assert.ok(!seenNames.has(normalizedName), `${site.name}: duplicate site name`);
-  seenNames.add(normalizedName);
+  addReviewedLabel(site.name, seenNames);
+  assert.ok(site.url.length <= 2048,
+    `${site.name}: URL exceeds the reviewed TV catalogue limit`);
 
   const url = new URL(site.url);
   assert.equal(url.protocol, "https:", `${site.name}: only HTTPS targets are allowed`);
