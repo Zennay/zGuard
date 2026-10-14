@@ -1112,7 +1112,6 @@ try {
   }
   assert.equal(await evaluate('document.activeElement?.id'), 'endButton',
     'native TV Tab must focus End session inside fullscreen');
-  let trustedFullscreenEnd = false;
   await evaluate(`(() => {
     const end = document.getElementById('endButton');
     end.addEventListener('click', event => {
