@@ -628,11 +628,55 @@ try {
   await sleep(150);
   assert.equal(deletions, 7, 'browser pagehide must release the final browser exactly once');
   assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
+
+  // Drive a *native Chromium history Back*, not a synthetic pageshow event.
+  // Chrome may BFCache the previous document or reload it; either way a
+  // revoked bearer iframe must not reappear and a fresh session must work.
+  const history = await cdp('Page.getNavigationHistory');
+  const previousPortal = history.entries.slice(0, history.currentIndex).reverse()
+    .find(entry => entry.url === origin + '/');
+  assert.ok(previousPortal, 'portal must be present in real browser navigation history');
+  await cdp('Page.navigateToHistoryEntry', { entryId: previousPortal.id });
+  await sleep(200);
+  await until(async () => await evaluate(
+    'location.href === ' + JSON.stringify(origin + '/') +
+    ' && !!document.getElementById("startButton")'
+  ), 'real browser history Back returns to the original TV portal');
+  await until(async () => await evaluate(
+    'document.getElementById("homeView").hidden === false && ' +
+    'document.getElementById("browserView").hidden === true && ' +
+    'typeof state !== "undefined" && state.session === null'
+  ), 'history return must not restore an abandoned browser token');
+  await until(async () => await evaluate(
+    'document.getElementById("capacityText").textContent === "Ready to browse" && ' +
+    '!document.getElementById("startButton").disabled'
+  ), 'real history Back must leave a usable browser-start form');
+  assert.notEqual(await evaluate(
+    'document.getElementById("browserFrame").getAttribute("src")'
+  ), '/s/' + syntheticToken + '/',
+  'history restoration may not resurrect the revoked viewer iframe');
+  assert.equal(starts, 9, 'history return must not silently allocate a new browser');
+  const afterHistoryDeletions = deletions;
+  assert.ok(afterHistoryDeletions >= 7 && afterHistoryDeletions <= 8,
+    'history return may retry the abandoned DELETE only if page is restored from BFCache');
+
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === 10, 'fresh browser start after native history Back');
+  assert.ok(releaseStart, 'real history return should use the shipped POST path');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'real history Back must still mount a newly authorized viewer');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === afterHistoryDeletions + 1,
+    'new post-history browser must be releasable through the actual End button');
+  assert.equal(starts, 10, 'no duplicate starts across browser history recovery');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
