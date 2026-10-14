@@ -92,9 +92,9 @@ function requireReviewedAutomaticFilters(source, relative) {
     // A scoped workflow must also re-run when any test script named in its
     // jobs changes. Identical PR/push filters can still omit a security test
     // while keeping the workflow's own YAML in scope.
-    const jobSource = source.split(/^jobs:\\s*$/m)[1] || '';
+    const jobSource = source.split(/^jobs:\s*$/m)[1] || '';
     const executedTests = [...new Set(
-      [...jobSource.matchAll(/\\btests\\/[A-Za-z0-9._/-]+\\.(?:mjs|cjs|js|rb|py|sh)\\b/g)]
+      [...jobSource.matchAll(/\btests\/[A-Za-z0-9._/-]+\.(?:mjs|cjs|js|rb|py|sh)\b/g)]
         .map(match => match[0])
     )];
     const covers = (file, filter) =>
@@ -213,7 +213,7 @@ requireReviewedAutomaticFilters(explicitTestFixture, 'example.yml');
 const missingTestFixture = filteredFixture.replaceAll('tests/**', 'docs/**') +
   '\n  qa:\n    steps:\n      - run: node tests/omitted.test.mjs';
 assert.throws(() => requireReviewedAutomaticFilters(missingTestFixture, 'example.yml'),
-  /must track executed tests\\/omitted/, 'omitted executed-test trigger must fail closed');
+  /must track executed tests\/omitted/, 'omitted executed-test trigger must fail closed');
 
 for (const [label, mutated] of [
   ['PR closed-only', reviewedFilterFixture.replace('  pull_request:',
