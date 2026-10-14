@@ -23,10 +23,31 @@ const requiredPortableChecks = [
   'zbrowse.repository-hygiene.test.js',
 ];
 
-for (const test of requiredPortableChecks) {
-  const command = `node ../tests/${test}`;
-  const matches = validate.split(command).length - 1;
-  assert.equal(matches, 1, `validate.sh must execute ${test} exactly once`);
+// Substring matches can incorrectly count comments, disabled commands or
+// a test whose failure is masked by '|| true' as executed validation.
+// Require one canonical, unmasked shell line for each portable regression.
+function assertPortableChecks(script) {
+  const lines = script.split(/\r?\n/).map(line => line.trim());
+  for (const test of requiredPortableChecks) {
+    const command = `node ../tests/${test}`;
+    const invocations = lines.filter(line => line.startsWith(command));
+    assert.deepEqual(invocations, [command],
+      `validate.sh must execute ${test} exactly once without masking failures`);
+  }
+}
+assertPortableChecks(validate);
+const mutationTarget = 'node ../tests/zbrowse.request-ip.test.mjs';
+for (const replacement of [
+  '# ' + mutationTarget,
+  mutationTarget + ' || true',
+  mutationTarget + ' >/dev/null 2>&1 || :',
+  mutationTarget + ' # disabled',
+  mutationTarget + '\n' + mutationTarget,
+  ''
+]) {
+  assert.throws(() => assertPortableChecks(validate.replace(mutationTarget, replacement)),
+    /without masking failures/,
+    'a disabled, duplicated or failure-masked portable check must fail validation');
 }
 
 // Offline release probes are valuable during local validation, but a
@@ -59,30 +80,33 @@ for (const probe of offlineReleaseProbes) {
   /only in --self-test mode/, `${probe}: duplicate gate mutation must fail`);
 }
 
-assert.match(
-  validate,
-  /node --check gateway\/server\.js/,
-  'validate.sh must retain gateway server syntax validation'
-);
-assert.match(
-  validate,
-  /node --check gateway\/public\/app\.js/,
-  'validate.sh must retain portal script syntax validation'
-);
-assert.match(
-  validate,
-  /bash -n scripts\/install\.sh/,
-  'validate.sh must retain installer shell syntax validation'
-);
-assert.match(
-  validate,
-  /docker compose config >\/dev\/null/,
-  'validate.sh must retain Compose validation when Docker is available'
-);
-assert.match(
-  validate,
-  /node \.\.\/tests\/zbrowse\.validation-entrypoint\.test\.mjs/,
-  'validate.sh must self-check its portable regression inventory'
-);
+const shellValidationCommands = [
+  'node --check gateway/server.js',
+  'node --check gateway/public/app.js',
+  'bash -n scripts/install.sh',
+  'bash -n browser/root/usr/local/bin/start-zbrowse',
+  'docker compose config >/dev/null',
+  'node ../tests/zbrowse.validation-entrypoint.test.mjs'
+];
+function assertShellValidationCommands(script) {
+  const lines = script.split(/\r?\n/).map(line => line.trim());
+  for (const command of shellValidationCommands) {
+    assert.deepEqual(lines.filter(line => line.startsWith(command)), [command],
+      command + ': validate.sh must preserve exact unmasked command');
+  }
+}
+assertShellValidationCommands(validate);
+for (const replacement of [
+  '# node --check gateway/server.js',
+  'node --check gateway/server.js || true',
+  'node --check gateway/server.js; true',
+  'node --check gateway/server.js && :',
+  'node --check gateway/server.js\nnode --check gateway/server.js',
+  ''
+]) {
+  assert.throws(() => assertShellValidationCommands(
+    validate.replace('node --check gateway/server.js', replacement)),
+  /unmasked command/, 'selftest must detect disabled or masked syntax gate');
+}
 
 console.log('zBrowse validation entrypoint contract passed');
