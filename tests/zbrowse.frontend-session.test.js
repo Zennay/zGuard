@@ -268,6 +268,21 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     ['duplicate site', () => response({ sites: [
       { name: 'Primary', url: 'https://approved.test/' },
       { name: 'Duplicate', url: 'https://approved.test/' }
+    ] })],
+    ['excessive suggestions', () => response({ sites: Array.from({ length: 33 },
+      (_, index) => ({ name: 'Approved #' + index, url: 'https://site' + index + '.test/' }))
+    })],
+    ['overlong visible name', () => response({ sites: [
+      { name: 'A'.repeat(97), url: 'https://approved.test/' }
+    ] })],
+    ['overlong URL', () => response({ sites: [
+      { name: 'Long URL', url: 'https://approved.test/' + 'x'.repeat(2050) }
+    ] })],
+    ['control character name', () => response({ sites: [
+      { name: 'Safe\\nFake', url: 'https://approved.test/' }
+    ] })],
+    ['directional override in name', () => response({ sites: [
+      { name: 'Video\\u202Eevil.test', url: 'https://approved.test/' }
     ] })]
   ];
   for (const [label, siteRequest] of catalogueFailures) {
