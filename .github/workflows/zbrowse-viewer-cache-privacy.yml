@@ -15,6 +15,10 @@ on:
         description: "Reject foreign Origin/Fetch Metadata before browser WebSocket proxying (issue #342)"
         type: boolean
         default: false
+      require_websocket_host:
+        description: "Reject unreviewed Host on token-authenticated WebSocket upgrades (issue #457)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,6 +36,7 @@ jobs:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       REQUIRE_NO_STORE: ${{ inputs.require_no_store || 'false' }}
       REQUIRE_WEBSOCKET_ORIGIN: ${{ inputs.require_websocket_origin || 'false' }}
+      REQUIRE_WEBSOCKET_HOST: ${{ inputs.require_websocket_host || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -58,6 +63,9 @@ jobs:
           node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs
           if [ "$REQUIRE_WEBSOCKET_ORIGIN" = "true" ]; then
             node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs --require-websocket-origin
+          fi
+          if [ "$REQUIRE_WEBSOCKET_HOST" = "true" ]; then
+            node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs --require-websocket-host
           fi
           node tests/zbrowse.viewer-path-recovery-real-http.test.mjs
           # Never regress HTTP bearer-viewer no-store / hostile-upstream guard.
