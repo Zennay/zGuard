@@ -323,7 +323,25 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
 
-  // The TV remote/keyboard path must also end sessions without a mouse.
+  // TV viewers must be able to leave the stream controls with real Escape
+  // and land on End session without searching for the button with a pointer.
+  // Start from a different focused toolbar control, not a scripted End focus.
+  const focusedToolbar = await evaluate(`(() => {
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") window.__qaPortalKeyboard.escapeTrusted = event.isTrusted;
+    }, { once: true });
+    const button = document.getElementById("fullscreenButton");
+    button.focus();
+    return document.activeElement === button;
+  })()`);
+  assert.equal(focusedToolbar, true,
+    'fullscreen toolbar control must be keyboard focusable before Escape');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: 'Escape', code: 'Escape',
+      windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27
+    });
+  }
   const focusedEnd = await evaluate(`(() => {
     const button = document.getElementById("endButton");
     button.addEventListener("keydown", event => {
@@ -333,10 +351,12 @@ try {
       window.__qaPortalKeyboard.endClickTrusted = event.isTrusted;
       window.__qaPortalKeyboard.endClickSeen = true;
     }, { once: true });
-    button.focus();
     return document.activeElement === button;
   })()`);
-  assert.equal(focusedEnd, true, 'End session must remain keyboard focusable');
+  assert.equal(await evaluate('window.__qaPortalKeyboard.escapeTrusted'), true,
+    'Escape key must be delivered as a trusted browser event');
+  assert.equal(focusedEnd, true,
+    'real Escape must focus End session before Space activates it');
   for (const type of ['keyDown', 'keyUp']) {
     await cdp('Input.dispatchKeyEvent', {
       type, key: ' ', code: 'Space',
@@ -548,7 +568,7 @@ try {
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
-    ' completed load, native keyboard start/end, manual teardown, browser-native pagehide keepalive DELETE,' +
+    ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
