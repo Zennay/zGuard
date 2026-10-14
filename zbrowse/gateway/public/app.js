@@ -52,7 +52,7 @@ function setMessage(text = "") {
 function safeStartFailure(error) {
   switch (error?.status) {
     case 400:
-    case 403: return "Browser request rejected.";
+    case 403: return "Browser start rejected.";
     case 409: return "Browser currently in use. Try again shortly.";
     case 429: return "Too many browser requests. Try again later.";
     case 503: return "Browser engine unavailable. Try again shortly.";
