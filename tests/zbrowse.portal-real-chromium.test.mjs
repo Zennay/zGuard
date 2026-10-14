@@ -327,6 +327,10 @@ try {
     button.addEventListener("keydown", event => {
       if (event.key === "Enter") window.__qaPortalKeyboard.endKeyTrusted = event.isTrusted;
     }, { once: true });
+    button.addEventListener("click", event => {
+      window.__qaPortalKeyboard.endClickTrusted = event.isTrusted;
+      window.__qaPortalKeyboard.endClickSeen = true;
+    }, { once: true });
     button.focus();
     return document.activeElement === button;
   })()`);
@@ -337,6 +341,16 @@ try {
       windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
     });
   }
+  await sleep(150);
+  const keyboardEnd = await evaluate(`({
+    key: window.__qaPortalKeyboard.endKeyTrusted,
+    click: window.__qaPortalKeyboard.endClickSeen === true,
+    trustedClick: window.__qaPortalKeyboard.endClickTrusted === true,
+    active: document.activeElement?.id === "endButton",
+    viewerHidden: document.getElementById("browserView").hidden
+  })`);
+  console.log('Native portal End keyboard diagnostic (booleans only): ' +
+    JSON.stringify(keyboardEnd));
   await until(() => deletions === 1, 'one keyboard-triggered gateway capacity release');
   assert.equal(await evaluate('window.__qaPortalKeyboard.endKeyTrusted'),
     true, 'End session must receive a native trusted Enter key');
