@@ -66,6 +66,7 @@ jobs:
           firefox --version
           geckodriver --version
           node --check tests/zguard.firefox-real-browser.test.mjs
+          node tests/zguard.firefox-pageworld-proof-integrity.test.mjs
           (
             cd firefox
             zip -q -r "$ZGUARD_FIREFOX_XPI"               manifest.json background.js content.js popup.html popup.css popup.js popup-a11y.js
