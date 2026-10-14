@@ -62,6 +62,15 @@ async function request(url, options = {}) {
     headers: { "content-type": "application/json", ...(options.headers || {}) },
     ...options
   });
+  // Read-only health/catalogue errors never contribute trustworthy UI data.
+  // A reverse proxy may send an enormous 502 HTML/JSON error response: do not
+  // parse or buffer it just to display the already reviewed offline state.
+  if ((url === "/api/health" || url === "/api/sites") && !response.ok) {
+    try { await response.body?.cancel?.(); } catch { /* disconnected already */ }
+    const error = new Error("Gateway read unavailable.");
+    error.status = response.status;
+    throw error;
+  }
   // The gateway confirms a completed browser teardown with 204 No Content.
   // A proxy-generated 200/202/206 is not evidence of Docker cleanup, even
   // when its body looks successful. Keep the old token locked for retry.
