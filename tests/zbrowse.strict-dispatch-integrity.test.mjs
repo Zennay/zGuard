@@ -90,6 +90,7 @@ const matrix = [
     ['require_no_store', 'REQUIRE_NO_STORE', [
       ['zbrowse.viewer-cache-privacy.test.mjs', '--require-no-store'],
       ['zbrowse.viewer-cache-real-http.test.mjs', '--require-no-store'],
+      ['zbrowse.viewer-cdn-cache-real-http.test.mjs', '--require-no-store'],
       ['zbrowse.viewer-path-recovery-real-http.test.mjs', '--require-no-store']
     ]],
     ['require_websocket_origin', 'REQUIRE_WEBSOCKET_ORIGIN',
