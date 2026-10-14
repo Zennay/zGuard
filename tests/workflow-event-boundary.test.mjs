@@ -39,6 +39,37 @@ function requireMainPush(source) {
   assert.ok(main, 'push validation must include main, not only other branches/tags');
 }
 
+// Disallow filters that let a required-looking workflow omit arbitrary PR
+// revisions or merged main commits. CI cannot protect a source revision it
+// never evaluates. The only permitted push child is the main branch selector.
+function requireUnfilteredAutomaticEvents(source) {
+  const lines = source.split(/\r?\n/);
+  function children(eventName) {
+    const start = lines.findIndex(line =>
+      new RegExp("^  (?:['\\\"]?)" + eventName + "(?:['\\\"]?):\\s*(?:#.*)?$").test(line));
+    assert.ok(start >= 0, eventName + ' trigger must be a block mapping');
+    const collected = [];
+    for (let i = start + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      if (!/^    /.test(line)) break;
+      collected.push(line);
+    }
+    return collected;
+  }
+  const pr = children('pull_request');
+  assert.equal(pr.length, 0,
+    'pull_request must not filter types, paths, target branches or revisions');
+  const push = children('push');
+  assert.ok(push.length > 0, 'push must explicitly scope main');
+  assert.match(push[0], /^    branches:\s*(?:#.*)?$/,
+    'push may configure only the reviewed main branch selector');
+  for (const line of push.slice(1)) {
+    assert.match(line, /^      - (['"]?)main\1\s*(?:#.*)?$/,
+      'push must not include non-main branches, tags or selective path filters');
+  }
+}
+
 function workflowEvents(source) {
   const lines = source.split(/\r?\n/);
   const onIndexes = lines
@@ -121,6 +152,33 @@ for (const [label, weakened] of [
     label + ' must not silently bypass main push validation');
 }
 
+const unfilteredFixture = [
+  'on:', '  pull_request:', '  push:', '    branches:', '      - main',
+  '  workflow_dispatch:', 'jobs:', '  validate:'
+].join('\n');
+requireUnfilteredAutomaticEvents(unfilteredFixture);
+for (const [label, mutated] of [
+  ['PR closed-only', unfilteredFixture.replace('  pull_request:',
+    '  pull_request:\n    types: [closed]')],
+  ['PR paths filter', unfilteredFixture.replace('  pull_request:',
+    '  pull_request:\n    paths:\n      - src/**')],
+  ['PR paths-ignore filter', unfilteredFixture.replace('  pull_request:',
+    '  pull_request:\n    paths-ignore:\n      - docs/**')],
+  ['PR branch filter', unfilteredFixture.replace('  pull_request:',
+    '  pull_request:\n    branches:\n      - main')],
+  ['push path filter', unfilteredFixture.replace('      - main',
+    '      - main\n    paths:\n      - src/**')],
+  ['push ignore filter', unfilteredFixture.replace('      - main',
+    '      - main\n    paths-ignore:\n      - docs/**')],
+  ['push additional branch', unfilteredFixture.replace('      - main',
+    '      - main\n      - experimental')],
+  ['push tags filter', unfilteredFixture.replace('      - main',
+    '      - main\n    tags:\n      - v*')]
+]) {
+  assert.throws(() => requireUnfilteredAutomaticEvents(mutated),
+    undefined, label + ' must not silently skip source validation');
+}
+
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
   .sort();
@@ -133,6 +191,7 @@ for (const name of workflows) {
   const events = workflowEvents(source);
   requireAutomaticValidation(events);
   requireMainPush(source);
+  requireUnfilteredAutomaticEvents(source);
   const disallowed = [...new Set(events.filter((event) => !allowedEvents.has(event)))]
     .sort();
 
