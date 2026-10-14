@@ -42,6 +42,8 @@ let starts = 0;
 let reserves = 0;
 let releases = 0;
 const exitCodes = [];
+let resolveShutdownExit;
+const shutdownExit = new Promise(resolve => { resolveShutdownExit = resolve; });
 
 const context = {
   app, express, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
@@ -53,7 +55,7 @@ const context = {
     return { unref() {} };
   },
   server,
-  process: { exit(code) { exitCodes.push(code); } },
+  process: { exit(code) { exitCodes.push(code); resolveShutdownExit(); } },
   sessionLimiter(_req, _res, next) { next(); },
   isSessionExpired() { return false; },
   validStartUrl(value) { return value === 'https://fawesome.tv/' ? value : null; },
@@ -124,6 +126,11 @@ try {
   if (shutdownPromise) await shutdownPromise;
   if (server.listening) await new Promise(resolve => server.close(resolve));
 }
+await Promise.race([
+  shutdownExit,
+  new Promise((_, reject) => setTimeout(() =>
+    reject(new Error('server shutdown completion callback timed out')), 2000))
+]);
 assert.equal(reserves, releases, 'admission reservations must remain balanced');
 assert.ok(exitCodes.length >= 1, 'shutdown must complete its mocked process exit callback');
 const rejected = rejectedByClosedListener || (status !== null && status >= 400);
