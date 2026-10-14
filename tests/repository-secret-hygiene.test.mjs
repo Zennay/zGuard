@@ -13,10 +13,44 @@ const signatures = [
   },
   { name: "GitHub classic token", pattern: new RegExp("gh" + "[opusr]_[A-Za-z0-9]{20,}") },
   { name: "GitHub fine-grained token", pattern: new RegExp("github" + "_pat_[A-Za-z0-9_]{20,}") },
-  { name: "OpenAI-style secret", pattern: new RegExp("sk" + "-[A-Za-z0-9_-]{20,}") },
+  { name: "OpenAI-style secret", pattern: new RegExp("(?<![A-Za-z0-9])sk" + "-[A-Za-z0-9_-]{20,}") },
   { name: "AWS access key id", pattern: new RegExp("AK" + "IA[0-9A-Z]{16}") },
   { name: "Slack bot token", pattern: new RegExp("xox" + "b-[0-9A-Za-z-]{20,}") }
 ];
+
+// A token marker is a separate prefix, not the trailing letters of an
+// ordinary word. For example a long QA filename beginning with "kiosk-"
+// contains "sk-" mid-word, which is NOT an API key. Keep standalone keys
+// in JSON, shell assignment and HTTP Authorization text detectable.
+const tokenPattern = signatures.find(item =>
+  item.name === "OpenAI-style secret")?.pattern;
+assert.ok(tokenPattern, "reviewed token pattern must exist");
+function verifyTokenBoundary(pattern) {
+  const simulatedKey = "sk" + "-" + "A".repeat(32);
+  for (const real of [
+    simulatedKey,
+    "KEY=" + simulatedKey,
+    "Bearer " + simulatedKey,
+    "{\"key\":\"" + simulatedKey + "\"}",
+    "(" + simulatedKey + ")"
+  ]) {
+    assert.equal(pattern.test(real), true,
+      "standalone API token must still be detected regardless of wrapping");
+  }
+  for (const harmless of [
+    "kiosk-coldstart-launch-real-shell.test.mjs",
+    "prefix" + simulatedKey,
+    "task" + simulatedKey,
+    "sk" + "-" + "A".repeat(19)
+  ]) {
+    assert.equal(pattern.test(harmless), false,
+      "embedded or short token-like text must not trip secret hygiene");
+  }
+}
+verifyTokenBoundary(tokenPattern);
+// Prove that a regression to the old unbounded-prefix detector fails QA.
+assert.throws(() => verifyTokenBoundary(new RegExp("sk" + "-[A-Za-z0-9_-]{20,}")),
+  undefined, "removing the token boundary must be caught by this self-test");
 
 const tracked = execFileSync("git", ["ls-files", "-z"], {
   cwd: root,
