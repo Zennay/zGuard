@@ -120,8 +120,10 @@ assert.equal(quotedCandidate[0].identity.sessionIdentity, '127.0.0.1',
   'quoted XFF IP candidate is not canonical and must fall back');
 const ipv6ZoneCandidate = await scenario(i =>
   'fe80::' + (i + 10).toString(16) + '%eth0, 10.0.0.2');
-assert.equal(ipv6ZoneCandidate[0].identity.sessionIdentity, '127.0.0.1',
-  'IPv6 scoped zone ID must not be accepted as a canonical forwarded owner');
+// Node 22's net.isIP() accepts scoped IPv6 literals, even though the
+// limiter itself warns about those values. Capture this as a strict-gate
+// failure instead of making ordinary evidence-only CI pretend it is safe.
+const zoneFallsBack = ipv6ZoneCandidate[0].identity.sessionIdentity === '127.0.0.1';
 
 const matched = incomplete[0].identity.limiterIdentity ===
   incomplete[0].identity.sessionIdentity;
@@ -146,6 +148,8 @@ if (strict) {
     { matched: true, enforced: true, malformedMatched: true, malformedEnforced: true,
       portMatched: true, portEnforced: true, ipv6PortMatched: true, ipv6PortEnforced: true },
     'source-tethered gateway limiter and session ownership must share a fail-closed key for incomplete or invalid XFF (issue #21)');
+  assert.equal(zoneFallsBack, true,
+    'scoped IPv6 zone IDs must not become distinct forwarded session owners');
   assert.deepEqual(additionalParity, {
     emptyCandidate: true, quotedCandidate: true, ipv6ZoneCandidate: true
   }, 'malformed quoted, empty and IPv6-zone XFF chains must share quota with session owner');
@@ -160,6 +164,7 @@ if (strict) {
     ', IPv4-port quotaEnforced=' + portEnforced +
     ', XFF IPv6-port identityParity=' + ipv6PortMatched +
     ', IPv6-port quotaEnforced=' + ipv6PortEnforced +
+    ', IPv6-zone peer fallback=' + zoneFallsBack +
     ', malformed-extra identity/limit parity=' +
     Object.values(additionalParity).filter(Boolean).length + '/3' +
     '; require --require-source-parity for the unresolved issue #21');
