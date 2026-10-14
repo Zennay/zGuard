@@ -1,0 +1,50 @@
+name: zBrowse cleanup error log privacy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_redacted_cleanup_errors:
+        description: "Require expired-browser cleanup errors to log no session tokens or credentials"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-cleanup-error-logs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup-logs:
+    name: Gateway expired browser cleanup log privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_REDACTED_CLEANUP_ERRORS: ${{ inputs.require_redacted_cleanup_errors || 'false' }}
+    steps:
+      - name: Checkout exact proposed source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Execute shipped periodic cleanup and privacy controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.cleanup-error-log-privacy.test.mjs
+          if [ "$REQUIRE_REDACTED_CLEANUP_ERRORS" = "true" ]; then
+            node tests/zbrowse.cleanup-error-log-privacy.test.mjs --require-redacted-cleanup-errors
+          fi
+          test -z "$(git status --porcelain)"
