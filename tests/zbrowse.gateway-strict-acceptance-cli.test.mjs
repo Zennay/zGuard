@@ -85,6 +85,48 @@ const cases = [
     workflow: 'zbrowse-rate-limit-identity.yml',
     input: 'require_key_parity',
     env: 'REQUIRE_KEY_PARITY'
+  },
+  {
+    filename: 'zbrowse.actual-session-limiter.test.mjs',
+    flag: '--require-source-parity',
+    workflow: 'zbrowse-rate-limit-identity.yml',
+    input: 'require_key_parity',
+    env: 'REQUIRE_KEY_PARITY'
+  },
+  {
+    filename: 'zbrowse.teardown-admission-real-http.test.mjs',
+    flag: '--require-fail-closed',
+    workflow: 'zbrowse-teardown-failclosed.yml',
+    input: 'require_fail_closed',
+    env: 'REQUIRE_FAIL_CLOSED'
+  },
+  {
+    filename: 'zbrowse.shutdown-failed-cleanup.test.mjs',
+    flag: '--require-shutdown-fail-closed',
+    workflow: 'zbrowse-teardown-failclosed.yml',
+    input: 'require_fail_closed',
+    env: 'REQUIRE_FAIL_CLOSED'
+  },
+  {
+    filename: 'zbrowse.shutdown-admission-race-real-http.test.mjs',
+    flag: '--require-shutdown-drain',
+    workflow: 'zbrowse-teardown-failclosed.yml',
+    input: 'require_fail_closed',
+    env: 'REQUIRE_FAIL_CLOSED'
+  },
+  {
+    filename: 'zbrowse.inflight-shutdown-real-http.test.mjs',
+    flag: '--require-inflight-drain',
+    workflow: 'zbrowse-teardown-failclosed.yml',
+    input: 'require_fail_closed',
+    env: 'REQUIRE_FAIL_CLOSED'
+  },
+  {
+    filename: 'zbrowse.failed-start-cleanup.test.mjs',
+    flag: '--require-failed-start-fail-closed',
+    workflow: 'zbrowse-teardown-failclosed.yml',
+    input: 'require_fail_closed',
+    env: 'REQUIRE_FAIL_CLOSED'
   }
 ];
 assert.throws(() => parseStrictAcceptanceArgs('bad', '--require-fail-closed'), TypeError);
@@ -135,9 +177,26 @@ for (const { filename, flag, workflow, input, env } of cases) {
     !line.trimStart().startsWith('#')).join('\n');
   assert.ok(yaml.includes(env + ': ' + '$' + '{{ inputs.' + input + " || 'false' }}"),
     filename + ': missing matching dispatch environment');
-  assert.ok(executable.includes('if [ "$' + env + '" = "true" ]; then\n' +
-    '            node tests/' + filename + ' ' + flag),
-    filename + ': conditional must execute exact strict test CLI');
+  // One operator switch may gate multiple independent strict proofs.
+  // Require the *exact executable command* as its own line INSIDE the
+  // corresponding if/fi body; a comment, echo or unguarded command does not
+  // establish a checked release gate.
+  const guard = '          if [ "
+  assert.ok(executable.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
+    filename + ': routine hosted CI must run the negative CLI regression');
+}
+console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
+ + env + '" = "true" ]; then';
+  const guardIndex = executable.indexOf(guard);
+  assert.ok(guardIndex >= 0, filename + ': strict conditional missing');
+  assert.equal(executable.indexOf(guard, guardIndex + guard.length), -1,
+    filename + ': duplicate strict guards obscure the review boundary');
+  const endIndex = executable.indexOf('\n          fi', guardIndex + guard.length);
+  assert.ok(endIndex > guardIndex, filename + ': strict guard must terminate');
+  const guardedCommands = executable.slice(guardIndex + guard.length, endIndex)
+    .split('\n').map(line => line.trim()).filter(Boolean);
+  assert.ok(guardedCommands.includes('node tests/' + filename + ' ' + flag),
+    filename + ': exact strict CLI must execute inside the matching guarded block');
   assert.ok(executable.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
     filename + ': routine hosted CI must run the negative CLI regression');
 }
