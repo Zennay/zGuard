@@ -46,10 +46,13 @@ const sandbox = {
         assert.equal(req.headers.authorization, undefined,
           'fixture must not trust a client Authorization header');
         forwarded.push({ method: req.method, url: req.url,
-          range: req.headers.range, validator: req.headers['if-none-match'] });
+          range: req.headers.range, validator: req.headers['if-none-match'],
+          modifiedSince: req.headers['if-modified-since'],
+          ifRange: req.headers['if-range'] });
         const headers = {
           'Cache-Control': 'public, max-age=3600',
           'ETag': '"synthetic-viewer-resource"',
+          'Last-Modified': 'Wed, 21 Oct 2015 07:28:00 GMT',
           'Content-Type': 'text/plain; charset=utf-8'
         };
         if (req.url.includes('/broken')) {
@@ -65,7 +68,8 @@ const sandbox = {
           }).end('authorization required');
         } else if (req.url.includes('/upstream-error')) {
           res.writeHead(500, headers).end('synthetic upstream 500');
-        } else if (req.headers['if-none-match'] === '"synthetic-viewer-resource"') {
+        } else if (req.headers['if-none-match'] === '"synthetic-viewer-resource"' ||
+          req.headers['if-modified-since'] === 'Wed, 21 Oct 2015 07:28:00 GMT') {
           res.writeHead(304, headers).end();
         } else if (req.headers.range === 'bytes=0-5') {
           res.writeHead(206, { ...headers, 'Content-Range': 'bytes 0-5/12' })
@@ -101,6 +105,7 @@ try {
       label, status: res.status, method, text: await res.text(),
       cache: res.headers.get('cache-control'),
       etag: res.headers.get('etag'),
+      lastModified: res.headers.get('last-modified'),
       range: res.headers.get('content-range'),
       location: res.headers.get('location'),
       challenge: res.headers.get('www-authenticate')
@@ -130,6 +135,35 @@ try {
   assert.equal(notModified.status, 304,
     'conditional viewer asset may return a bodyless 304');
   assert.equal(notModified.text, '', '304 must never contain a body');
+
+  // Besides ETag-based 304 and Range 206, browsers can revalidate with
+  // If-Modified-Since, or resume a bearer asset via If-Range. Treat each
+  // conditional result as token-bearing content for strict no-store.
+  const modified = await request('If-Modified-Since GET 304', 'GET', base, {
+    'if-modified-since': normal.lastModified
+  });
+  cases.push(modified);
+  assert.equal(modified.status, 304,
+    'unchanged Last-Modified validator must generate a bodyless 304');
+  assert.equal(modified.text, '', 'time-conditional 304 must not carry a body');
+
+  const ifRange = await request('If-Range partial GET 206', 'GET', base, {
+    range: 'bytes=0-5', 'if-range': normal.etag
+  });
+  cases.push(ifRange);
+  assert.equal(ifRange.status, 206,
+    'If-Range session resume should preserve partial content status');
+  assert.equal(ifRange.text, 'secret',
+    'resumed bearer download must contain only the requested partial bytes');
+
+  const partialHead = await request('partial HEAD 206', 'HEAD', base, {
+    range: 'bytes=0-5'
+  });
+  cases.push(partialHead);
+  assert.equal(partialHead.status, 206,
+    'HEAD partial metadata should preserve upstream 206 status');
+  assert.equal(partialHead.text, '', 'HEAD must not expose any asset body');
+  assert.equal(partialHead.range, 'bytes 0-5/12');
 
   const head = await request('viewer HEAD 200', 'HEAD', base);
   cases.push(head);
@@ -191,8 +225,8 @@ try {
   assert.equal(failed.status, 502);
   assert.equal(failed.text, 'Browser connection interrupted.');
   assert.equal(errors, 1);
-  assert.equal(forwarded.length, 10,
-    'all nine owner responses plus one transport failure must proxy, never denied tokens');
+  assert.equal(forwarded.length, 13,
+    'all twelve owner responses plus one transport failure must proxy, never denied tokens');
   assert.equal(forwarded[0].url, base,
     'viewer proxy must preserve original bearer path/query');
 
