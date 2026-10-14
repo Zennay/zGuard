@@ -14,7 +14,7 @@ const workflow = fs.readFileSync(
   'utf8'
 );
 const cmd = 'node tests/repository-secret-hygiene-git-integration.test.mjs';
-assert.ok(workflow.includes('node tests/repository-secret-hygiene.test.mjs\n' +
+assert.ok(workflow.includes('node tests/repository-secret-hygiene.test.mjs\n\n' +
   '      - name: Verify tracked binary scanning end-to-end') &&
   workflow.includes(cmd),
   'required secret workflow must run real tracked-binary integration after its scanner');
