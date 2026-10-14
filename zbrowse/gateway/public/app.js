@@ -49,7 +49,7 @@ function readWithSignal(reader, signal) {
 async function boundedGatewayJson(response, maximumBytes, signal) {
   const declared = response.headers?.get?.("content-length");
   if (declared !== null && declared !== undefined) {
-    if (!/^\\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+    if (!/^\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
       await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid gateway response size.");
     }
