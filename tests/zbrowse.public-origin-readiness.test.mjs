@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 
 // The API must represent the audited sites shipped with this exact checkout,
 // not just *any* HTTPS website claiming to be a curated entry.
@@ -223,6 +224,95 @@ function response(value, status = 200, contentType = 'application/json; charset=
       ...extraHeaders
     }
   });
+}
+
+// Real TCP loopback evidence: a rejected response must close the underlying
+// transfer, not merely reject an in-memory Response or release a reader lock.
+// The fetcher rewrites ONLY test requests to 127.0.0.1; no public HTTP, real
+// session, /s/ token, browser allocation or production interaction occurs.
+async function testRealLoopbackCancellation() {
+  let scenario = null;
+  const observedRoutes = [];
+  const server = http.createServer((req, res) => {
+    observedRoutes.push({ method: req.method, url: req.url });
+    if (req.method !== 'GET' || !['/api/health', '/api/sites'].includes(req.url)) {
+      res.writeHead(405, { 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
+    if (scenario && req.url === scenario.path) {
+      const active = scenario;
+      res.once('close', () => { active.closed = true; });
+      res.writeHead(active.status, {
+        'content-type': active.contentType,
+        'cache-control': 'no-store',
+        ...active.headers
+      });
+      res.write(active.bytes);
+      // Intentionally never end the invalid stream. Only client-side abort
+      // can release this connection before the safety timeout.
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    });
+    res.end(JSON.stringify(req.url === '/api/health' ? sampleHealth : sampleSites));
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const loopback = 'http://127.0.0.1:' + server.address().port;
+  const loopbackFetch = (raw, options) => {
+    const url = new URL(raw);
+    assert.equal(url.origin, new URL(PUBLIC_ORIGIN).origin,
+      'only the reviewed public origin may be mapped to this loopback fixture');
+    assert.ok(['/api/health', '/api/sites'].includes(url.pathname),
+      'only the two read-only readiness endpoints may be tested over loopback');
+    assert.equal(options.method, 'GET', 'real TCP acceptance must never create a session');
+    assert.equal(options.credentials, 'omit', 'real TCP acceptance cannot send credentials');
+    return fetch(loopback + url.pathname, options);
+  };
+  try {
+    for (const [name, path, status, contentType, headers, bytes, error] of [
+      ['oversized declared health', '/api/health', 200, 'application/json',
+        { 'content-length': '999999' }, '{"status":"ok"}',
+        /advertised JSON body exceeds 4096 bytes/],
+      ['malformed UTF-8 health', '/api/health', 200, 'application/json', {},
+        Buffer.from([0xc3, 0x28]), /encoded data was not valid|UTF-8|not valid/i],
+      ['rejected sites status', '/api/sites', 503, 'application/json', {},
+        '{"error":"unavailable"}', /exactly HTTP 200/],
+      ['HTML sites fallback', '/api/sites', 200, 'text/html', {},
+        '<html>static fallback</html>', /must return JSON/],
+      ['streamed oversized sites', '/api/sites', 200, 'application/json', {},
+        Buffer.alloc(65537, 32), /JSON body exceeds 65536 bytes/]
+    ]) {
+      scenario = { name, path, status, contentType, headers, bytes, closed: false };
+      const active = scenario;
+      await assert.rejects(checkPublicReadiness(loopbackFetch), error,
+        name + ': real TCP response must fail the release gate');
+      // Wait only for transport teardown observed by the server, not a fake
+      // JavaScript cancellation counter.
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        name + ': abort must close the real HTTP response within 3 seconds');
+    }
+    scenario = null;
+    const recovered = await checkPublicReadiness(loopbackFetch);
+    assert.equal(recovered.connected, true,
+      'ordinary uncached real HTTP readiness must recover after rejected transfers');
+    assert.equal(recovered.available, true);
+    assert.ok(observedRoutes.length >= 7);
+    assert.ok(observedRoutes.every(({ method, url }) =>
+      method === 'GET' && ['/api/health', '/api/sites'].includes(url)),
+    'loopback proof must never send POST, session tokens or other API routes');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
 }
 
 async function selfTest() {
@@ -513,6 +603,7 @@ async function selfTest() {
   await assert.rejects(checkPublicReadiness(healthy,
     'https://zbrowse-tv.lizellay.chatgpt.site/?token=secret'), /reviewed public TV origin/);
 
+  await testRealLoopbackCancellation();
   console.log('zBrowse public-origin read-only readiness contract passed');
 }
 
