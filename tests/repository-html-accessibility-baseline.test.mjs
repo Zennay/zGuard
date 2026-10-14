@@ -124,6 +124,11 @@ assert.throws(
 );
 
 function validateHtmlAccessibility(file, source) {
+  const documentIds = new Set(
+    [...source.matchAll(/<[a-z][^>]*>/gi)]
+      .map((tag) => attributes(tag[0]).get("id"))
+      .filter(Boolean)
+  );
   const labelForIds = new Set();
   const wrappedControlIds = new Set();
   const labelableControlIds = new Set();
@@ -165,6 +170,28 @@ function validateHtmlAccessibility(file, source) {
   for (const tag of source.matchAll(/<[a-z][^>]*>/gi)) {
     const name = tag[0].match(/^<([a-z][\w:-]*)/i)?.[1]?.toLowerCase();
     const attrs = attributes(tag[0]);
+
+    if (attrs.has("aria-labelledby")) {
+      const references = attrs.get("aria-labelledby").trim().split(/\s+/).filter(Boolean);
+      assert.ok(references.length > 0, `${file}: aria-labelledby must reference at least one id: ${tag[0]}`);
+      for (const id of references) {
+        assert.ok(
+          documentIds.has(id),
+          `${file}: aria-labelledby references missing id "${id}": ${tag[0]}`
+        );
+        const opening = [...source.matchAll(/<[a-z][^>]*>/gi)]
+          .find((candidate) => attributes(candidate[0]).get("id") === id);
+        if (opening) {
+          const tagName = opening[0].match(/^<([a-z][\w:-]*)/i)?.[1];
+          const close = tagName ? source.indexOf(`</${tagName}>`, opening.index + opening[0].length) : -1;
+          const inner = close < 0 ? "" : source.slice(opening.index + opening[0].length, close);
+          assert.ok(
+            textContent(inner) || attributes(opening[0]).get("aria-label")?.trim(),
+            `${file}: aria-labelledby target "${id}" must provide readable text`
+          );
+        }
+      }
+    }
 
     if (attrs.has("tabindex")) {
       const raw = attrs.get("tabindex").trim();
@@ -276,6 +303,34 @@ const validFixture = `
 <iframe title="Preview"></iframe>
 </body></html>`;
 assert.doesNotThrow(() => validateHtmlAccessibility("self-test-valid.html", validFixture));
+assert.doesNotThrow(() =>
+  validateHtmlAccessibility(
+    "self-test-labelled-by.html",
+    '<span id="name-label">Display name</span><input aria-labelledby="name-label">'
+  )
+);
+assert.throws(
+  () => validateHtmlAccessibility(
+    "self-test-empty-target.html",
+    '<span id="name-label"></span><input aria-labelledby="name-label">'
+  ),
+  /aria-labelledby target "name-label" must provide readable text/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-missing-labelledby.html", '<input aria-labelledby="missing">'),
+  /aria-labelledby references missing id/
+);
+assert.throws(
+  () => validateHtmlAccessibility("self-test-empty-labelledby.html", '<input aria-labelledby="  ">'),
+  /aria-labelledby must reference at least one id/
+);
+assert.throws(
+  () => validateHtmlAccessibility(
+    "self-test-partial-labelledby.html",
+    '<span id="present">Present</span><input aria-labelledby="present absent">'
+  ),
+  /aria-labelledby references missing id/
+);
 assert.throws(
   () => validateHtmlAccessibility("self-test-input.html", "<input id=\"orphan\">"),
   /accessible label\/name/
