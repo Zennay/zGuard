@@ -23,6 +23,33 @@ const reviewedAssets = [
 const reviewed = new Map(reviewedAssets.map(item => [item.route, item]));
 assert.equal(reviewed.size, 3, 'all three required static release assets must be unique');
 
+// A rejected public asset must stop downloading even when the upstream
+// cancellation promise rejects or never settles. Preserve the original error.
+async function cancelQuietly(cancel) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, 250); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The same deadline must cover the entire response, including body reads.
+// Some fetch adapters stop waiting for headers but not a stalled reader.read().
+function readWithSignal(reader, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let abort;
+  const timedOut = new Promise((_, reject) => {
+    abort = () => reject(signal.reason || new Error('Static asset read timeout'));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  return Promise.race([reader.read(), timedOut]).finally(() =>
+    signal.removeEventListener('abort', abort));
+}
+
 export async function verifyPublicStaticRelease(
   fetcher = globalThis.fetch, publicOrigin = PUBLIC_ORIGIN
 ) {
@@ -33,6 +60,7 @@ export async function verifyPublicStaticRelease(
   for (const asset of reviewedAssets) {
     const target = new URL(asset.route, origin);
     assert.equal(target.origin, origin.origin, 'public assets must be same-origin');
+    const signal = AbortSignal.timeout(7000);
     const response = await fetcher(target.href, {
       method: 'GET',
       redirect: 'error',
@@ -40,39 +68,51 @@ export async function verifyPublicStaticRelease(
       cache: 'no-store',
       referrerPolicy: 'no-referrer',
       headers: { accept: asset.mediaTypes[0] },
-      signal: AbortSignal.timeout(7000)
+      signal
     });
-    assert.equal(response.status, 200,
-      asset.route + ': production asset must return exactly HTTP 200');
-    const mediaType = (response.headers.get('content-type') || '')
-      .split(';', 1)[0].trim().toLowerCase();
-    assert.ok(asset.mediaTypes.includes(mediaType),
-      asset.route + ': production asset has wrong content type');
-    const length = response.headers.get('content-length');
-    if (length !== null) {
-      assert.match(length, /^[0-9]+$/, asset.route + ': invalid length header');
-      assert.ok(BigInt(length) <= BigInt(asset.bytes.length),
-        asset.route + ': advertised body exceeds audited release asset');
+    try {
+      assert.equal(response.status, 200,
+        asset.route + ': production asset must return exactly HTTP 200');
+      const mediaType = (response.headers.get('content-type') || '')
+        .split(';', 1)[0].trim().toLowerCase();
+      assert.ok(asset.mediaTypes.includes(mediaType),
+        asset.route + ': production asset has wrong content type');
+      const length = response.headers.get('content-length');
+      if (length !== null) {
+        assert.match(length, /^[0-9]+$/, asset.route + ': invalid length header');
+        assert.ok(BigInt(length) <= BigInt(asset.bytes.length),
+          asset.route + ': advertised body exceeds audited release asset');
+      }
+      assert.ok(response.body, asset.route + ': missing response body');
+    } catch (error) {
+      // A proxy 502, HTML fallback or huge declared response can otherwise
+      // keep streaming after the release identity is already rejected.
+      await cancelQuietly(() => response.body?.cancel());
+      throw error;
     }
-    assert.ok(response.body, asset.route + ': missing response body');
-    // Compare the *decoded* bytes rather than a CDN/transfer content-length.
-    // Refuse oversize streams before buffering any body or saving secrets.
+    // Compare the *decoded* bytes, not a CDN/transfer Content-Length.
+    // Reject overflows and malformed chunks before hashing other content.
     const reader = response.body.getReader();
     const hash = crypto.createHash('sha256');
     let bytesRead = 0;
     try {
       for (;;) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readWithSignal(reader, signal);
         if (done) break;
+        if (!(value instanceof Uint8Array)) {
+          throw new Error(asset.route + ': invalid public asset stream chunk');
+        }
         bytesRead += value.byteLength;
         if (bytesRead > asset.bytes.length) {
-          await reader.cancel();
           throw new Error(asset.route + ': streamed asset exceeds audited release size');
         }
         hash.update(value);
       }
+    } catch (error) {
+      await cancelQuietly(() => reader.cancel());
+      throw error;
     } finally {
-      reader.releaseLock();
+      try { reader.releaseLock(); } catch { /* An aborted read may still be pending. */ }
     }
     assert.equal(bytesRead, asset.bytes.length,
       asset.route + ': production asset length does not match audited source');
@@ -163,6 +203,66 @@ async function selfTest() {
     }), { headers: { 'content-type': 'text/css' } }
   )), /streamed asset exceeds audited release size/,
   'an unknown-length oversized stream must fail closed');
+
+
+  // Rejected responses must be cancelled before reading any untrusted body.
+  // Each asset gets an independent one-shot stream with no prefetch.
+  for (const route of ['/', '/app.js', '/styles.css']) {
+    const asset = reviewed.get(route);
+    for (const [label, status, contentType, headers, expected] of [
+      ['HTTP 503', 503, asset.mediaTypes[0], {}, /exactly HTTP 200/],
+      ['HTML fallback', 200, 'application/x-unreviewed', {}, /wrong content type/],
+      ['oversized declared length', 200, asset.mediaTypes[0],
+        { 'content-length': String(asset.bytes.length + 1) }, /advertised body exceeds/],
+      ['invalid declared length', 200, asset.mediaTypes[0],
+        { 'content-length': 'NaN' }, /invalid length header/]
+    ]) {
+      let cancels = 0;
+      let reads = 0;
+      const faulty = new Response(new ReadableStream({
+        pull() { reads++; throw new Error('failed preflight still read the body'); },
+        cancel() { cancels++; }
+      }, { highWaterMark: 0 }), {
+        status, headers: { 'content-type': contentType, ...headers }
+      });
+      await assert.rejects(failure(route, () => faulty), expected,
+        route + ': ' + label + ' must fail closed');
+      assert.equal(reads, 0, route + ': ' + label + ' must not read the body');
+      assert.equal(cancels, 1, route + ': ' + label + ' must cancel the transfer once');
+    }
+    // A streamed oversize is also rejected and cancelled, rather than
+    // releasing the stream lock and leaving the transfer open.
+    let reads = 0;
+    let cancels = 0;
+    const overflow = new Response(new ReadableStream({
+      pull(controller) {
+        reads++;
+        if (reads === 1) controller.enqueue(new Uint8Array(asset.bytes.length + 1));
+        else throw new Error('unexpected follow-on read');
+      },
+      cancel() { cancels++; }
+    }, { highWaterMark: 0 }), { headers: { 'content-type': asset.mediaTypes[0] } });
+    await assert.rejects(failure(route, () => overflow),
+      /streamed asset exceeds audited release size/);
+    assert.equal(reads, 1, route + ': oversized first chunk must stop extra reads');
+    assert.equal(cancels, 1, route + ': oversized stream must be cancelled');
+  }
+
+  // Even a permanently hanging cancel cannot delay a failed release check
+  // indefinitely or replace the original size-limit rejection.
+  let pendingCancels = 0;
+  const neverSettles = new Response(new ReadableStream({
+    cancel() { pendingCancels++; return new Promise(() => {}); }
+  }, { highWaterMark: 0 }), {
+    headers: { 'content-type': 'text/html',
+      'content-length': String(reviewed.get('/').bytes.length + 1) }
+  });
+  const began = Date.now();
+  await assert.rejects(failure('/', () => neverSettles),
+    /advertised body exceeds audited release asset/);
+  assert.equal(pendingCancels, 1, 'failed release must still attempt cancellation');
+  assert.ok(Date.now() - began < 1500,
+    'a never-settling cancel() must not hang the public release gate');
 
   await assert.rejects(verifyPublicStaticRelease(fixture,
     'https://outside.invalid/'), /reviewed TV origin/,
