@@ -72,6 +72,9 @@ const server = await new Promise((resolve, reject) => {
 });
 try {
   const sameOrigin = 'http://' + peer + ':' + server.address().port;
+  // This is the reviewed public TV frontend origin in the read-only public
+  // readiness contract. Real reverse proxies forward this Origin to gateway.
+  const publicTvOrigin = 'https://zbrowse-tv.lizellay.chatgpt.site';
   async function post({ origin, fetchSite, preserve = false }) {
     if (!preserve) {
       sessions.clear();
@@ -99,6 +102,22 @@ try {
   const allowed = await post({ origin: sameOrigin, fetchSite: 'same-origin' });
   assert.deepEqual({status: allowed.status, started: allowed.started, reserved: allowed.reserved},
     {status: 201, started: 1, reserved: 1}, 'same-origin JSON must remain usable');
+
+  // The intended TV browser must retain both new and reused session flows
+  // when origin enforcement is repaired. A reject-all rule would make the
+  // strict negative CSRF checks green while breaking the actual product.
+  const publicCreated = await post({ origin: publicTvOrigin, fetchSite: 'same-origin' });
+  assert.deepEqual({ status: publicCreated.status, started: publicCreated.started,
+    reserved: publicCreated.reserved, bearer: publicCreated.returnedBearer },
+    { status: 201, started: 1, reserved: 1, bearer: true },
+    'reviewed TV frontend Origin must still create an approved browser');
+  const publicReused = await post({
+    origin: publicTvOrigin, fetchSite: 'same-origin', preserve: true
+  });
+  assert.deepEqual({ status: publicReused.status, started: publicReused.started,
+    reserved: publicReused.reserved, bearer: publicReused.returnedBearer },
+    { status: 200, started: 0, reserved: 0, bearer: true },
+    'reviewed TV frontend Origin must reuse its existing session');
 
   // The fast-path reuse check precedes validStartUrl(). A remote Origin must
   // not receive a token-bearing 200 even when it causes no new allocation.

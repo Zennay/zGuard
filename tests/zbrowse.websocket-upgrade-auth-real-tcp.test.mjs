@@ -141,6 +141,14 @@ try {
   // The same peer can have another, unrelated web page. The server must not
   // assume token ownership is sufficient to authorize that page's upgrade.
   const target = '/s/' + token + '/websockify?screen=1';
+  // A strict cross-site policy must still allow the reviewed TV application
+  // to establish a WebSocket stream with the same token and client owner.
+  const reviewedTv = await open(target,
+    'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\nSec-Fetch-Site: same-origin\r\n');
+  assert.match(reviewedTv, /^HTTP\/1\.1 101/m,
+    'approved TV Origin must retain the working browser stream');
+  assert.equal(seen.length, 3,
+    'reviewed Origin must forward exactly one authenticated browser upgrade');
   const beforeForeign = seen.length;
   const foreign = await open(target,
     'Origin: https://attacker.invalid\r\nSec-Fetch-Site: cross-site\r\n');
