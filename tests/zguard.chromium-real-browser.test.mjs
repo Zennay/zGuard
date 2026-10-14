@@ -336,6 +336,51 @@ async function runBrowser(extensionPath, profilePath, url) {
       await sleep(200);
     } while (true);
     if (!coldStart) {
+      // Real browser proof for both popup-target bypass repairs. The real
+      // MV3 content script receives DOM events before target listeners.
+      // A target-side safety listener prevents every allowed external URL
+      // from navigating; no external network or user session is involved.
+      const targetResult = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function probe(url, target) {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.target = target;
+            anchor.textContent = 'Local popup target QA';
+            document.body.append(anchor);
+            let reachedTarget = false;
+            const cancelAllowed = (event) => {
+              reachedTarget = true;
+              event.preventDefault();
+            };
+            anchor.addEventListener('click', cancelAllowed);
+            try {
+              const event = new MouseEvent('click', {
+                bubbles: true, cancelable: true
+              });
+              anchor.dispatchEvent(event);
+              return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
+            } finally {
+              anchor.removeEventListener('click', cancelAllowed);
+              anchor.remove();
+            }
+          }
+          const targets = { mixedCase: '_BlAnK', named: 'adPopupWindow' };
+          const matrix = {};
+          for (const [label, target] of Object.entries(targets)) {
+            matrix[label] = {
+              hostile: probe('https://ads.al5sm.com/popup', target),
+              ordinary: probe('https://example.org/video', target),
+              sameOrigin: probe('/same-origin', target)
+            };
+          }
+          return matrix;
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(targetResult.exceptionDetails, undefined,
+        'Real Chromium named/mixed-case popup fixture must evaluate');
+      observed.popupTargets = targetResult.result?.value;
       // Keyboard Enter is a distinct trusted activation path: Chromium
       // synthesizes a click (detail=0) on the focused HTML anchor. Testing
       // it in the actual loaded MV3 extension protects keyboard users.
@@ -1128,6 +1173,21 @@ try {
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.hostileClickCancelled, true,
         variant + ': hostile top-frame gesture must cancel default navigation');
+      // Require actual renderer event dispatch, not only Node VM mocks:
+      // hostile new contexts are blocked, ordinary and same-origin targets
+      // reach the element, while the fixture cancels their navigation.
+      if (!coldStart) {
+        for (const label of ['mixedCase', 'named']) {
+          const matrix = observed.popupTargets?.[label];
+          assert.deepEqual(matrix?.hostile, { blocked: true, cancelled: true },
+            variant + ': real Chrome must reject hostile ' + label + ' target');
+          for (const safe of ['ordinary', 'sameOrigin']) {
+            assert.deepEqual(matrix?.[safe], { blocked: false, cancelled: true },
+              variant + ': real Chrome must preserve ' + safe +
+              ' ' + label + ' navigation before fixture cancellation');
+          }
+        }
+      }
       assert.equal(observed.ordinaryClickBlocked, false,
         variant + ': actual injected extension must preserve ordinary external links');
       assert.equal(observed.ordinaryClickCancelled, true,
