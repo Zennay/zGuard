@@ -551,6 +551,7 @@ function reviewedSiteCatalogue(data) {
   if (!Array.isArray(data?.sites) || data.sites.length === 0 ||
       data.sites.length > 32) return false;
   const urls = new Set();
+  const visibleNames = new Set();
   return data.sites.every((site) => {
     if (!site || typeof site.name !== "string" || !site.name.trim() ||
         site.name.length > 96 ||
@@ -560,9 +561,15 @@ function reviewedSiteCatalogue(data) {
         typeof site.url !== "string" || site.url.length > 2048) return false;
     try {
       const url = new URL(site.url);
-      if (url.protocol !== "https:" || url.username || url.password ||
+      // Two URLs advertised under visually equivalent names are ambiguous
+      // on the TV. NFKC catches full-width compatibility glyphs and the
+      // lower-case key prevents mixed-case copies from masquerading as distinct.
+      const visibleName = site.name.normalize("NFKC").trim().toLowerCase();
+      if (!visibleName || visibleNames.has(visibleName) ||
+          url.protocol !== "https:" || url.username || url.password ||
           url.href !== site.url || urls.has(site.url)) return false;
       urls.add(site.url);
+      visibleNames.add(visibleName);
       return true;
     } catch {
       return false;
