@@ -234,6 +234,15 @@ const server = http.createServer(async (req, res) => {
             .end(JSON.stringify({ error: 'Session not found.' }));
         } else if (mode === 'json-410') {
           sendJson(res, 410, { error: 'Reverse proxy route gone' });
+        } else if (mode === 'json-200') {
+          sendJson(res, 200, { ok: true });
+        } else if (mode === 'html-200') {
+          res.writeHead(200, { 'content-type': 'text/html' })
+            .end('<!doctype html><title>Proxy success, browser still alive</title>');
+        } else if (mode === 'json-202') {
+          sendJson(res, 202, { ok: true });
+        } else if (mode === 'json-206') {
+          sendJson(res, 206, { ok: true });
         } else {
           throw new Error('Unknown synthetic proxy error');
         }
@@ -1076,11 +1085,12 @@ try {
     '!document.getElementById("startButton").disabled'
   ), 'previous successful teardown must finish before transport-drop fixture');
 
-  // A proxy/router can return HTTP 404 HTML or unrelated JSON 410 while
-  // a gateway browser is still alive. Exercise actual Chromium fetch + HTTP
-  // on loopback, not a mocked Promise. Only a later gateway-confirmed DELETE
-  // can restore Open after these untrusted statuses.
-  for (const mode of ['html-404', 'json-body-html-404', 'json-410']) {
+  // A proxy/router can return a fake success (200/202/206), HTTP 404 HTML
+  // or unrelated JSON 410 while the real gateway browser is still alive.
+  // Only an actual 204 or the reviewed idempotent-gone JSON may unlock Open.
+  // Exercise real Chromium fetch and localhost HTTP, not mocked Promises.
+  for (const mode of ['json-200', 'html-200', 'json-202', 'json-206',
+    'html-404', 'json-body-html-404', 'json-410']) {
     const startBefore = starts;
     const deleteBefore = deletions;
     await evaluate('document.getElementById("browserForm").requestSubmit(); true');
