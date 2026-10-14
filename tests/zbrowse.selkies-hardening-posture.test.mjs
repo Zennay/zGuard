@@ -97,6 +97,39 @@ for (const mutation of [
     { code: 'ERR_ASSERTION' }, 'unsafe/malformed runtime Env must fail');
 }
 
+// The release-mode workflow must not claim a strict pass by silently
+// re-running the advisory test or dropping its dispatch boolean.
+const workflow = fs.readFileSync(
+  new URL('../.github/workflows/zbrowse-selkies-hardening-posture.yml', import.meta.url),
+  'utf8'
+);
+function checkReleaseWiring(yaml) {
+  assert.ok(yaml.includes("REQUIRE_HARDENING: ${{ inputs.require_selkies_hardening || 'false' }}"),
+    'workflow_dispatch boolean must reach the acceptance job');
+  assert.match(yaml, /^\s+node tests\/zbrowse\.selkies-hardening-posture\.test\.mjs\s*$/m,
+    'normal PR/push must execute the source regression');
+  assert.match(yaml,
+    /if \[ "\$REQUIRE_HARDENING" = "true" \]; then\s*\n\s*node tests\/zbrowse\.selkies-hardening-posture\.test\.mjs --require-selkies-hardening/,
+    'strict dispatch must execute the release gate, not repeat advisory mode');
+  assert.ok(yaml.includes('ref: ${{ github.event.pull_request.head.sha || github.sha }}'),
+    'workflow must checkout the requested PR head');
+  assert.ok(yaml.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'),
+    'workflow must prove exact checked-out commit');
+}
+checkReleaseWiring(workflow);
+for (const weakened of [
+  workflow.replace('node tests/zbrowse.selkies-hardening-posture.test.mjs --require-selkies-hardening',
+    'node tests/zbrowse.selkies-hardening-posture.test.mjs'),
+  workflow.replace("inputs.require_selkies_hardening || 'false'",
+    "'false'"),
+  workflow.replace('ref: ${{ github.event.pull_request.head.sha || github.sha }}',
+    'ref: main')
+]) {
+  assert.notEqual(weakened, workflow, 'release-wiring mutation must change the workflow');
+  assert.throws(() => checkReleaseWiring(weakened),
+    { code: 'ERR_ASSERTION' }, 'weakened strict dispatch/provenance must fail QA');
+}
+
 const observed = parseContainerEnv(source);
 const gaps = postureGaps(observed);
 // Baseline advisory mode permits ONLY the existing known gap: the old
