@@ -29,9 +29,15 @@ async function request(url, options = {}) {
   // These are read-only gateway routes with a 200 JSON contract. A proxy
   // returning 202/203/205/206 must not advertise readiness or populate a
   // trusted site catalogue from a status it cannot authoritatively confirm.
-  if ((url === "/api/health" || url === "/api/sites") &&
-      response.ok && response.status !== 200) {
-    throw new Error("Unexpected gateway read status.");
+  if ((url === "/api/health" || url === "/api/sites") && response.ok) {
+    if (response.status !== 200) throw new Error("Unexpected gateway read status.");
+    // A parseable JSON body with a proxy-provided HTML/plain-text label is
+    // not an authoritative health or curated-site response. Both actual
+    // Express routes send application/json, optionally with a charset.
+    const mediaType = response.headers?.get?.("content-type") || "";
+    if (!/^application\/json(?:\s*;|$)/i.test(mediaType)) {
+      throw new Error("Invalid gateway read response format.");
+    }
   }
   if (response.status === 204) return null;
   // Successful lease renewal must be an actual gateway JSON response,
