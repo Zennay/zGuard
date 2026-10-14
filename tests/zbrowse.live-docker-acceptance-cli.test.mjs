@@ -90,6 +90,12 @@ try {
   const dangerous = [
     ['privileged', document => { document[0].HostConfig.Privileged = true; }, 'DOCKER_PRIVILEGED'],
     ['host network', document => { document[0].HostConfig.NetworkMode = 'host'; }, 'DOCKER_NETWORK'],
+    ['host cgroup namespace', document => {
+      document[0].HostConfig.CgroupnsMode = 'host';
+    }, 'DOCKER_CGROUP_NAMESPACE'],
+    ['OOM killer disabled', document => {
+      document[0].HostConfig.OomKillDisable = true;
+    }, 'DOCKER_OOM_KILLER'],
     ['excessive memory', document => { document[0].HostConfig.Memory = 5 * 1024 ** 3; },
       'DOCKER_MEMORY_LIMIT'],
     ['excessive CPU', document => { document[0].HostConfig.NanoCpus = 3 * 1e9; },
