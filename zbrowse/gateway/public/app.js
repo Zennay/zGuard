@@ -129,6 +129,13 @@ async function startSession(url) {
 
 function showBrowser() {
   const session = state.session;
+  // Preflight the gateway's absolute expiry before assigning iframe.src.
+  // The previous flow briefly navigated to an already-expired bearer URL
+  // and only then called endSession() from the countdown tick.
+  if (session.expiresAt <= Date.now()) {
+    endSession();
+    return;
+  }
   homeView.hidden = true;
   browserView.hidden = false;
   $("browserLoading").hidden = false;
