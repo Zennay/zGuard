@@ -1245,13 +1245,60 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   failed.reject(new Error('gateway offline'));
   await settle();
   assert.equal(retry.element('startButton').disabled, false, 'failed start must reset admission');
-  assert.equal(retry.element('formMessage').textContent, 'gateway offline');
+  assert.equal(retry.element('formMessage').textContent, 'Could not start browser. Try again.',
+    'transport failure must not echo untrusted network exception text onto the TV');
   retry.submit();
   assert.equal(
     retry.requests.filter(({ url }) => url === '/api/session').length,
     2,
     'failed session start must permit a subsequent retry'
   );
+
+  // Gateway and ingress failure bodies are untrusted: the TV is a shared
+  // screen, so upstream diagnostics may not echo bearer URLs, Basic auth or
+  // credentials. The actual shipped request/startSession code must show only
+  // reviewed status guidance while retaining safe retry behavior.
+  const syntheticSecret = '/s/' + 'S'.repeat(32) + '/?password=fake';
+  for (const [status, expectedMessage] of [
+    [400, 'Browser start rejected.'],
+    [403, 'Browser start rejected.'],
+    [409, 'Browser currently in use. Try again shortly.'],
+    [429, 'Too many browser requests. Try again later.'],
+    [503, 'Browser engine unavailable. Try again shortly.'],
+    [502, 'Could not start browser. Try again.'],
+    [500, 'Could not start browser. Try again.']
+  ]) {
+    const diagnostic = 'upstream failed at ' + syntheticSecret +
+      ' https://user:password@upstream.invalid/ and Authorization: Basic c2VjcmV0';
+    let attempts = 0;
+    const unsafeError = await bootPortal({
+      sessionRequest: async () => {
+        attempts++;
+        return response({ error: diagnostic }, status);
+      }
+    });
+    // The tiny test DOM has no HTML parser to apply index.html's hidden
+    // attribute; initialise its browser panel to the real document state.
+    unsafeError.element('browserView').hidden = true;
+    unsafeError.submit();
+    await settle();
+    assert.equal(unsafeError.element('formMessage').textContent, expectedMessage,
+      status + ': server-provided diagnostics must never appear on the TV');
+    assert.equal(unsafeError.element('formMessage').textContent.includes(syntheticSecret), false,
+      status + ': do not leak a forged bearer route');
+    assert.equal(unsafeError.element('formMessage').textContent.includes('password'), false,
+      status + ': do not leak credentials');
+    assert.equal(unsafeError.element('browserView').hidden, true,
+      status + ': no viewer may be mounted after failed creation');
+    assert.equal(unsafeError.element('browserFrame').srcHistory.length, 0,
+      status + ': no bearer navigation is permitted on rejected HTTP status');
+    assert.equal(unsafeError.element('startButton').disabled, false,
+      status + ': retry must remain available after the gateway recovers');
+    unsafeError.submit();
+    await settle();
+    assert.equal(attempts, 2,
+      status + ': generic error messaging must not permanently poison safe retry');
+  }
 
   const invalidSessions = [
     ['absolute viewer', { ...validSession, viewerUrl: 'https://untrusted.example/viewer' }],
