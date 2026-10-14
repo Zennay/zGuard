@@ -107,7 +107,21 @@ async function request(url, options = {}) {
   // A proxy-generated 200/202/206 is not evidence of Docker cleanup, even
   // when its body looks successful. Keep the old token locked for retry.
   if (options.method === "DELETE" && response.ok && response.status !== 204) {
+    await cancelQuietly(() => response.body?.cancel?.());
     throw new Error("Unexpected session release status.");
+  }
+  // An intermediary's 500/502/503/429 response cannot confirm teardown.
+  // Do not read arbitrary, potentially unbounded upstream diagnostics.
+  // A gateway JSON 404/410 is the only error that may prove release.
+  if (options.method === "DELETE" && !response.ok) {
+    const contentType = response.headers?.get?.("content-type") || "";
+    if ((response.status !== 404 && response.status !== 410) ||
+        !/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
+      const error = new Error("Session release not confirmed.");
+      error.status = response.status;
+      throw error;
+    }
   }
   // These are read-only gateway routes with a 200 JSON contract. A proxy
   // returning 202/203/205/206 must not advertise readiness or populate a
@@ -138,9 +152,16 @@ async function request(url, options = {}) {
       throw new Error("Invalid heartbeat response format.");
     }
   }
-  const body = response.ok && (url === "/api/health" || url === "/api/sites")
-    ? await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)
-    : await response.json().catch(() => ({}));
+  // Bound *decoded* JSON for every API response, not only readiness GETs.
+  // A compressed or chunked session response can expand far beyond its wire
+  // Content-Length. Never invoke unbounded Response.json() on a bearer route.
+  const maximumBytes = url === "/api/health" ? 4096 :
+    url === "/api/sites" ? 65536 :
+    url === "/api/session" ? 4096 :
+    options.method === "DELETE" ? 512 :
+    url.endsWith("/heartbeat") ? 1024 : 0;
+  if (!maximumBytes) throw new Error("Unexpected gateway response route.");
+  const body = await boundedGatewayJson(response, maximumBytes, options.signal);
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");
     error.status = response.status;
