@@ -244,6 +244,32 @@ try {
     'Browser currently in use', 'browser-full status should not look ready');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     false, 'busy gateway must permit owner session reuse attempt');
+  // A real TV keyboard can still submit a form by pressing Enter in the
+  // address field when the visible Open button is disabled. Exercise that
+  // browser path, not just a scripted form.requestSubmit() call.
+  async function nativeEnterWhileUnavailable(label) {
+    const focused = await evaluate(`(() => {
+      const input = document.getElementById("urlInput");
+      window.__qaUnavailableNativeEnter = false;
+      input.addEventListener("keydown", event => {
+        if (event.key === "Enter") window.__qaUnavailableNativeEnter = event.isTrusted;
+      }, { once: true });
+      input.focus();
+      return document.activeElement === input;
+    })()`);
+    assert.equal(focused, true, label + ': address input must be keyboard focusable');
+    for (const type of ['keyDown', 'keyUp']) {
+      await cdp('Input.dispatchKeyEvent', {
+        type, key: 'Enter', code: 'Enter',
+        windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+      });
+    }
+    await sleep(110);
+    assert.equal(await evaluate('window.__qaUnavailableNativeEnter'), true,
+      label + ': real Chrome must deliver trusted Enter to the URL input');
+    assert.equal(starts, 0, label + ': native Enter must not allocate a remote browser');
+  }
+
   health = 'draining';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -256,18 +282,21 @@ try {
   await sleep(100);
   assert.equal(starts, 0,
     'even scripted form submission must not allocate a browser during drain');
+  await nativeEnterWhileUnavailable('draining');
   health = 'invalid';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser engine offline', 'malformed 200 JSON must never appear as ready');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     true, 'malformed health response must deny browser admission');
+  await nativeEnterWhileUnavailable('invalid-health');
   health = 'offline';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser engine offline', 'gateway failure must differ from busy');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     true, 'HTTP 503 should prevent a doomed browser POST');
+  await nativeEnterWhileUnavailable('gateway-offline');
   health = 'ready';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
@@ -567,7 +596,7 @@ try {
   assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
-    'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
+    'draining/malformed health, blocked native Enter while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
 } finally {
