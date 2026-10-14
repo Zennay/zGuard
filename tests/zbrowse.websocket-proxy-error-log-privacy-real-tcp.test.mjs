@@ -38,6 +38,17 @@ const errors = [
   new Error('WS failure\n[INFO] forged reconnect complete /s/' + token),
   new Error('WS failed\u001b[2J\u001b[H[OK] forged healthy\u2028PASSWORD=' + password)
 ];
+// Simulate a network library that wraps credential-bearing auth metadata in
+// a nested exception rather than placing it in the top-level message.
+const nestedFailure = new Error('websocket upstream failed');
+nestedFailure.cause = new Error('upstream /s/' + token +
+  '/websockify Authorization: Basic ' + basic);
+nestedFailure.request = {
+  url: 'wss://qa-user:qa-pass@fixture.invalid/s/' + token,
+  headers: { authorization: 'Bearer ' + token },
+  env: { PASSWORD: password }
+};
+errors.push(nestedFailure);
 const recorded = [];
 let forwards = 0;
 const server = http.createServer((_req, res) => {
@@ -119,13 +130,13 @@ try {
   assert.equal(recorded.length, 0,
     'denied tokens must not produce an upstream error diagnostic');
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     const refused = await handshake(viewer);
     assert.doesNotMatch(refused, /^HTTP\/1\.1 101/m,
       'synthetic upstream exception must never upgrade the client socket');
   }
-  assert.equal(forwards, 4, 'every allowed handshake must reach real proxy callback');
-  assert.equal(recorded.length, 4, 'every WebSocket exception must record a diagnostic');
+  assert.equal(forwards, 5, 'every allowed handshake must reach real proxy callback');
+  assert.equal(recorded.length, 5, 'every WebSocket exception must record a diagnostic');
   assert.ok(recorded.every(line => line.includes('Browser proxy error')),
     'diagnostics must still retain a generic, actionable proxy-failure category');
 
@@ -133,17 +144,18 @@ try {
   const otherOwner = await handshake(viewer, 'X-Forwarded-For: 192.0.2.99\r\n');
   assert.doesNotMatch(otherOwner, /^HTTP\/1\.1 101/m,
     'forged owner headers must not authorize WebSocket upgrade');
-  assert.equal(forwards, 4);
+  assert.equal(forwards, 5);
   session.ip = ip;
   const recovered = await handshake(viewer);
   assert.match(recovered, /^HTTP\/1\.1 101 Switching Protocols/m,
     'authorized viewer upgrade must recover after synthetic upstream failures');
-  assert.equal(forwards, 5);
-  assert.equal(recorded.length, 4, 'successful recovery must not add an error diagnostic');
+  assert.equal(forwards, 6);
+  assert.equal(recorded.length, 5, 'successful recovery must not add an error diagnostic');
 
   // Inspect only in memory. Never emit tokens, auth strings, or log payloads
   // in CI output, even when the strict remediation check fails.
-  const canaries = [token, password, basic, 'sample-user', 'sample-pass'];
+  const canaries = [token, password, basic, 'sample-user', 'sample-pass',
+    'qa-user', 'qa-pass', 'Authorization: Basic', 'Bearer '];
   const leaking = recorded.filter(line =>
     canaries.some(needle => line.includes(needle)) ||
     /[\r\n\x1b\u2028\u2029]/.test(line));
