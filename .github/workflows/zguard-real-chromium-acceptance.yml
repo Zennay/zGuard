@@ -91,6 +91,7 @@ jobs:
           "$CHROMIUM_BIN" --version
           node tests/zguard.browser-flag-contract.test.mjs
           node tests/zguard.coldstart-evidence-integrity.test.mjs
+          node tests/zbrowse.launch-cli-contract.test.mjs
           node tests/zguard.page-mainworld-boundary.test.mjs
           node tests/zguard.page-policy-bridge.test.mjs
           node tests/zguard.chromium-real-browser.test.mjs
