@@ -30,6 +30,9 @@ let health = 'ready';
 let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
+let holdNextDelete = false;
+let releaseHeldDelete = null;
+let notifyHeldDelete = null;
 let viewerRequests = 0;
 let heartbeats = 0;
 let rejectHeartbeat = false;
@@ -113,6 +116,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'DELETE' && pathname === '/api/session/' + syntheticToken) {
       deletions++;
+      if (holdNextDelete) {
+        holdNextDelete = false;
+        await new Promise(resolve => {
+          releaseHeldDelete = resolve;
+          notifyHeldDelete?.();
+        });
+      }
       res.writeHead(204, { 'cache-control': 'no-store' }).end();
       return;
     }
@@ -672,6 +682,58 @@ try {
   await until(() => deletions === afterHistoryDeletions + 1,
     'new post-history browser must be releasable through the actual End button');
   assert.equal(starts, 10, 'no duplicate starts across browser history recovery');
+
+  // A slow DELETE can race a new Open from the returned home form. The
+  // gateway may reuse the same-owner token until DELETE finishes, which
+  // would revoke the new iframe if the frontend doesn't lock admission.
+  const raceBeforeStarts = starts;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === raceBeforeStarts + 1, 'slow-DELETE race session start');
+  assert.ok(releaseStart, 'slow-DELETE probe must use real HTTP browser start');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'slow-DELETE probe session mounted in actual Chromium');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'slow-DELETE probe viewer iframe loaded');
+
+  holdNextDelete = true;
+  const deleteArrived = new Promise(resolve => { notifyHeldDelete = resolve; });
+  await evaluate('document.getElementById("endButton").click(); true');
+  await Promise.race([
+    deleteArrived,
+    sleep(4000).then(() => { throw new Error('held DELETE never reached HTTP fixture'); })
+  ]);
+  assert.ok(releaseHeldDelete, 'real gateway DELETE must be deliberately held open');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+    'End should immediately return to home before server acknowledges DELETE');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'while real DELETE is pending, the native Open button must remain disabled');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(120);
+  assert.equal(starts, raceBeforeStarts + 1,
+    'scripted submit must not race a new browser against a pending DELETE');
+  releaseHeldDelete();
+  releaseHeldDelete = null;
+  notifyHeldDelete = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'completed real HTTP DELETE should restore new start admission');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === raceBeforeStarts + 2,
+    'clean browser start after held DELETE completes');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'post-DELETE retry must still mount a viewer');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(async () => await evaluate(
+    'document.getElementById("browserView").hidden'
+  ), 'post-DELETE retry must still be closable');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
