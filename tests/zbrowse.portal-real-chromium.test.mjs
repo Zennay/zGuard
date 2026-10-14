@@ -834,6 +834,12 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("browserView").hidden'
   ), 'viewer visible after gateway start');
+  assert.equal(await evaluate(
+    'document.activeElement?.id === "fullscreenButton"'
+  ), true, 'real Chromium must focus visible TV toolbar after hiding the Open form');
+  assert.equal(await evaluate(
+    'document.activeElement?.closest("#homeView") === null'
+  ), true, 'real Chromium focus must never remain inside hidden home controls');
   assert.equal(await evaluate('new URL(document.getElementById("browserFrame").src).pathname'),
     '/s/' + syntheticToken + '/', 'viewer iframe must mount only the issued bearer path');
   await until(async () => await evaluate(
