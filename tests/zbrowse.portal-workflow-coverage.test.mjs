@@ -12,6 +12,8 @@ for (const path of [
   'zbrowse/gateway/public/app.js',
   'tests/zbrowse.portal-accessibility.test.mjs',
   'tests/zbrowse.frontend-session.test.js',
+  'tests/zbrowse.read-budget-integrity.test.mjs',
+  'tests/zbrowse.public-origin-readiness.test.mjs',
   'tests/zbrowse.portal-workflow-coverage.test.mjs',
   '.github/workflows/portal-accessibility-validation.yml',
 ]) {
@@ -24,6 +26,7 @@ for (const path of [
 for (const command of [
   'node tests/zbrowse.portal-accessibility.test.mjs',
   'node tests/zbrowse.frontend-session.test.js',
+  'node tests/zbrowse.read-budget-integrity.test.mjs',
   'node tests/zbrowse.portal-workflow-coverage.test.mjs',
 ]) {
   assert.ok(
