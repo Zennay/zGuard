@@ -249,6 +249,17 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await bootPortal({ healthRequest: async () => oversizedLength });
   assert.equal(oversizedLength.reads, 0,
     'oversized Content-Length must reject before consuming a single byte');
+  assert.equal(oversizedLength.cancelled, true,
+    'oversized declared body must be cancelled without a stream reader');
+  const invalidUtfStream = response(readyHealth, 200, 'application/json', {
+    chunks: [Uint8Array.from([0xc3, 0x28]), new Uint8Array(8000)]
+  });
+  const cancelledPortal = await bootPortal({ healthRequest: async () => invalidUtfStream });
+  assert.equal(cancelledPortal.element('capacityText').textContent, 'Browser engine offline');
+  assert.equal(invalidUtfStream.cancelled, true,
+    'invalid UTF-8 must cancel outstanding data rather than only unlock the reader');
+  assert.equal(invalidUtfStream.reads, 1,
+    'decoding failure must stop before the next (potentially huge) stream chunk');
 
   const validSites = { sites: [{ name: 'Approved', url: 'https://approved.test/' }] };
   for (const [label, malicious] of [
@@ -275,6 +286,14 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await bootPortal({ siteRequest: async () => oversizedCatalogue });
   assert.equal(oversizedCatalogue.cancelled, true,
     'oversized streamed catalogue must cancel the upstream body');
+  const badCatalogueWire = response(validSites, 200, 'application/json', {
+    chunks: [Uint8Array.from([0xff]), new Uint8Array(10000)]
+  });
+  await bootPortal({ siteRequest: async () => badCatalogueWire });
+  assert.equal(badCatalogueWire.cancelled, true,
+    'malformed catalogue stream must cancel unread bytes');
+  assert.equal(badCatalogueWire.reads, 1,
+    'malformed catalogue stream must never consume subsequent bytes');
   // A valid UTF-8 multibyte character split across read() chunks is safe.
   const unicodeCatalogue = { sites: [{ name: 'Élite', url: 'https://approved.test/' }] };
   const encoded = new TextEncoder().encode(JSON.stringify(unicodeCatalogue));
