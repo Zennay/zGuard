@@ -328,7 +328,17 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     ] })],
     ['directional override in name', () => response({ sites: [
       { name: 'Video\u202Eevil.test', url: 'https://approved.test/' }
-    ] })]
+    ] })],
+    ...[
+      ['C1 next-line', '\u0085'],
+      ['Arabic letter mark', '\u061c'],
+      ['left-to-right mark', '\u200e'],
+      ['right-to-left mark', '\u200f'],
+      ['line separator', '\u2028'],
+      ['paragraph separator', '\u2029']
+    ].map(([label, mark]) => [label + ' in name', () => response({
+      sites: [{ name: 'Safe' + mark + 'fake.invalid', url: 'https://approved.test/' }]
+    })])
   ];
   for (const [label, siteRequest] of catalogueFailures) {
     const bad = await bootPortal({ health: healthy, siteRequest });
