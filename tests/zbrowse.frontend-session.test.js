@@ -116,7 +116,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       if (healthRequest) return healthRequest(options);
       return response(health || { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
     }
-    if (/^\\/api\\/session\\/[A-Za-z0-9_-]{32}\\/heartbeat$/.test(url) &&
+    if (/^\/api\/session\/[A-Za-z0-9_-]{32}\/heartbeat$/.test(url) &&
         options.method === 'POST') {
       if (!heartbeatRequest) throw new Error('unexpected heartbeat request');
       return heartbeatRequest(options);
