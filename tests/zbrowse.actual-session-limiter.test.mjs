@@ -76,7 +76,7 @@ assert.deepEqual(complete.map(x => x.status), [
 ], 'actual production limiter must enforce its configured quota for complete trusted chain');
 assert.equal(complete[0].identity.sessionIdentity, '198.51.100.20');
 assert.equal(complete[0].identity.limiterIdentity, '198.51.100.20');
- 
+
 // False positives matter too: one overloaded TV client must not exhaust
 // a separate legitimate client's quota just because both share the same
 // last trusted reverse-proxy hop. Independently scoped *validated* right-side
