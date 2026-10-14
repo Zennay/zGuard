@@ -736,6 +736,11 @@ try {
     'End should immediately return to home before server acknowledges DELETE');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
     'while real DELETE is pending, the native Open button must remain disabled');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Finishing previous browser session',
+    'real Chromium must immediately display teardown pending before HTTP response');
+  assert.equal(await evaluate('document.getElementById("capacityText").parentElement.className'),
+    'status', 'held DELETE must never leave a misleading green Ready indicator');
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
   await sleep(120);
   assert.equal(starts, raceBeforeStarts + 1,

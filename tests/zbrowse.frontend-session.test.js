@@ -380,6 +380,11 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     'ending a browser should hide it immediately, without waiting for DELETE');
   assert.equal(overlapping.element('startButton').disabled, true,
     'start must stay disabled until the old gateway session has been released');
+  assert.equal(overlapping.element('capacityText').textContent,
+    'Finishing previous browser session',
+    'a pending DELETE must immediately replace stale green Ready text');
+  assert.equal(overlapping.element('capacityText').parentElement.className, 'status',
+    'a pending DELETE must clear stale green readiness styling');
   overlapping.submit(); // scripted submit bypasses native disabled buttons
   await settle();
   assert.equal(allocations, 1,
