@@ -13,6 +13,10 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zbrowse-viewer-range-cache.yml', [
+    ['require_no_store', 'REQUIRE_NO_STORE',
+      [['zbrowse.viewer-conditional-range-real-http.test.mjs', '--require-no-store']]]
+  ]],
   ['zbrowse-conditional-health-cache.yml', [
     ['require_health_no_store', 'REQUIRE_HEALTH_NO_STORE',
       [['zbrowse.health-conditional-real-http.test.mjs', '--require-health-no-store']]]
