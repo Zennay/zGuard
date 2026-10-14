@@ -13,8 +13,8 @@ assert.equal(bundled, chromium, 'embedded zBrowse page interceptor must remain b
 // blocked popup domain could remain accessible in one injection world.
 function extractHostList(source, declaration) {
   const prefix = declaration === 'Set'
-    ? /const\\s+(?:blockedHosts|HOSTILE_HOSTS)\\s*=\\s*new Set\\((\\[[^\\]]+\\])\\)/
-    : /const\\s+HOSTILE_HOSTS\\s*=\\s*(\\[[^\\]]+\\])/;
+    ? /const\s+(?:blockedHosts|HOSTILE_HOSTS)\s*=\s*new Set\((\[[^\]]+\])\)/
+    : /const\s+HOSTILE_HOSTS\s*=\s*(\[[^\]]+\])/;
   const match = source.match(prefix);
   assert.ok(match, 'reviewed hostile-host declaration must remain inspectable');
   return Array.from(vm.runInNewContext(match[1])).sort();
