@@ -946,11 +946,72 @@ try {
   await until(() => deletions === lateFailDeletesBefore + 3,
     'post-reconciliation viewer must remain closable');
 
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'prior End must finish before malformed-response cleanup-failure fixture');
+
+  // A compromised same-origin response may mint a valid bearer but return
+  // an unsafe external viewer URL. The browser must DELETE that token; when
+  // the real localhost gateway returns 503, its next POST must remain
+  // blocked until the established health-poll retry confirms teardown.
+  const invalidDeleteBefore = deletions;
+  const invalidStartBefore = starts;
+  const invalidViewerBefore = viewerRequests;
+  viewerResponseMode = 'external';
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === invalidStartBefore + 1,
+    'unsafe-viewer response must start through local HTTP POST');
+  assert.ok(releaseStart, 'unsafe-viewer fixture must hold the gateway response');
+  failNextDelete = true;
+  releaseStart();
+  releaseStart = null;
+  await until(() => deletions === invalidDeleteBefore + 1,
+    'rejected viewer must attempt actual HTTP DELETE of minted token');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'failed cleanup of unsafe viewer must have visible retry feedback');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'invalid viewer plus failed DELETE must prohibit another start');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Finishing previous browser session',
+    'invalid response cleanup must never misleadingly report Ready');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+    'unsafe minted viewer must never mount its iframe');
+  assert.equal(viewerRequests, invalidViewerBefore,
+    'unsafe viewer URL may not even cause a synthetic iframe GET');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(100);
+  assert.equal(starts, invalidStartBefore + 1,
+    'scripted submit cannot reuse minted token after failed cleanup');
+
+  viewerResponseMode = 'valid';
+  await evaluate('refreshHealth(); true');
+  await until(() => deletions === invalidDeleteBefore + 2,
+    'health poll must retry failed cleanup of rejected viewer token');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'successful retry must reopen normal Start flow');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+    'successful cleanup must clear retry warning');
+
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === invalidStartBefore + 2,
+    'fresh viewer can start after malformed-response cleanup recovery');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'fresh valid browser mounts after release of unsafe minted token');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === invalidDeleteBefore + 3,
+    'fresh valid browser still ends cleanly');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, failed late-start cleanup and BFCache reconciliation, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, failed late-start cleanup and BFCache reconciliation, invalid viewer failed-DELETE reconciliation, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
