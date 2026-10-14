@@ -44,7 +44,7 @@
       return originalOpen.call(window, url, target, features);
     };
     document.addEventListener('click', (event) => {
-      const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+      const anchor = event.target && event.target.closest ? event.target.closest('a,area') : null;
       if (!anchor) return;
       const href = linkValue(anchor, 'href');
       const target = linkValue(anchor, 'target');
