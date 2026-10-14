@@ -31,7 +31,7 @@ let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
 let failNextDelete = false;
-let dropNextDelete = false;
+let droppedDeleteAttemptsRemaining = 0;
 let holdNextDelete = false;
 let releaseHeldDelete = null;
 let notifyHeldDelete = null;
@@ -126,9 +126,11 @@ const server = http.createServer(async (req, res) => {
           notifyHeldDelete?.();
         });
       }
-      if (dropNextDelete) {
-        // Genuine transport loss: no HTTP status or JSON body reaches Chrome.
-        dropNextDelete = false;
+      if (droppedDeleteAttemptsRemaining > 0) {
+        // Chrome may retry an idempotent DELETE after a connection reset.
+        // Drop each transport retry within this *bounded fixture window*.
+        // No HTTP status or response body reaches the browser.
+        droppedDeleteAttemptsRemaining--;
         res.socket.destroy();
         return;
       }
@@ -846,13 +848,17 @@ try {
     '!document.getElementById("browserView").hidden'
   ), 'socket-drop fixture must mount real Chromium iframe');
 
-  dropNextDelete = true;
+  droppedDeleteAttemptsRemaining = 4;
   await evaluate('document.getElementById("endButton").click(); true');
-  await until(() => deletions === droppedDeleteBefore + 1,
+  await until(() => deletions >= droppedDeleteBefore + 1,
     'deliberately dropped DELETE must reach the loopback TCP server');
   await until(async () => await evaluate(
     'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
   ), 'connection reset must be treated as unconfirmed teardown');
+  const failedNetworkDeletes = deletions - droppedDeleteBefore;
+  assert.ok(failedNetworkDeletes >= 1 && failedNetworkDeletes <= 4,
+    'Chrome may replay idempotent DELETE but all automatic attempts must remain within fixture budget');
+  droppedDeleteAttemptsRemaining = 0; // allow the explicit health-poll retry
   assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
     'browser must not reuse a possibly live bearer after transport drop');
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
@@ -861,7 +867,7 @@ try {
     'form submit may not start a browser while lost DELETE is unreconciled');
 
   await evaluate('refreshHealth(); true');
-  await until(() => deletions === droppedDeleteBefore + 2,
+  await until(() => deletions === droppedDeleteBefore + failedNetworkDeletes + 1,
     'real Chromium must retry dropped DELETE via health poll');
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
@@ -879,7 +885,7 @@ try {
     '!document.getElementById("browserView").hidden'
   ), 'post-reconciliation viewer must still be mountable');
   await evaluate('document.getElementById("endButton").click(); true');
-  await until(() => deletions === droppedDeleteBefore + 3,
+  await until(() => deletions === droppedDeleteBefore + failedNetworkDeletes + 2,
     'new browser after socket drop must still end normally');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
