@@ -50,6 +50,8 @@ let stalledHealthGets = 0;
 let healthCacheControl = 'no-store';
 let nextHealthStatus = null;
 let nextSitesStatus = null;
+let nextHealthMediaType = null;
+let nextSitesMediaType = null;
 let starts = 0;
 let viewerResponseMode = 'valid';
 let nextStartFailure = null;
@@ -127,7 +129,16 @@ const server = http.createServer(async (req, res) => {
       } else {
         const status = nextSitesStatus ?? 200;
         nextSitesStatus = null;
-        sendJson(res, status, { sites, maxSessionMinutes: 15 });
+        if (nextSitesMediaType !== null) {
+          const media = nextSitesMediaType;
+          nextSitesMediaType = null;
+          res.writeHead(status, {
+            ...(media === 'missing' ? {} : { 'content-type': media }),
+            'cache-control': 'no-store'
+          }).end(JSON.stringify({ sites, maxSessionMinutes: 15 }));
+        } else {
+          sendJson(res, status, { sites, maxSessionMinutes: 15 });
+        }
       }
       return;
     }
@@ -157,10 +168,20 @@ const server = http.createServer(async (req, res) => {
       }
       const status = nextHealthStatus ?? 200;
       nextHealthStatus = null;
-      sendJson(res, status, {
+      const payload = {
         status: 'ok', activeSessions: health === 'busy' ? 1 : 0,
         startingSessions: 0, capacity: 1
-      }, healthCacheControl);
+      };
+      if (nextHealthMediaType !== null) {
+        const media = nextHealthMediaType;
+        nextHealthMediaType = null;
+        res.writeHead(status, {
+          ...(media === 'missing' ? {} : { 'content-type': media }),
+          'cache-control': 'no-store'
+        }).end(JSON.stringify(payload));
+      } else {
+        sendJson(res, status, payload, healthCacheControl);
+      }
       return;
     }
     if (req.method === 'POST' && pathname === '/api/session') {
@@ -448,6 +469,33 @@ try {
       sites.length, status + ': canonical 200 catalogue should restore suggestions');
     assert.equal(await evaluate('document.getElementById("startButton").disabled'),
       false, status + ': canonical 200 catalogue must restore Open');
+  }
+
+  // Actual Chrome fetch parses these JSON bodies, but their declared
+  // Content-Type is wrong. Do not trust them for browser admission. A later
+  // canonical gateway application/json response must restore normal use.
+  for (const media of ['text/html', 'application/problem+json', 'missing']) {
+    nextHealthMediaType = media;
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+      'Browser engine offline', media + ': real HTTP mislabeled health must fail closed');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, media + ': mislabeled health must not enable Open');
+    assert.equal(starts, 0, media + ': invalid health must not start browsers');
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, media + ': canonical JSON health should restore browsing');
+    nextSitesMediaType = media;
+    await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      0, media + ': untrusted catalogue cannot show suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, media + ': untrusted catalogue cannot unlock Open');
+    await evaluate('ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      sites.length, media + ': valid JSON catalogue restores reviewed list');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, media + ': valid JSON catalogue restores normal Open');
   }
 
   // Simulate an erroneously cacheable 200/OK gateway-health response.

@@ -262,11 +262,34 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       0, status + ': scripted submit must not bypass invalid health status');
   }
 
+  // A proxy can return parseable health JSON while labelling the body as
+  // HTML, plain text, problem+json or omitting the type entirely. None are
+  // documented gateway readiness responses, even with HTTP 200.
+  for (const contentType of ['text/html', 'text/plain', 'application/problem+json', null]) {
+    const fakeHealth = await bootPortal({
+      healthRequest: async () => response({
+        status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1
+      }, 200, contentType)
+    });
+    assert.equal(fakeHealth.element('capacityText').textContent,
+      'Browser engine offline', String(contentType) + ': non-JSON health must fail closed');
+    assert.equal(fakeHealth.element('startButton').disabled, true,
+      String(contentType) + ': invalid media type cannot enable Open');
+    fakeHealth.submit();
+    assert.equal(fakeHealth.requests.filter(({ url }) => url === '/api/session').length,
+      0, String(contentType) + ': invalid media type cannot mint browser');
+  }
+
   // Public health may be green while /api/sites is offline or supplies an
   // invalid catalogue (issue #293). Do not enable the Open button, prefill an
   // unreviewed URL or send a browser POST merely because capacity is free.
   const healthy = { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 };
   const catalogueFailures = [
+    ...['text/html', 'text/plain', 'application/problem+json', null].map((contentType) => [
+      'non-JSON catalogue ' + String(contentType),
+      () => response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] },
+        200, contentType)
+    ]),
     ...[201, 202, 203, 205, 206].map((status) => [
       'non-200 catalogue ' + status,
       () => response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] }, status)
