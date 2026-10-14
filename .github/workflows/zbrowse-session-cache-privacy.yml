@@ -51,6 +51,7 @@ jobs:
           node tests/zbrowse.cache-privacy-cli.test.mjs
           node tests/zbrowse.session-cache-privacy.test.mjs
           node tests/zbrowse.session-cache-real-http.test.mjs
+          node tests/zbrowse.session-lifecycle-real-http.test.mjs
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.session-cache-privacy.test.mjs --require-no-store
             node tests/zbrowse.session-cache-real-http.test.mjs --require-no-store
