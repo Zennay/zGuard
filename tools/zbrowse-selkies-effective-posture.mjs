@@ -90,6 +90,11 @@ export function assessDockerInspect(document) {
       host.IpcMode === 'host' || host.UTSMode === 'host') {
     gaps.push('DOCKER_CAPABILITIES');
   }
+  // A host cgroup namespace exposes the host's cgroup hierarchy to the
+  // browser, and disabling the OOM killer undermines bounded shared-VPS
+  // resource containment even if the configured memory cap is positive.
+  if (host.CgroupnsMode === 'host') gaps.push('DOCKER_CGROUP_NAMESPACE');
+  if (host.OomKillDisable === true) gaps.push('DOCKER_OOM_KILLER');
   if (!Array.isArray(host.Binds ?? []) || (host.Binds ?? []).length > 0 ||
       !Array.isArray(host.Mounts ?? []) || (host.Mounts ?? []).length > 0) {
     gaps.push('DOCKER_HOST_MOUNTS');
