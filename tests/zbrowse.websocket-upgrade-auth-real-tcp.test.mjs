@@ -132,7 +132,7 @@ try {
   ];
   for (const [label, url] of malformedPaths) {
     const denied = await open(url);
-    assert.doesNotMatch(denied, /^HTTP\\/1\\.1 101/m,
+    assert.doesNotMatch(denied, /^HTTP\/1\.1 101/m,
       label + ': malformed/unreviewed bearer path must never upgrade');
     assert.equal(seen.length, 1,
       label + ': denied upgrade must not even invoke the browser proxy');
