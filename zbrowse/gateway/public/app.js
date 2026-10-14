@@ -245,7 +245,13 @@ function checkedSessionPayload(payload) {
     !Number.isSafeInteger(payload.expiresAt) ||
     payload.expiresAt <= 0 ||
     !Number.isSafeInteger(payload.maxMinutes) ||
-    payload.maxMinutes < 1
+    payload.maxMinutes < 1 ||
+    // The gateway issues expiresAt = creation time + maxMinutes minutes.
+    // Allow two minutes for TV/gateway clock drift and start-up latency, but
+    // never trust a proxy's 1-year lease labelled as a 15-minute session.
+    // Bound multiplication to safe integer milliseconds before comparing.
+    payload.maxMinutes > Math.floor(Number.MAX_SAFE_INTEGER / 60000) ||
+    payload.expiresAt > Date.now() + payload.maxMinutes * 60000 + 120000
   ) {
     throw new Error("Invalid browser session response.");
   }

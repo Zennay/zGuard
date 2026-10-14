@@ -1588,6 +1588,15 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     ['missing token', { ...validSession, token: undefined }],
     ['string expiry', { ...validSession, expiresAt: String(validSession.expiresAt) }],
     ['nonsafe expiry', { ...validSession, expiresAt: Number.MAX_SAFE_INTEGER + 1 }],
+    ['expiry longer than declared 15-minute duration', {
+      ...validSession, expiresAt: Date.now() + 60 * 60_000
+    }],
+    ['forged one-minute duration with long expiry', {
+      ...validSession, maxMinutes: 1, expiresAt: Date.now() + 10 * 60_000
+    }],
+    ['duration overflows safe millisecond range', {
+      ...validSession, maxMinutes: Math.floor(Number.MAX_SAFE_INTEGER / 60000) + 1
+    }],
     ['invalid duration', { ...validSession, maxMinutes: 0 }],
     ['missing duration', { ...validSession, maxMinutes: undefined }],
     ['null payload', null]
