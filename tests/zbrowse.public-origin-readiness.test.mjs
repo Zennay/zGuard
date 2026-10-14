@@ -312,7 +312,7 @@ async function selfTest() {
   const rejectsCancel = new Response(new ReadableStream({
     cancel() { throw new Error('synthetic cancellation exception'); }
   }), { headers: { 'content-type': 'application/json',
-    'content-length': '999999' } });
+    'cache-control': 'no-store', 'content-length': '999999' } });
   await assert.rejects(checkPublicReadiness(async () => rejectsCancel),
     /advertised JSON body exceeds 4096 bytes/);
 
