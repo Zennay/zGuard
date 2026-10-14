@@ -1029,6 +1029,14 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   // A missing reverse-proxy route can return 404 HTML while the browser on
   // the gateway is still running; trusting that status permits unsafe reuse.
   for (const [label, untrustedReply] of [
+    // The shipped gateway only returns 204 on completed teardown. A
+    // success-shaped proxy response must not free the browser reservation.
+    ['proxy success JSON 200', response({ ok: true }, 200)],
+    ['proxy HTML 200', response({ ok: true }, 200, 'text/html')],
+    ['proxy created 201', response({ ok: true }, 201)],
+    ['proxy accepted 202', response({ ok: true }, 202)],
+    ['proxy reset 205', response(null, 205)],
+    ['proxy partial 206', response({ ok: true }, 206)],
     ['proxy JSON 404', response({ error: 'Not Found' }, 404)],
     ['proxy HTML 404', {
       status: 404, ok: false,
