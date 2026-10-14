@@ -104,6 +104,24 @@ const server = http.createServer(async (req, res) => {
         });
       } else if (sitesMode === 'empty') {
         sendJson(res, 200, { sites: [], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'many') {
+        sendJson(res, 200, {
+          sites: Array.from({ length: 33 }, (_, i) =>
+            ({ name: 'Fake #' + i, url: 'https://site' + i + '.invalid/' })),
+          maxSessionMinutes: 15
+        });
+      } else if (sitesMode === 'long-name') {
+        sendJson(res, 200, { sites: [
+          { name: 'A'.repeat(97), url: sites[0].url }
+        ], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'long-url') {
+        sendJson(res, 200, { sites: [
+          { name: 'Long URL', url: sites[0].url + 'x'.repeat(2050) }
+        ], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'bidi-name') {
+        sendJson(res, 200, { sites: [
+          { name: 'Video\\u202Efake.invalid', url: sites[0].url }
+        ], maxSessionMinutes: 15 });
       } else {
         sendJson(res, 200, { sites, maxSessionMinutes: 15 });
       }
@@ -1354,7 +1372,8 @@ try {
   // ACTUAL bundled portal in Chrome for every case (not a VM DOM fake) and
   // verify the page itself cannot issue a new browser POST.
   const beforeCatalogueProbes = starts;
-  for (const mode of ['offline', 'userinfo', 'empty']) {
+  for (const mode of ['offline', 'userinfo', 'empty',
+    'many', 'long-name', 'long-url', 'bidi-name']) {
     sitesMode = mode;
     await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
     await until(async () => await evaluate(
