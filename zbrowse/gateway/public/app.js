@@ -48,6 +48,17 @@ async function request(url, options = {}) {
     );
     throw error;
   }
+  if (url === "/api/session") {
+    // A gateway browser start mints a bearer. If an intermediary returns
+    // plausible JSON disguised as HTML, reject it without losing the token:
+    // the existing checkedSessionPayload() path will attempt DELETE first.
+    // This is defence in depth, not authentication of a compromised proxy.
+    const contentType = response.headers?.get?.("content-type") || "";
+    if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      return body && typeof body === "object"
+        ? { ...body, viewerUrl: null } : {};
+    }
+  }
   return body;
 }
 

@@ -51,6 +51,7 @@ let healthCacheControl = 'no-store';
 let starts = 0;
 let viewerResponseMode = 'valid';
 let nextStartFailure = null;
+let nextStartMediaType = null;
 let deletions = 0;
 let failNextDelete = false;
 let droppedDeleteAttemptsRemaining = 0;
@@ -159,11 +160,21 @@ const server = http.createServer(async (req, res) => {
         viewerResponseMode === 'javascript' ? 'javascript:alert(1)' :
         viewerResponseMode === 'mismatched-token' ? '/s/' + 'U'.repeat(32) + '/' :
         '/s/' + syntheticToken + '/';
-      sendJson(res, 201, {
+      const payload = {
         token: syntheticToken, viewerUrl,
         maxMinutes: 15, expiresAt: viewerResponseMode === 'expired' ?
           Date.now() - 1000 : Date.now() + 900_000
-      });
+      };
+      if (nextStartMediaType !== null) {
+        const mediaType = nextStartMediaType;
+        nextStartMediaType = null;
+        res.writeHead(201, {
+          ...(mediaType === 'missing' ? {} : { 'content-type': mediaType }),
+          'cache-control': 'no-store'
+        }).end(JSON.stringify(payload));
+      } else {
+        sendJson(res, 201, payload);
+      }
       return;
     }
     if (req.method === 'GET' && pathname === '/s/' + syntheticToken + '/') {
@@ -1657,6 +1668,39 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'successful shortened-lease cleanup must restore manual Open');
+
+  // Real Chrome/loopback: a proxy that mislabels an otherwise valid 201
+  // browser-start JSON must not mount the bearer iframe. Because the gateway
+  // may already have minted that token, the real UI must still issue a
+  // canonical DELETE before restoring admission.
+  for (const mediaType of ['text/html', 'missing', 'application/problem+json']) {
+    const startsBefore = starts;
+    const viewersBefore = viewerRequests;
+    const deletesBefore = deletions;
+    nextStartMediaType = mediaType;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startsBefore + 1,
+      mediaType + ': real browser start should reach local fixture');
+    assert.ok(releaseStart, mediaType + ': fixture must control browser creation');
+    releaseStart();
+    releaseStart = null;
+    await until(() => deletions === deletesBefore + 1,
+      mediaType + ': invalid successful reply must still release the minted token');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === "Invalid browser session response."'
+    ), mediaType + ': rejected response must show safe message');
+    assert.equal(viewerRequests, viewersBefore,
+      mediaType + ': no actual authenticated iframe GET for untrusted media type');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      mediaType + ': no viewer mounted');
+    assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+      'about:blank', mediaType + ': old bearer iframe must remain cleared');
+    assert.equal(starts, startsBefore + 1,
+      mediaType + ': no hidden second browser start');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), mediaType + ': confirmed cleanup permits retry');
+  }
 
   // Real Chromium must never render raw error JSON from a failed browser
   // POST. A reverse proxy might echo a bearer route or credentials into its
