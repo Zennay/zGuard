@@ -90,6 +90,15 @@ try {
   const dangerous = [
     ['privileged', document => { document[0].HostConfig.Privileged = true; }, 'DOCKER_PRIVILEGED'],
     ['host network', document => { document[0].HostConfig.NetworkMode = 'host'; }, 'DOCKER_NETWORK'],
+    ['excessive memory', document => { document[0].HostConfig.Memory = 5 * 1024 ** 3; },
+      'DOCKER_MEMORY_LIMIT'],
+    ['excessive CPU', document => { document[0].HostConfig.NanoCpus = 3 * 1e9; },
+      'DOCKER_CPU_LIMIT'],
+    ['excessive PIDs', document => { document[0].HostConfig.PidsLimit = 351; },
+      'DOCKER_PID_LIMIT'],
+    ['unreviewed security option', document => {
+      document[0].HostConfig.SecurityOpt.push('systempaths=unconfined');
+    }, 'DOCKER_SECURITY_OPT'],
     ['host mount', document => {
       document[0].HostConfig.Binds = ['/var/run/docker.sock:/var/run/docker.sock'];
     }, 'DOCKER_HOST_MOUNTS'],

@@ -67,15 +67,22 @@ export function assessDockerInspect(document) {
     gaps.push('DOCKER_NETWORK');
   }
   if (host.AutoRemove !== true) gaps.push('DOCKER_AUTO_REMOVE');
-  if (!Number.isSafeInteger(host.Memory) || host.Memory <= 0) gaps.push('DOCKER_MEMORY_LIMIT');
-  if (!Number.isSafeInteger(host.NanoCpus) || host.NanoCpus <= 0) gaps.push('DOCKER_CPU_LIMIT');
-  if (!Number.isSafeInteger(host.PidsLimit) || host.PidsLimit <= 0) gaps.push('DOCKER_PID_LIMIT');
+  // Positive values alone do not bound a session. Excessively large limits
+  // make the browser effectively unrestricted on the shared VPS. These are
+  // explicit release-QA ceilings, not automatic production configuration.
+  if (!Number.isSafeInteger(host.Memory) || host.Memory <= 0 ||
+      host.Memory > 4 * 1024 ** 3) gaps.push('DOCKER_MEMORY_LIMIT');
+  if (!Number.isSafeInteger(host.NanoCpus) || host.NanoCpus <= 0 ||
+      host.NanoCpus > 2 * 1e9) gaps.push('DOCKER_CPU_LIMIT');
+  if (!Number.isSafeInteger(host.PidsLimit) || host.PidsLimit <= 0 ||
+      host.PidsLimit > 350) gaps.push('DOCKER_PID_LIMIT');
 
   const options = host.SecurityOpt;
-  if (!Array.isArray(options) ||
-      !options.includes('no-new-privileges:true') ||
-      options.some(option => typeof option !== 'string' ||
-        /^(?:seccomp|apparmor)=unconfined$|^label=disable$|^no-new-privileges:false$/i.test(option))) {
+  // The gateway launches with exactly one reviewed option. Merely including
+  // no-new-privileges is insufficient if an additional option weakens
+  // seccomp/AppArmor/labels or silently changes future Docker behavior.
+  if (!Array.isArray(options) || options.length !== 1 ||
+      options[0] !== 'no-new-privileges:true') {
     gaps.push('DOCKER_SECURITY_OPT');
   }
   if (!Array.isArray(host.CapAdd ?? []) || (host.CapAdd ?? []).length > 0 ||
