@@ -17,7 +17,9 @@ const additionalSourceBoundWorkflows = [
   '.github/workflows/manifest-integrity-validation.yml',
   '.github/workflows/popup-accessibility-validation.yml',
   '.github/workflows/browser-image-integrity-validation.yml',
-  '.github/workflows/zguard-local-resource-integrity.yml'
+  '.github/workflows/zguard-local-resource-integrity.yml',
+  '.github/workflows/image-build-hygiene-validation.yml',
+  '.github/workflows/zbrowse-autostart-contract.yml'
 ];
 const prHeadContractWorkflows = new Set([
   ...requiredChecks, ...additionalSourceBoundWorkflows
