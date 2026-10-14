@@ -6,6 +6,9 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
+import { requireExactCachePrivacyFlag } from '../tools/cache-privacy-flags.mjs';
+
+const strictNoStore = requireExactCachePrivacyFlag(process.argv.slice(2));
 
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
@@ -71,7 +74,8 @@ try {
       redirect: 'error',
       signal: AbortSignal.timeout(4000)
     });
-    return { status: response.status, body: await response.text() };
+    return { status: response.status, body: await response.text(),
+      cache: response.headers.get('cache-control') };
   }
 
   const assetPath = '/s/' + token + '/assets/player.js?v=1&lang=nl';
@@ -104,12 +108,23 @@ try {
     'error must not leak upstream password, host, token or exception details');
   assert.doesNotMatch(failure.body, /upstream-test-only|approved-browser|synthetic/);
   assert.equal(errors.length, 1, 'upstream failure should be diagnosed without HTTP detail leak');
+  // A bearer-bearing /s/:token/ URL must never leave a cacheable reconnect
+  // error, even when the upstream failed before returning any response headers.
+  const policy = String(failure.cache || '').toLowerCase()
+    .split(',').map(value => value.trim());
+  const failureNoStore = policy.includes('no-store') && !policy.includes('public');
+  if (strictNoStore) {
+    assert.equal(failureNoStore, true,
+      'gateway 502 proxy error under a bearer URL must explicitly be no-store (issue #284)');
+  }
 
   const recovered = await get(assetPath);
   assert.equal(recovered.status, 200, 'successful proxy request must recover after upstream failure');
   assert.equal(recovered.body, 'forwarded:' + assetPath);
   assert.equal(forwarded.length, 4, 'valid forwards should remain available after errors');
-  console.log('Real HTTP viewer proxy path, owner, error and recovery acceptance passed');
+  console.log('Real HTTP viewer proxy path, owner, error and recovery acceptance passed; ' +
+    'token-bearing upstream-502 cache policy no-store=' + failureNoStore +
+    ' (strict requires --require-no-store)');
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
