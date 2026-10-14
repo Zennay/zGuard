@@ -13,6 +13,14 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zguard-live-settings-acceptance.yml', [
+    ['require_live_settings', 'REQUIRE_LIVE_SETTINGS',
+      [['zguard.content-live-settings.test.mjs', '--require-live-settings']]]
+  ]],
+  ['zbrowse-chromium-sandbox-posture.yml', [
+    ['require_browser_sandbox', 'REQUIRE_BROWSER_SANDBOX',
+      [['zbrowse.chromium-sandbox-posture.test.mjs', '--require-browser-sandbox']]]
+  ]],
   ['zbrowse-trusted-host-origin-qa.yml', [
     ['require_canonical_host', 'REQUIRE_CANONICAL_HOST',
       [['zbrowse.host-origin-isolation-real-http.test.mjs', '--require-canonical-host']]]
@@ -116,6 +124,32 @@ const matrix = [
       [['zguard.chromium-real-browser.test.mjs', '--require-svg-link']]]
   ]]
 ];
+
+// Audit the entire workflow directory rather than only explicitly known
+// entries. A newly-added strict dispatch switch must never escape review just
+// because its workflow was omitted from the hand-maintained matrix.
+function unmappedStrictWorkflows(files, mapped = matrix) {
+  const actual = files
+    .filter(([name, yaml]) => /\.ya?ml$/i.test(name) &&
+      /^      require_[a-z_]+:\s*$/m.test(yaml))
+    .map(([name]) => name).sort();
+  const expected = mapped.map(([name]) => name).sort();
+  return { actual, expected };
+}
+
+const allWorkflowFiles = fs.readdirSync(workflowDir)
+  .filter(name => /\.ya?ml$/i.test(name))
+  .map(name => [name, fs.readFileSync(path.join(workflowDir, name), 'utf8')]);
+const discovered = unmappedStrictWorkflows(allWorkflowFiles);
+assert.deepEqual(discovered.actual, discovered.expected,
+  'every workflow exposing require_* dispatch inputs must be registered in strict-remediation audit');
+// Deliberately introduce an unmapped gate in memory to prove discovery fails
+// closed for future workflow additions. No disk file or workflow is changed.
+const fakeWorkflow = ['qa-unknown-strict-gate.yml',
+  'on:\n  workflow_dispatch:\n    inputs:\n      require_unreviewed:\n        type: boolean\n'];
+const missingMapping = unmappedStrictWorkflows([...allWorkflowFiles, fakeWorkflow]);
+assert.notDeepEqual(missingMapping.actual, missingMapping.expected,
+  'unmapped strict remediation workflow must be detected by directory discovery');
 
 function testWorkflow(name, gates, yaml) {
   assert.match(yaml, /^  pull_request:\s*$/m, name + ': must run on PRs');
@@ -235,4 +269,4 @@ console.log('Strict remediation workflow/CLI integrity passed: ' +
   matrix.length + ' hosted workflows, ' +
   matrix.reduce((count, [, gates]) => count + gates.length, 0) +
   ' explicitly opt-in gates, ' + strictCommands +
-  ' strict source-bound test commands, and 5 negative mutation proofs');
+  ' strict source-bound test commands, 5 CLI wiring mutations and 1 unmapped-workflow discovery proof');
