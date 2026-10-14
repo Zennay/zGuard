@@ -1445,6 +1445,57 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     assert.equal(starts, 1, label + ': no unintended second session POST');
   }
 
+  // The gateway returns HTTP 201 when minting a new browser and HTTP 200
+  // when reusing an existing same-owner lease. Other successful status
+  // codes do not prove a usable viewer contract. A valid-looking bearer in
+  // those responses must be DELETEd, never mounted or silently abandoned.
+  for (const status of [202, 203, 205, 206, 299]) {
+    let allocations = 0;
+    const unexpectedStatus = await bootPortal({
+      sessionRequest: async () => {
+        allocations++;
+        return response({ ...validSession }, status);
+      }
+    });
+    unexpectedStatus.element('browserView').hidden = true;
+    unexpectedStatus.submit();
+    await settle();
+    assert.equal(unexpectedStatus.element('browserView').hidden, true,
+      status + ': unsupported 2xx cannot mount a browser');
+    assert.equal(unexpectedStatus.element('browserFrame').srcHistory.length, 0,
+      status + ': never navigate a bearer iframe after an unsupported status');
+    assert.equal(unexpectedStatus.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+      status + ': reclaim a previously minted token after rejected status');
+    assert.equal(unexpectedStatus.element('formMessage').textContent,
+      'Invalid browser session response.',
+      status + ': show generic validation guidance');
+    assert.equal(unexpectedStatus.element('startButton').disabled, false,
+      status + ': confirmed 204 DELETE must restore intentional retry');
+    assert.equal(allocations, 1, status + ': no hidden retry POST');
+  }
+
+  // Both reviewed success variants remain valid. Normal fixtures throughout
+  // this suite exercise 200 reuse; explicitly cover the documented fresh 201.
+  const newBrowserStatus = await bootPortal({
+    sessionRequest: async () => response({ ...validSession }, 201)
+  });
+  newBrowserStatus.element('browserView').hidden = true;
+  newBrowserStatus.submit();
+  await settle();
+  assert.equal(newBrowserStatus.element('browserFrame').src, validViewer,
+    '201 Created with valid gateway JSON must still mount the viewer');
+  assert.equal(newBrowserStatus.element('browserView').hidden, false,
+    '201 should preserve the normal browser start flow');
+  const reusedBrowserStatus = await bootPortal({
+    sessionRequest: async () => response({ ...validSession }, 200)
+  });
+  reusedBrowserStatus.element('browserView').hidden = true;
+  reusedBrowserStatus.submit();
+  await settle();
+  assert.equal(reusedBrowserStatus.element('browserFrame').src, validViewer,
+    '200 OK same-owner reuse must remain supported');
+
   const invalidSessions = [
     ['absolute viewer', { ...validSession, viewerUrl: 'https://untrusted.example/viewer' }],
     ['javascript viewer', { ...validSession, viewerUrl: 'javascript:alert(1)' }],
