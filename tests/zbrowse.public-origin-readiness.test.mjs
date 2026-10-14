@@ -173,6 +173,33 @@ async function selfTest() {
   }
   await assert.rejects(checkPublicReadiness(async () =>
     response({}, 200, 'text/html')), /static-site HTML fallback/);
+  // Even correct JSON and HTTP 200 are not sufficient to certify a
+  // running browser gateway. Reject draining, inconsistent and ill-typed
+  // capacity observations before checking the (otherwise valid) site list.
+  const invalidHealth = [
+    ['draining gateway', { ...sampleHealth, status: 'draining' }, /status must equal ok/],
+    ['missing readiness state', { ...sampleHealth, status: undefined }, /status must equal ok/],
+    ['negative active count', { ...sampleHealth, activeSessions: -1 }, /activeSessions must be an integer/],
+    ['fractional pending count', { ...sampleHealth, startingSessions: 0.5 }, /startingSessions must be an integer/],
+    ['zero capacity', { ...sampleHealth, capacity: 0 }, /capacity must be an integer/],
+    ['unsafe capacity number', { ...sampleHealth, capacity: Number.MAX_SAFE_INTEGER + 1 },
+      /capacity must be an integer/],
+    ['overbooked capacity', { ...sampleHealth, activeSessions: 1, startingSessions: 1 },
+      /must not report overcapacity/],
+    ['string pending count', { ...sampleHealth, startingSessions: '0' },
+      /startingSessions must be an integer/]
+  ];
+  for (const [label, health, error] of invalidHealth) {
+    let sitesRead = false;
+    await assert.rejects(checkPublicReadiness(async (url) => {
+      if (url.endsWith('/api/health')) return response(health);
+      sitesRead = true;
+      return response(sampleSites);
+    }), error, label + ': invalid health must fail closed');
+    assert.equal(sitesRead, false,
+      label + ': do not probe catalogue after failed gateway health');
+  }
+
   await assert.rejects(checkPublicReadiness(async (url) =>
     url.endsWith('/api/health') ? response({ ...sampleHealth, capacity: '1' }) : response(sampleSites)),
   /capacity must be an integer/);
