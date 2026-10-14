@@ -1,4 +1,4 @@
-// Verify both shipped gateway strict acceptance CLIs reject bad options
+// Verify shipped gateway strict acceptance CLIs reject bad options
 // before source parsing. This intentionally never runs known-red strict gates.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,6 +15,13 @@ const cases = [
     workflow: 'zbrowse-start-url-allowlist-validation.yml',
     input: 'require_credential_free',
     env: 'REQUIRE_CREDENTIAL_FREE'
+  },
+  {
+    filename: 'zbrowse.host-origin-isolation-real-http.test.mjs',
+    flag: '--require-canonical-host',
+    workflow: 'zbrowse-trusted-host-origin-qa.yml',
+    input: 'require_canonical_host',
+    env: 'REQUIRE_CANONICAL_HOST'
   },
   {
     filename: 'zbrowse.teardown-failclosed.test.mjs',
@@ -67,4 +74,4 @@ for (const { filename, flag, workflow, input, env } of cases) {
   assert.ok(yaml.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
     filename + ': routine hosted CI must run the negative CLI regression');
 }
-console.log('Two gateway strict acceptance CLIs and workflow bindings fail closed');
+console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
