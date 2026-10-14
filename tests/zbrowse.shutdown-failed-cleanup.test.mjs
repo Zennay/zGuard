@@ -72,15 +72,37 @@ assert.equal(failed.remaining, 1,
   'failed cleanup fixture must preserve the synthetic orphan');
 assert.equal(failed.closeCalls, 1, 'shutdown must attempt the gateway listener close');
 
-const failClosed = failed.exitCodes.length === 1 &&
-  failed.exitCodes[0] !== 0;
+// The supervisor must be warned even when *every* Docker teardown fails,
+// not only when a single session out of two is left behind. Neither failed
+// container may be silently counted as removed. A third unrelated session
+// proves Promise.allSettled must still attempt the healthy teardown.
+const everyFailed = await scenario({
+  tokens: ['synthetic-a', 'synthetic-b'],
+  failTokens: ['synthetic-a', 'synthetic-b']
+});
+assert.deepEqual(everyFailed.removed, ['synthetic-a', 'synthetic-b'],
+  'shutdown must attempt all containers even when the first stop fails');
+assert.equal(everyFailed.remaining, 2, 'two failed removals must retain two orphans');
+assert.equal(everyFailed.closeCalls, 1, 'failed shutdown must still close HTTP listener');
+assert.equal(everyFailed.safetyTimers, 1, 'failed shutdown must retain bounded forced exit timer');
+
+const mixed = await scenario({
+  tokens: ['synthetic-a', 'synthetic-b', 'synthetic-c'],
+  failTokens: ['synthetic-a', 'synthetic-c']
+});
+assert.deepEqual(mixed.removed, ['synthetic-a', 'synthetic-b', 'synthetic-c'],
+  'mixed failures must never short-circuit independent container cleanup');
+assert.equal(mixed.remaining, 2, 'only successfully stopped container may leave state');
+
+const badExit = result => result.exitCodes.length === 1 && result.exitCodes[0] !== 0;
+const failClosed = [failed, everyFailed, mixed].every(badExit);
 if (strict) {
   assert.equal(failClosed, true,
-    'shipped shutdown acknowledged failed browser removal as successful exit 0 (issue #7)');
+    'shipped shutdown acknowledged one or multiple failed browser removals as successful exit 0 (issue #7)');
   console.log('Gateway shutdown fails closed when browser teardown is rejected');
 } else {
-  console.log('Shipped shutdown source exercised with partial container failure; ' +
-    'nonzero exit on orphan=' + failClosed +
-    ', actual exit codes=' + failed.exitCodes.join(',') +
+  console.log('Shipped shutdown source exercised with partial/full/mixed container failures; ' +
+    'nonzero exit for every orphan scenario=' + failClosed +
+    ', tested failed removal cases=3' +
     '. Strict proof requires --require-shutdown-fail-closed (issue #7)');
 }
