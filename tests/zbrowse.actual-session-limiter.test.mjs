@@ -105,6 +105,26 @@ assert.equal(bracketedIPv6[0].status, 200);
 assert.equal(bracketedIPv6[0].identity.sessionIdentity, '127.0.0.1',
   'bracketed IPv6 with source port must fall back to reviewed peer identity');
 
+// A syntactically present trusted chain is not necessarily a *valid* chain.
+// Empty candidate hops, quoted IP literals and scoped IPv6 identifiers may
+// cause ownership to fall back to the peer while Express's limiter sees an
+// entirely different client identity. Changing an untrusted prefix must
+// never give a new quota for the same TCP peer.
+const emptyCandidate = await scenario(i =>
+  '203.0.113.' + (i + 10) + ', , 10.0.0.2');
+assert.equal(emptyCandidate[0].identity.sessionIdentity, '127.0.0.1',
+  'empty XFF candidate hop must not be accepted as a session owner');
+const quotedCandidate = await scenario(i =>
+  '"198.51.100.' + (i + 10) + '", 10.0.0.2');
+assert.equal(quotedCandidate[0].identity.sessionIdentity, '127.0.0.1',
+  'quoted XFF IP candidate is not canonical and must fall back');
+const ipv6ZoneCandidate = await scenario(i =>
+  'fe80::' + (i + 10).toString(16) + '%eth0, 10.0.0.2');
+// Node 22's net.isIP() accepts scoped IPv6 literals, even though the
+// limiter itself warns about those values. Capture this as a strict-gate
+// failure instead of making ordinary evidence-only CI pretend it is safe.
+const zoneFallsBack = ipv6ZoneCandidate[0].identity.sessionIdentity === '127.0.0.1';
+
 const matched = incomplete[0].identity.limiterIdentity ===
   incomplete[0].identity.sessionIdentity;
 const enforced = incomplete.at(-1).status === 429;
@@ -117,12 +137,22 @@ const portEnforced = portTagged.at(-1).status === 429;
 const ipv6PortMatched = bracketedIPv6[0].identity.limiterIdentity ===
   bracketedIPv6[0].identity.sessionIdentity;
 const ipv6PortEnforced = bracketedIPv6.at(-1).status === 429;
+const additional = { emptyCandidate, quotedCandidate, ipv6ZoneCandidate };
+const additionalParity = Object.fromEntries(Object.entries(additional).map(
+  ([name, responses]) => [name, responses[0].identity.limiterIdentity ===
+    responses[0].identity.sessionIdentity && responses.at(-1).status === 429]
+));
 if (strict) {
   assert.deepEqual({ matched, enforced, malformedMatched, malformedEnforced,
     portMatched, portEnforced, ipv6PortMatched, ipv6PortEnforced },
     { matched: true, enforced: true, malformedMatched: true, malformedEnforced: true,
       portMatched: true, portEnforced: true, ipv6PortMatched: true, ipv6PortEnforced: true },
     'source-tethered gateway limiter and session ownership must share a fail-closed key for incomplete or invalid XFF (issue #21)');
+  assert.equal(zoneFallsBack, true,
+    'scoped IPv6 zone IDs must not become distinct forwarded session owners');
+  assert.deepEqual(additionalParity, {
+    emptyCandidate: true, quotedCandidate: true, ipv6ZoneCandidate: true
+  }, 'malformed quoted, empty and IPv6-zone XFF chains must share quota with session owner');
   console.log('Source-tethered production session limiter identity parity PASS');
 } else {
   console.log('Source-tethered gateway session limiter validated for complete chains: ' +
@@ -134,5 +164,8 @@ if (strict) {
     ', IPv4-port quotaEnforced=' + portEnforced +
     ', XFF IPv6-port identityParity=' + ipv6PortMatched +
     ', IPv6-port quotaEnforced=' + ipv6PortEnforced +
+    ', IPv6-zone peer fallback=' + zoneFallsBack +
+    ', malformed-extra identity/limit parity=' +
+    Object.values(additionalParity).filter(Boolean).length + '/3' +
     '; require --require-source-parity for the unresolved issue #21');
 }
