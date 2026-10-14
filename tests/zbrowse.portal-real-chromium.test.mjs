@@ -1301,8 +1301,10 @@ try {
   }
   assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
     'rejected manual URLs must never mount an authenticated viewer');
-  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
-    'about:blank', 'rejected manual URL must not restore a bearer-bearing iframe');
+  const rejectedFrameSource = await evaluate(
+    'document.getElementById("browserFrame").getAttribute("src")');
+  assert.ok(rejectedFrameSource === null || rejectedFrameSource === 'about:blank',
+    'rejected manual URL must never assign a bearer-bearing iframe');
   await evaluate(`(() => {
     const input = document.getElementById('urlInput');
     input.value = ${JSON.stringify(approvedStart)};
