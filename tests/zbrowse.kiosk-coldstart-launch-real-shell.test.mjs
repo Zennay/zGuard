@@ -33,12 +33,12 @@ const capture = path.join(directory, 'browser-args');
 const mkdirCapture = path.join(directory, 'mkdir-args');
 function shim(name, script) {
   const filename = path.join(fakePath, name);
-  fs.writeFileSync(filename, '#!/bin/sh\\n' + script + '\\n', { mode: 0o700 });
+  fs.writeFileSync(filename, '#!/bin/sh\n' + script + '\n', { mode: 0o700 });
 }
 // These shims keep the production launcher from touching /config or running
 // Chromium; only the shell's actual argument construction gets executed.
-shim('mkdir', 'printf "%s\\n" "$@" > "$CAPTURE_MKDIR"');
-shim('chromium', 'printf "%s\\n" "$@" > "$CAPTURE_ARGS"');
+shim('mkdir', 'printf "%s\n" "$@" > "$CAPTURE_MKDIR"');
+shim('chromium', 'printf "%s\n" "$@" > "$CAPTURE_ARGS"');
 
 function run(launcher, startUrl) {
   fs.rmSync(capture, { force: true });
@@ -55,8 +55,8 @@ function run(launcher, startUrl) {
     'shipped kiosk shell must execute without bypassing command shims: ' +
     (child.stderr || '').slice(0, 400));
   assert.ok(fs.existsSync(capture), 'Chromium launch must reach the shim');
-  const args = fs.readFileSync(capture, 'utf8').trimEnd().split('\\n');
-  const mkdirArgs = fs.readFileSync(mkdirCapture, 'utf8').trimEnd().split('\\n');
+  const args = fs.readFileSync(capture, 'utf8').trimEnd().split('\n');
+  const mkdirArgs = fs.readFileSync(mkdirCapture, 'utf8').trimEnd().split('\n');
   assert.deepEqual(mkdirArgs, ['-p', '/config/chromium', '/config/downloads', '/config/tmp'],
     'kiosk must prepare private config/download/temp locations');
   return args;
@@ -89,7 +89,7 @@ function verify(args, expectedUrl) {
     'private profile/cache paths must be fixed before the start URL');
   assert.equal(args.at(-1), expectedUrl,
     'one original reviewed start URL must be passed as the final argument');
-  assert.equal(args.filter(arg => /^https?:\\/\\//i.test(arg)).length, 1,
+  assert.equal(args.filter(arg => /^https?:\/\//i.test(arg)).length, 1,
     'must not navigate or preload any extra URL before kiosk start');
   for (const unreviewed of [
     '--disable-web-security', '--ignore-certificate-errors',
