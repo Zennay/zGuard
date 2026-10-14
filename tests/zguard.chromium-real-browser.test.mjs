@@ -858,9 +858,12 @@ try {
             variant + ': ' + kind + ' image-map area must receive keyboard focus');
           assert.equal(keyboard.enterTrusted, true,
             variant + ': ' + kind + ' image-map Enter must use trusted browser input');
-          assert.equal(keyboard.cancelledByFixture, true,
-            variant + ': fixture must prevent external image-map keyboard navigation');
         }
+        assert.equal(observed.imageMap.ordinary.keyboard.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary external image-map keyboard navigation');
+        // When the extension blocks a hostile click before the fixture's
+        // document listener, cancelledByFixture is correctly false: the
+        // extension itself owns cancellation. Never demand fixture mediation.
         assert.equal(observed.imageMap.ordinary.keyboard.seenAreaAtCapture, true,
           variant + ': harmless image-map Enter must reach document capture');
         assert.equal(observed.imageMap.ordinary.keyboard.reachedArea, true,
