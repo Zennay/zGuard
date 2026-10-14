@@ -46,7 +46,36 @@ function reportsCacheHit(value) {
   });
 }
 
+// A broken upstream can stall cancellation after the response already failed.
+// Attempt teardown, but never allow cleanup to outlive the release verdict.
+async function cancelQuietly(cancel) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, 250); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Some fetch implementations resolve headers before a body that then stalls.
+// Race each stream read against the same overall fetch signal; relying only
+// on fetch() to propagate abort into an already-created reader can hang.
+function readWithSignal(reader, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let abort;
+  const aborted = new Promise((_, reject) => {
+    abort = () => reject(signal.reason || new Error('Readiness deadline exceeded'));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  return Promise.race([reader.read(), aborted]).finally(() =>
+    signal.removeEventListener('abort', abort));
+}
+
 async function getJson(origin, route, fetcher) {
+  const timeoutSignal = AbortSignal.timeout(7000);
   const url = new URL(route, origin);
   assert.equal(url.origin, origin.origin, 'readiness must never leave the public origin');
   // No redirects: a static hosting redirect must not be mistaken for a real
@@ -58,7 +87,7 @@ async function getJson(origin, route, fetcher) {
     referrerPolicy: 'no-referrer',
     cache: 'no-store',
     headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(7000)
+    signal: timeoutSignal
   });
   // Even a refused HTTP status, HTML fallback or cached capacity snapshot
   // may have a still-open response stream: stop it before failing readiness.
@@ -104,7 +133,7 @@ async function getJson(origin, route, fetcher) {
         '/api/health: intermediary X-Cache reports a cache hit');
     }
   } catch (error) {
-    try { await response.body?.cancel(); } catch { /* Keep the primary policy failure. */ }
+    await cancelQuietly(() => response.body?.cancel());
     throw error;
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
@@ -121,7 +150,7 @@ async function getJson(origin, route, fetcher) {
   } catch (error) {
     // Reject on advertised size before reading a single byte. Cancel the
     // source as well so a misrouted public gateway cannot keep downloading.
-    try { await response.body?.cancel(); } catch { /* Preserve the original failure. */ }
+    await cancelQuietly(() => response.body?.cancel());
     throw error;
   }
   assert.ok(response.body, route + ': gateway JSON response body is missing');
@@ -131,7 +160,7 @@ async function getJson(origin, route, fetcher) {
   let received = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithSignal(reader, timeoutSignal);
       if (done) break;
       received += value.byteLength;
       if (received > maximumBytes) {
@@ -143,10 +172,12 @@ async function getJson(origin, route, fetcher) {
   } catch (error) {
     // Oversized chunks, invalid UTF-8 and stream failures must stop the
     // transfer before releasing the lock. Cancellation may itself reject.
-    try { await reader.cancel(); } catch { /* Preserve the original failure. */ }
+    await cancelQuietly(() => reader.cancel());
     throw error;
   } finally {
-    reader.releaseLock();
+    // A signal can win the race while reader.read() is still outstanding.
+    // Releasing its lock is best-effort and must not mask the abort reason.
+    try { reader.releaseLock(); } catch { /* Pending read is being cancelled. */ }
   }
   let data;
   try {
@@ -299,6 +330,40 @@ async function testRealLoopbackCancellation() {
       }
       assert.equal(active.closed, true,
         name + ': abort must close the real HTTP response within 3 seconds');
+    }
+    // A server that sends valid headers and one JSON whitespace byte but
+    // never finishes must not leave a readiness probe hanging indefinitely.
+    // Use a separate 11s test watchdog: it detects regressions but cannot
+    // masquerade as the shipped 7s AbortSignal.timeout from getJson().
+    for (const path of ['/api/health', '/api/sites']) {
+      scenario = {
+        name: 'stalled real TCP response', path, status: 200,
+        contentType: 'application/json', headers: {}, bytes: ' ', closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const began = Date.now();
+      try {
+        const bounded = Promise.race([
+          checkPublicReadiness(loopbackFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without client abort')), 11000);
+          })
+        ]);
+        await assert.rejects(bounded, /aborted|time(?:d)? ?out/i,
+          path + ': a stalled real TCP JSON body must expire via client signal');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      const elapsed = Date.now() - began;
+      assert.ok(elapsed >= 5500 && elapsed < 10500,
+        path + ': stalled response must expire near the 7s client deadline, got ' + elapsed);
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        path + ': timed-out client must close the real HTTP stream');
     }
     scenario = null;
     const recovered = await checkPublicReadiness(loopbackFetch);
