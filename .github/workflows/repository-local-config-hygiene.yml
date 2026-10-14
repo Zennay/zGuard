@@ -33,6 +33,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Validate tracked paths
+        shell: bash
         run: |
           set -euo pipefail
           node tests/repository-sensitive-path-hygiene.test.mjs
