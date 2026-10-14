@@ -81,6 +81,10 @@ const matrix = [
     ['require_redacted_start_errors', 'REQUIRE_REDACTED_START_ERRORS',
       [['zbrowse.session-start-log-privacy-real-http.test.mjs', '--require-redacted-start-errors']]]
   ]],
+  ['zbrowse-cleanup-error-log-privacy.yml', [
+    ['require_redacted_cleanup_errors', 'REQUIRE_REDACTED_CLEANUP_ERRORS',
+      [['zbrowse.cleanup-error-log-privacy.test.mjs', '--require-redacted-cleanup-errors']]]
+  ]],
   ['zguard-real-chromium-acceptance.yml', [
     ['require_mainworld', 'REQUIRE_MAINWORLD',
       [['zguard.chromium-real-browser.test.mjs', '--require-mainworld']]],
