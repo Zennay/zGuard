@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { gzipSync, deflateSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 
@@ -149,6 +150,38 @@ try {
     malformedResults.push(rejected);
   }
 
+  // A tiny compressed body can expand beyond Express's 8 KiB parser
+  // budget. Verify the *inflated* byte count is bounded as strictly as
+  // an ordinary uncompressed HTTP body, without any Docker startup.
+  const normalCompressed = JSON.stringify({ url: sites[0].url });
+  const oversizedCompressed = JSON.stringify({
+    url: sites[0].url, padding: 'x'.repeat(16 * 1024)
+  });
+  const compressedOutcomes = [];
+  for (const [encoding, compress] of [
+    ['gzip', gzipSync], ['deflate', deflateSync]
+  ]) {
+    const acceptedCompressed = await submit(compress(normalCompressed), {
+      'content-type': 'application/json',
+      'content-encoding': encoding
+    });
+    assert.equal(acceptedCompressed.status, 201,
+      encoding + ': valid small compressed JSON should preserve browser admission');
+    assert.equal(acceptedCompressed.newStarts, 1);
+    assert.equal(acceptedCompressed.newReservations, 1);
+    const rejectedCompressed = await submit(compress(oversizedCompressed), {
+      'content-type': 'application/json',
+      'content-encoding': encoding
+    });
+    assert.equal(rejectedCompressed.status, 413,
+      encoding + ': decompressed JSON larger than 8 KiB must be rejected');
+    assert.equal(rejectedCompressed.newStarts, 0,
+      encoding + ': compressed oversized body may not start Docker');
+    assert.equal(rejectedCompressed.newReservations, 0,
+      encoding + ': compressed oversized body may not reserve capacity');
+    compressedOutcomes.push(rejectedCompressed);
+  }
+
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
   assert.equal(badCharset.status, 415, 'unsupported JSON charset must be rejected');
@@ -161,12 +194,13 @@ try {
   assert.equal(reservations, releases, 'every admitted start must release admission reservation');
 
   for (const rejected of [truncated, oneByteOver, tooLarge, badCharset,
-    ...malformedResults]) {
+    ...malformedResults, ...compressedOutcomes]) {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
-  console.log('Shipped gateway exact 8 KiB JSON admission, one-byte-overflow, ' +
-    malformedBodies.length + ' malformed parser failures and recovery passed');
+  console.log('Shipped gateway exact 8 KiB JSON boundary, two compressed ' +
+    'inflation-limit cases, ' + malformedBodies.length +
+    ' malformed parser failures and recovery passed');
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
