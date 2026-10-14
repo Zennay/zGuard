@@ -42,6 +42,9 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'href="https://ads.al5sm.com/map" target="_blank" alt="Hostile hotspot"/>'
   +'<area id="imageMapOrdinary" shape="rect" coords="110,0,200,100" '
   +'href="/safe" target="_blank" alt="Ordinary hotspot"/></map>'
+  +'<form id="programmaticForm" target="_blank" method="get"></form>'
+  +'<button id="programmaticSameForm" type="button">Allowed programmatic form</button>'
+  +'<button id="programmaticCrossForm" type="button">Cross-origin programmatic form</button>'
   +'<button id="openSameOriginPopup" type="button">Allowed page popup</button>'
   +'<button id="openCrossOriginPopup" type="button">Cross-origin page popup</button>'
   +'<iframe id="qaCrossOriginFrame" title="Cross-origin Firefox popup boundary" '
@@ -51,7 +54,16 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0,'
   +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0,'
   +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false,'
-  +'overrideHostileSubmits:0,overrideOrdinarySubmits:0};'
+  +'overrideHostileSubmits:0,overrideOrdinarySubmits:0,'
+  +'programmaticSame:0,programmaticCross:0,programmaticSubmitEvents:0};'
+  +'document.getElementById("programmaticForm").addEventListener("submit",()=>{'
+  +'window.qa.programmaticSubmitEvents++;});'
+  +'document.getElementById("programmaticSameForm").addEventListener("click",()=>{'
+  +'window.qa.programmaticSame++;const form=document.getElementById("programmaticForm");'
+  +'form.action=location.origin+"/qa-programmatic-form-allowed";form.submit();});'
+  +'document.getElementById("programmaticCrossForm").addEventListener("click",()=>{'
+  +'window.qa.programmaticCross++;const form=document.getElementById("programmaticForm");'
+  +'form.action="__QA_FRAME_URL__";form.submit();});'
   +'document.getElementById("openSameOriginPopup").addEventListener("click",()=>{'
   +'window.qa.pagePopupSame++;window.qa.pagePopupSameNative='
   +'!!window.open(location.origin+"/qa-same-origin-popup","_blank");});'
@@ -370,6 +382,40 @@ try{
   const afterPopupFallback=await wd('GET','/session/'+session+'/window/handles');
   assert.deepEqual(new Set(afterPopupFallback),new Set(strictHandles),
     'Only original fixture and extension settings tab may survive browser-level fallback');
+  // HTMLFormElement.submit() bypasses normal submit events entirely. A page
+  // click can still launch an opaque target=_blank tab, so validate background
+  // tab closure independently of the content-script form-event guard.
+  // First require the same programmatic form to open an allowed same-origin tab
+  // so disabled popup handling cannot accidentally satisfy this acceptance.
+  await click('#programmaticSameForm');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'native same-origin form.submit() tab positive control',60);
+  const sameFormState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(sameFormState.programmaticSame,1,
+    'Trusted Firefox click must invoke page-authored form.submit()');
+  assert.equal(sameFormState.programmaticSubmitEvents,0,
+    'Programmatic form.submit() must actually bypass submit event');
+  const withFormTab=await wd('GET','/session/'+session+'/window/handles');
+  const allowedFormTab=withFormTab.find(h=>!strictHandles.includes(h));
+  assert.ok(allowedFormTab,'Programmatic same-origin form must create a real tab');
+  await wd('POST','/session/'+session+'/window',{handle:allowedFormTab});
+  await until(async()=>
+    new URL(await wd('GET','/session/'+session+'/url')).pathname==='/qa-programmatic-form-allowed',
+    'real same-origin form.submit() target navigated',50);
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  await click('#programmaticCrossForm');
+  const crossFormState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(crossFormState.programmaticCross,1,
+    'Real page must invoke cross-origin form.submit() once');
+  assert.equal(crossFormState.programmaticSubmitEvents,0,
+    'No submit event may be used as a false positive guard for native form.submit()');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===2,
+    'strict Firefox must remove cross-origin form.submit() popup',60);
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(strictHandles),'Programmatic form fallback must preserve only original tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await click('[data-mode="balanced"]');
   await until(()=>evaluate(
@@ -426,6 +472,7 @@ try{
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
   console.log('Native Firefox form submitter overrides PASS: hostile overrides blocked, harmless overrides allowed, trusted click and Enter.');
+  console.log('Firefox programmatic form fallback PASS: permitted local form.submit opens real tab; strict foreign target leaves none; no submit event.');
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
