@@ -144,10 +144,29 @@ async function startSession(url) {
   syncStartButton();
   startButton.textContent = "Starting…";
   try {
-    const session = checkedSessionPayload(await request("/api/session", {
+    const payload = await request("/api/session", {
       method: "POST",
       body: JSON.stringify({ url })
-    }));
+    });
+    let session;
+    try {
+      session = checkedSessionPayload(payload);
+    } catch (error) {
+      // Reject a malformed viewer response *without* abandoning a browser
+      // whose valid token was already minted by this same-origin gateway.
+      // Only a well-formed bearer token is eligible for an idempotent DELETE;
+      // invalid/absent token values never enter the URL.
+      if (typeof payload?.token === "string" &&
+          /^[A-Za-z0-9_-]{32}$/.test(payload.token)) {
+        pendingReleaseToken = payload.token;
+        sessionEnding = true;
+        syncStartButton();
+        $("capacityText").parentElement.className = "status";
+        $("capacityText").textContent = "Finishing previous browser session";
+        await releasePendingSession();
+      }
+      throw error;
+    }
     // A start may finish after pagehide, when no token existed for the
     // pagehide handler to release. Do not mount a browser on an abandoned
     // page; use keepalive DELETE if the response still arrives.
@@ -168,8 +187,12 @@ async function startSession(url) {
     showBrowser();
   } catch (error) {
     if (pageExitGeneration === requestGeneration) {
-      setMessage(error.message);
-      await refreshHealth();
+      setMessage(pendingReleaseToken
+        ? "Could not confirm browser shutdown. Retrying automatically."
+        : error.message);
+      // Do not immediately issue a second DELETE as part of error reporting:
+      // failed releases remain locked until the normal health retry.
+      await refreshHealth(false);
     }
   } finally {
     sessionStarting = false;
