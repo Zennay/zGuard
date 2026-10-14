@@ -464,6 +464,47 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await settle();
   assert.equal(failedAllocations, 2, 'new browser allocation works after retry succeeds');
 
+  // A failed fetch() has no status code at all (TCP reset / offline).
+  // It must be at least as fail-closed as an explicit HTTP 503, while the
+  // next existing health interval can reconcile a successful retry.
+  let transportDeletes = 0;
+  let transportStarts = 0;
+  const transportDown = await bootPortal({
+    sessionRequest: async () => {
+      transportStarts++;
+      return response(validSession);
+    },
+    deleteRequest() {
+      transportDeletes++;
+      if (transportDeletes === 1) return Promise.reject(new TypeError('Failed to fetch'));
+      return response(null, 204);
+    }
+  });
+  transportDown.submit();
+  await settle();
+  await transportDown.element('endButton').listeners.click();
+  await settle();
+  assert.equal(transportDown.element('startButton').disabled, true,
+    'transport-failed DELETE must not release browser admission');
+  assert.equal(transportDown.element('capacityText').textContent,
+    'Finishing previous browser session');
+  transportDown.submit();
+  await settle();
+  assert.equal(transportStarts, 1,
+    'transport failure must not allow immediate reuse of a possibly live token');
+  const transportPoll = [...transportDown.intervals.values()].find(({ milliseconds }) =>
+    milliseconds === 20000
+  );
+  transportPoll.callback();
+  await settle();
+  assert.equal(transportDeletes, 2,
+    'regular health poll should reconcile a transport-failed session delete');
+  assert.equal(transportDown.element('startButton').disabled, false);
+  transportDown.submit();
+  await settle();
+  assert.equal(transportStarts, 2,
+    'successful retry after transport error must restore browser admission');
+
   // The gateway may already have removed the token, making a subsequent
   // release idempotently return HTTP 404; that is safe to reconcile.
   let goneAllocations = 0;
