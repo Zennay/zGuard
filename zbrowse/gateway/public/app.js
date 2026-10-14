@@ -18,13 +18,39 @@ const message = $("formMessage");
 // Match the read-only public readiness byte limits inside the actual TV.
 // Even correctly typed HTTP 200 can stream unlimited JSON unless we stop
 // reading before parsing. Fetch's abort signal remains active during reads.
-async function boundedGatewayJson(response, maximumBytes) {
+// Keep transport cleanup bounded. A hostile upstream can acknowledge neither
+// data nor cancellation; a failed TV read must still resolve as offline.
+async function cancelQuietly(cancel) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, 250); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The same AbortSignal passed to fetch must govern reads *after headers*.
+// A fetch adapter may otherwise leave reader.read() pending indefinitely.
+function readWithSignal(reader, signal) {
+  if (!signal) return reader.read();
+  if (signal.aborted) return Promise.reject(signal.reason || new Error("Gateway read expired."));
+  let abort;
+  const deadline = new Promise((_, reject) => {
+    abort = () => reject(signal.reason || new Error("Gateway read expired."));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  return Promise.race([reader.read(), deadline]).finally(() =>
+    signal.removeEventListener("abort", abort));
+}
+
+async function boundedGatewayJson(response, maximumBytes, signal) {
   const declared = response.headers?.get?.("content-length");
   if (declared !== null && declared !== undefined) {
-    if (!/^\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
-      // Stop a declared-oversize transfer without even reading its first
-      // chunk. An HTTP body can keep consuming network after we reject it.
-      try { await response.body?.cancel?.(); } catch { /* already closed */ }
+    if (!/^\\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid gateway response size.");
     }
   }
@@ -35,7 +61,7 @@ async function boundedGatewayJson(response, maximumBytes) {
   let decoded = "";
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithSignal(reader, signal);
       if (done) break;
       if (!(value instanceof Uint8Array)) throw new Error("Invalid gateway response chunk.");
       received += value.byteLength;
@@ -46,13 +72,10 @@ async function boundedGatewayJson(response, maximumBytes) {
     }
     decoded += decoder.decode();
   } catch (error) {
-    // A decoding error, invalid stream chunk or oversize payload must abort
-    // the still-active body, not merely release the reader lock and leave an
-    // untrusted response downloading in the background.
-    try { await reader.cancel(); } catch { /* already closed */ }
+    await cancelQuietly(() => reader.cancel());
     throw error;
   } finally {
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* Pending reads are being cancelled. */ }
   }
   return JSON.parse(decoded);
 }
@@ -116,7 +139,7 @@ async function request(url, options = {}) {
     }
   }
   const body = response.ok && (url === "/api/health" || url === "/api/sites")
-    ? await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536)
+    ? await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)
     : await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");

@@ -159,7 +159,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   };
 
   vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal,
-    TextDecoder, Uint8Array, console }, {
+    TextDecoder, Uint8Array, console, setTimeout, clearTimeout }, {
     filename: 'zbrowse/gateway/public/app.js',
     timeout: 1000
   });
@@ -719,6 +719,59 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     'a later healthy response must recover automatically after health timeout');
   assert.equal(hangingHealth.element('startButton').disabled, false,
     'successful health retry should unlock the reviewed TV start again');
+
+  // A gateway may deliver successful HTTP 200 headers but never finish
+  // its JSON body. The fetch-level timeout alone is insufficient if an
+  // already-created ReadableStream reader does not propagate its abort.
+  const stalledBody = response({
+    status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1
+  });
+  let stalledBodyReads = 0;
+  let stalledBodyCancels = 0;
+  stalledBody.body.getReader = () => ({
+    read() {
+      stalledBodyReads++;
+      return new Promise(() => {}); // Intentionally stalled after HTTP headers.
+    },
+    cancel() {
+      stalledBodyCancels++;
+      return new Promise(() => {}); // Malicious cleanup also never resolves.
+    },
+    releaseLock() {}
+  });
+  let bodyPolls = 0;
+  const stalledReadPortal = await bootPortal({
+    healthRequest() {
+      bodyPolls++;
+      return bodyPolls === 2 ? stalledBody : response({
+        status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1
+      });
+    }
+  });
+  const readDeadlinePoll = [...stalledReadPortal.intervals.values()]
+    .find(x => x.milliseconds === 20000);
+  assert.ok(readDeadlinePoll, 'real TV must poll public readiness after startup');
+  readDeadlinePoll.callback();
+  await settle();
+  assert.equal(stalledBodyReads, 1,
+    'the test must actually enter one pending streamed body read');
+  assert.equal(stalledReadPortal.timeoutControls.length, 3,
+    'stalled post-header body must use the same 7s GET signal');
+  stalledReadPortal.timeoutControls[2].abort();
+  // Cleanup may require its bounded 250ms timer, but must never depend on
+  // the unresolvable cancellation promise.
+  await new Promise(resolve => setTimeout(resolve, 350));
+  await settle();
+  assert.equal(stalledBodyCancels, 1,
+    'a timed-out JSON reader must attempt stream cancellation exactly once');
+  assert.equal(stalledReadPortal.element('capacityText').textContent, 'Browser engine offline',
+    'a stalled JSON body must revoke previously healthy gateway status');
+  assert.equal(stalledReadPortal.element('startButton').disabled, true,
+    'stalled JSON read must keep the browser creation button locked');
+  readDeadlinePoll.callback();
+  await settle();
+  assert.equal(stalledReadPortal.element('capacityText').textContent, 'Ready to browse',
+    'TV must recover on later valid readiness without refreshing the page');
 
   const validToken = 'A'.repeat(32);
   const validViewer = '/s/' + validToken + '/';
