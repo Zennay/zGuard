@@ -300,6 +300,40 @@ async function testRealLoopbackCancellation() {
       assert.equal(active.closed, true,
         name + ': abort must close the real HTTP response within 3 seconds');
     }
+    // A server that sends valid headers and one JSON whitespace byte but
+    // never finishes must not leave a readiness probe hanging indefinitely.
+    // Use a separate 11s test watchdog: it detects regressions but cannot
+    // masquerade as the shipped 7s AbortSignal.timeout from getJson().
+    for (const path of ['/api/health', '/api/sites']) {
+      scenario = {
+        name: 'stalled real TCP response', path, status: 200,
+        contentType: 'application/json', headers: {}, bytes: ' ', closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const began = Date.now();
+      try {
+        const bounded = Promise.race([
+          checkPublicReadiness(loopbackFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without client abort')), 11000);
+          })
+        ]);
+        await assert.rejects(bounded, /aborted|time(?:d)? ?out/i,
+          path + ': a stalled real TCP JSON body must expire via client signal');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      const elapsed = Date.now() - began;
+      assert.ok(elapsed >= 5500 && elapsed < 10500,
+        path + ': stalled response must expire near the 7s client deadline, got ' + elapsed);
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        path + ': timed-out client must close the real HTTP stream');
+    }
     scenario = null;
     const recovered = await checkPublicReadiness(loopbackFetch);
     assert.equal(recovered.connected, true,
