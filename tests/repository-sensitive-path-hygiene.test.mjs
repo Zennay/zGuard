@@ -21,6 +21,22 @@ const allowedEnvExamples = new Set([
 const privateKeyNames = /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|identity)$/i;
 const privateKeyExtensions = /\.(?:pem|key|p12|pfx|jks|keystore)$/i;
 
+function looksLikeEnvironmentFile(base) {
+  const normalized = base.toLowerCase();
+  return normalized === '.env' || (
+    normalized.startsWith('.env.') && !allowedEnvExamples.has(normalized)
+  );
+}
+
+function containsSshDirectory(segments) {
+  return segments.some((segment) => segment.toLowerCase() === '.ssh');
+}
+
+assert.equal(looksLikeEnvironmentFile('.ENV'), true);
+assert.equal(looksLikeEnvironmentFile('.Env.Local'), true);
+assert.equal(looksLikeEnvironmentFile('.ENV.EXAMPLE'), false);
+assert.equal(containsSshDirectory(['docs', '.SSH', 'id_ed25519']), true);
+
 const findings = [];
 
 for (const relative of tracked) {
@@ -28,12 +44,12 @@ for (const relative of tracked) {
   const base = path.posix.basename(normalized);
   const segments = normalized.split('/');
 
-  if (base === '.env' || (base.startsWith('.env.') && !allowedEnvExamples.has(base))) {
+  if (looksLikeEnvironmentFile(base)) {
     findings.push(`${relative}: tracked environment file`);
     continue;
   }
 
-  if (segments.includes('.ssh')) {
+  if (containsSshDirectory(segments)) {
     findings.push(`${relative}: tracked SSH material`);
     continue;
   }
