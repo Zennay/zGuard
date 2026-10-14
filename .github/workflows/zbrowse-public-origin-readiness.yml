@@ -51,6 +51,7 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.public-origin-readiness.test.mjs --self-test
           node tests/zbrowse.public-tv-static-release.test.mjs --self-test
+          node tests/zbrowse.public-live-probe-dispatch.test.mjs
           node tests/zbrowse.gateway-public-api-real-http.test.mjs
           node tests/zbrowse.wait-for-browser-readiness.test.mjs
           if [ "$REQUIRE_VALID_READINESS" = "true" ]; then
