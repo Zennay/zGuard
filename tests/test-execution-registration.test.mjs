@@ -270,6 +270,9 @@ function sourceExecutesTest(source, test, basename, uniqueBasename) {
     if (invocation[1] === 'execSync') {
       return references.some((reference) => shellExecutesTest(executable, reference));
     }
+    if (!/^(?:node(?:js)?|python(?:2|3)?|ruby|pytest)$/.test(executable)) {
+      return false;
+    }
     // Syntax-check and inline-evaluation paths only parse source; even when
     // the target path is provided, these are not proof of running its tests.
     if (/\[\s*["'](?:--check|-c|--eval|-e)["']\s*(?:,|\])/.test(call)) return false;
@@ -293,7 +296,8 @@ for (const nonRunner of [
   "execSync('git show tests/child.test.js');",
   "spawnSync(process.execPath, ['--check', 'tests/child.test.js']);",
   "spawnSync('node', ['--eval', 'console.log(\\\"tests/child.test.js\\\")']);",
-  "execSync('node --check tests/child.test.js');"
+  "execSync('node --check tests/child.test.js');",
+  "execFileSync('node -e', ['tests/child.test.js']);"
 ]) {
   assert.equal(sourceExecutesTest(nonRunner,
     'tests/child.test.js', 'child.test.js', true), false,
