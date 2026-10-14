@@ -176,7 +176,17 @@ async function createSession(ip, startUrl) {
     sessionsByIp.set(ip, token);
     return session;
   } catch (error) {
-    await stopContainer(container);
+    try {
+      await stopContainer(container);
+    } catch {
+      // Created/started but unremovable containers still consume Docker
+      // capacity. Quarantine the unpublished token so MAX_SESSIONS keeps its
+      // slot reserved; do not return the token through the public API.
+      session.cleanupFailed = true;
+      sessions.set(token, session);
+      sessionsByIp.set(ip, token);
+      throw new Error("Browser startup cleanup failed; capacity reserved.");
+    }
     throw error;
   }
 }
@@ -203,7 +213,8 @@ async function destroySession(token) {
 
 function findSession(req) {
   const match = requestPath(req).match(/^\/s\/([A-Za-z0-9_-]{32,})\//);
-  return match ? sessions.get(match[1]) : null;
+  const session = match ? sessions.get(match[1]) : null;
+  return session?.cleanupFailed ? null : session;
 }
 
 app.get("/api/health", (req, res) => {
@@ -251,6 +262,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
   const existingToken = sessionsByIp.get(ip);
   if (existingToken && sessions.has(existingToken)) {
     const existingSession = sessions.get(existingToken);
+    if (existingSession.cleanupFailed) {
+      return res.status(503).json({ error: "Browser cleanup is pending." });
+    }
     if (!isSessionExpired(existingSession, config.idleMs)) {
       return res.json(publicSession(existingSession));
     }
@@ -376,7 +390,7 @@ app.use((req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
-    if (isSessionExpired(session, config.idleMs, now)) {
+    if (session.cleanupFailed || isSessionExpired(session, config.idleMs, now)) {
       destroySession(session.token).catch((error) => console.error("Cleanup failed", error));
     }
   }

@@ -142,8 +142,8 @@ const rejectedStartOrphan = await scenario({
 });
 assert.equal(rejectedStartOrphan.firstOrphan, true,
   'failed container.start plus failed force-removal must retain the orphan fixture');
-assert.equal(rejectedStartOrphan.trackedAfterFailure, 0,
-  'an unpublished failed start must never fabricate a tracked active session');
+assert.equal(rejectedStartOrphan.trackedAfterFailure, 1,
+  'failed Docker startup cleanup must retain one quarantined capacity slot');
 
 function failClosedScenario(result) {
   return !result.firstOrphan ||
