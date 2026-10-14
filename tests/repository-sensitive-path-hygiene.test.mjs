@@ -37,6 +37,25 @@ assert.equal(looksLikeEnvironmentFile('.Env.Local'), true);
 assert.equal(looksLikeEnvironmentFile('.ENV.EXAMPLE'), false);
 assert.equal(containsSshDirectory(['docs', '.SSH', 'id_ed25519']), true);
 
+// Git accepts paths with embedded newlines, terminal escapes and Unicode
+// directional controls. Never print a raw Git filename into CI diagnostics.
+function escapeDiagnosticPath(relative) {
+  return JSON.stringify(relative).replace(
+    /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
+    (char) => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0')
+  );
+}
+
+for (const hostile of [
+  'config\\nFORGED SUCCESS\\u001b[2J'.replace('\\n', '\n').replace('\\u001b', '\u001b'),
+  'rtl\\u202ePASS'.replace('\\u202e', '\u202e')
+]) {
+  const safe = escapeDiagnosticPath(hostile);
+  assert.doesNotMatch(safe, /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u,
+    'diagnostic paths must never contain terminal controls or bidi overrides');
+  assert.notEqual(safe, hostile, 'hostile path must be escaped');
+}
+
 const findings = [];
 
 for (const relative of tracked) {
@@ -45,17 +64,17 @@ for (const relative of tracked) {
   const segments = normalized.split('/');
 
   if (looksLikeEnvironmentFile(base)) {
-    findings.push(`${relative}: tracked environment file`);
+    findings.push(`${escapeDiagnosticPath(relative)}: tracked environment file`);
     continue;
   }
 
   if (containsSshDirectory(segments)) {
-    findings.push(`${relative}: tracked SSH material`);
+    findings.push(`${escapeDiagnosticPath(relative)}: tracked SSH material`);
     continue;
   }
 
   if (privateKeyNames.test(base) || privateKeyExtensions.test(base)) {
-    findings.push(`${relative}: tracked private-key/keystore path`);
+    findings.push(`${escapeDiagnosticPath(relative)}: tracked private-key/keystore path`);
   }
 }
 
