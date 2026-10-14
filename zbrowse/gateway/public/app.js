@@ -41,6 +41,13 @@ function renderSuggestions() {
 }
 
 let healthRequestSequence = 0;
+let gatewayCanStart = false;
+
+function syncStartButton() {
+  // Capacity may be busy yet reusable for this client; only invalid, offline
+  // or draining gateway state must prevent an avoidable start POST.
+  startButton.disabled = sessionStarting || !gatewayCanStart;
+}
 
 async function refreshHealth() {
   const sequence = ++healthRequestSequence;
@@ -52,6 +59,8 @@ async function refreshHealth() {
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
     if (health?.status === "draining") {
+      gatewayCanStart = false;
+      syncStartButton();
       status.className = "status";
       $("capacityText").textContent = "Browser temporarily unavailable";
       return;
@@ -72,11 +81,15 @@ async function refreshHealth() {
     ) {
       throw new Error("Invalid gateway health response.");
     }
+    gatewayCanStart = true;
+    syncStartButton();
     const available = health.activeSessions + health.startingSessions < health.capacity;
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
     if (sequence !== healthRequestSequence) return;
+    gatewayCanStart = false;
+    syncStartButton();
     status.className = "status";
     $("capacityText").textContent = "Browser engine offline";
   }
@@ -105,10 +118,10 @@ let sessionStarting = false;
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
-  if (sessionStarting || state.session) return;
+  if (sessionStarting || state.session || !gatewayCanStart) return;
   sessionStarting = true;
   setMessage();
-  startButton.disabled = true;
+  syncStartButton();
   startButton.textContent = "Starting…";
   try {
     const session = checkedSessionPayload(await request("/api/session", {
@@ -122,7 +135,7 @@ async function startSession(url) {
     await refreshHealth();
   } finally {
     sessionStarting = false;
-    startButton.disabled = false;
+    syncStartButton();
     startButton.textContent = "Open";
   }
 }
@@ -241,4 +254,5 @@ async function init() {
   window.setInterval(refreshHealth, 20000);
 }
 
+syncStartButton();
 init();
