@@ -30,6 +30,7 @@ let health = 'ready';
 let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
+let failNextDelete = false;
 let holdNextDelete = false;
 let releaseHeldDelete = null;
 let notifyHeldDelete = null;
@@ -122,6 +123,11 @@ const server = http.createServer(async (req, res) => {
           releaseHeldDelete = resolve;
           notifyHeldDelete?.();
         });
+      }
+      if (failNextDelete) {
+        failNextDelete = false;
+        sendJson(res, 503, { error: 'Synthetic teardown failure' });
+        return;
       }
       res.writeHead(204, { 'cache-control': 'no-store' }).end();
       return;
@@ -737,11 +743,67 @@ try {
   await until(async () => await evaluate(
     'document.getElementById("browserView").hidden'
   ), 'post-DELETE retry must still be closable');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'earlier End must settle before a failed-DELETE retry fixture');
+
+  // Actual shipped Chromium fetch() receives HTTP 503 for session DELETE.
+  // A healthy capacity poll must not silently unlock same-owner reuse.
+  const failedStartBefore = starts;
+  const failedDeleteBefore = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === failedStartBefore + 1, 'failed-DELETE fixture browser start');
+  assert.ok(releaseStart, 'failed-DELETE browser must start through real localhost HTTP');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'failed-DELETE fixture browser visible');
+  failNextDelete = true;
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === failedDeleteBefore + 1,
+    'first real DELETE must reach fixture');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'HTTP 503 must expose pending cleanup warning');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'failed real DELETE must keep fresh Start disabled');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Finishing previous browser session',
+    'healthy gateway health must not mask uncertain teardown');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(120);
+  assert.equal(starts, failedStartBefore + 1,
+    'failed teardown must block a second real browser POST');
+  // Trigger the existing shipped health poll deterministically rather than
+  // sleeping 20 seconds; it must perform the retry over actual HTTP.
+  await evaluate('refreshHealth(); true');
+  await until(() => deletions === failedDeleteBefore + 2,
+    'periodic health refresh must retry failed session DELETE');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'confirmed retry release must unlock browser admission');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'),
+    '', 'confirmed release should clear stale cleanup warning');
+
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === failedStartBefore + 2,
+    'fresh browser starts after successful retry');
+  assert.ok(releaseStart, 'recovered browser must go through real HTTP allocation');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'recovered browser must mount after retry');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === failedDeleteBefore + 3,
+    'recovered browser End must still release its session');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, heartbeat recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();

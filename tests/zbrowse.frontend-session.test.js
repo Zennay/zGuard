@@ -400,6 +400,85 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(allocations, 2,
     'fresh POST after completed teardown must still work');
 
+  // A 503 or lost DELETE must not be treated as successful teardown.
+  // Only an explicit confirmation (including already-gone 404/410) may
+  // unlock another same-IP browser start, even if health reports "ok".
+  let recoverDeletes = 0;
+  let failedAllocations = 0;
+  const pendingRecovered = deferred();
+  const failedRelease = await bootPortal({
+    sessionRequest: async () => {
+      failedAllocations++;
+      return response(validSession);
+    },
+    deleteRequest() {
+      recoverDeletes++;
+      return recoverDeletes === 1
+        ? response({ error: 'Temporary gateway failure' }, 503)
+        : pendingRecovered.promise;
+    }
+  });
+  failedRelease.submit();
+  await settle();
+  await failedRelease.element('endButton').listeners.click();
+  await settle();
+  assert.equal(failedRelease.element('browserFrame').src, 'about:blank',
+    'failed end must still discard the bearer viewer');
+  assert.equal(failedRelease.element('browserView').hidden, true);
+  assert.equal(failedRelease.element('startButton').disabled, true,
+    'failed DELETE must keep Open locked even when health is nominally ready');
+  assert.equal(failedRelease.element('capacityText').textContent,
+    'Finishing previous browser session',
+    'uncertain deletion must not claim Ready on a healthy gateway');
+  assert.match(failedRelease.element('formMessage').textContent,
+    /Retrying automatically/,
+    'failed DELETE should tell a TV user that cleanup is pending');
+  failedRelease.submit();
+  await settle();
+  assert.equal(failedAllocations, 1,
+    'scripted submit cannot reuse old bearer after DELETE failure');
+  const releasePoll = [...failedRelease.intervals.values()].find(({ milliseconds }) =>
+    milliseconds === 20000
+  );
+  assert.ok(releasePoll, 'gateway health interval must remain available for retry');
+  releasePoll.callback();
+  await settle();
+  assert.equal(recoverDeletes, 2, 'periodic health must retry failed DELETE exactly once');
+  releasePoll.callback();
+  await settle();
+  assert.equal(recoverDeletes, 2, 'overlapping polls must not double-send DELETE');
+  assert.equal(failedRelease.element('startButton').disabled, true,
+    'concurrent health requests cannot unlock pending teardown');
+  pendingRecovered.resolve(response(null, 204));
+  await settle();
+  assert.equal(failedRelease.element('startButton').disabled, false,
+    'confirmed deletion must restore a usable start button');
+  assert.equal(failedRelease.element('formMessage').textContent, '',
+    'successful cleanup must clear temporary error message');
+  failedRelease.submit();
+  await settle();
+  assert.equal(failedAllocations, 2, 'new browser allocation works after retry succeeds');
+
+  // The gateway may already have removed the token, making a subsequent
+  // release idempotently return HTTP 404; that is safe to reconcile.
+  let goneAllocations = 0;
+  const alreadyGone = await bootPortal({
+    sessionRequest: async () => {
+      goneAllocations++;
+      return response(validSession);
+    },
+    deleteRequest: async () => response({ error: 'Session not found.' }, 404)
+  });
+  alreadyGone.submit();
+  await settle();
+  await alreadyGone.element('endButton').listeners.click();
+  await settle();
+  assert.equal(alreadyGone.element('startButton').disabled, false,
+    'already-missing bearer is safe to discard without an infinite lock');
+  alreadyGone.submit();
+  await settle();
+  assert.equal(goneAllocations, 2, '404 cleanup must permit fresh browser after prior session is gone');
+
   // A BFCache back-navigation may restore a page after its pagehide
   // keepalive DELETE. A restored viewer must not continue using that token,
   // and a retry DELETE is required if the unload request was lost.
