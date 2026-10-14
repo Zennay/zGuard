@@ -30,6 +30,7 @@ let health = 'ready';
 let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
+let viewerRequests = 0;
 let releaseStart = null;
 let startRequestSeen = false;
 
@@ -97,11 +98,13 @@ const server = http.createServer(async (req, res) => {
         '/s/' + syntheticToken + '/';
       sendJson(res, 201, {
         token: syntheticToken, viewerUrl,
-        maxMinutes: 15, expiresAt: Date.now() + 900_000
+        maxMinutes: 15, expiresAt: viewerResponseMode === 'expired' ?
+          Date.now() - 1000 : Date.now() + 900_000
       });
       return;
     }
     if (req.method === 'GET' && pathname === '/s/' + syntheticToken + '/') {
+      viewerRequests++;
       res.writeHead(200, { 'content-type': 'text/html',
         'cache-control': 'no-store' }).end('<!doctype html><title>Local synthetic viewer</title>');
       return;
@@ -299,13 +302,40 @@ try {
       mode + ': rejected payload must not delete someone else\'s session');
   }
 
+  // A response can be structurally valid yet already expired by the time
+  // Chromium receives it. It must still release the server allocation but
+  // must not even begin a GET for the expired bearer-bearing viewer iframe.
+  viewerResponseMode = 'expired';
+  const viewersBeforeExpiry = viewerRequests;
+  const startsBeforeExpiry = starts;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeExpiry + 1,
+    'local expired-browser response allocation');
+  assert.ok(releaseStart, 'synthetic expiry must be returned through real HTTP');
+  releaseStart();
+  releaseStart = null;
+  await until(() => deletions === 2,
+    'expired response must immediately release the issued browser token');
+  await sleep(200);
+  assert.equal(viewerRequests, viewersBeforeExpiry,
+    'expired session must never navigate to a bearer viewer, even transiently');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'expired session must keep browser iframe discarded');
+  assert.equal(await evaluate(
+    'state.session === null && state.heartbeat === null && state.countdown === null'
+  ), true, 'expired response must not leave session heartbeat or countdown');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'),
+    true, 'expired session must not display a browser');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+    false, 'expired session must allow retry');
+
   // Browser-native page navigation must trigger the shipped pagehide
   // keepalive DELETE rather than leaving a session alive until TTL. This
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 5, 'valid browser retry after unsafe viewer rejections');
-  assert.equal(deletions, 1, 'a pending fresh browser must not double-delete the old one');
+  await until(() => starts === 6, 'valid browser retry after unsafe and expired viewer responses');
+  assert.equal(deletions, 2, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -316,16 +346,16 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 2,
+  await until(() => deletions === 3,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 2, 'browser pagehide must release the second browser exactly once');
-  assert.equal(starts, 5, 'only explicitly requested browser attempts should be sent');
+  assert.equal(deletions, 3, 'browser pagehide must release the final browser exactly once');
+  assert.equal(starts, 6, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, recovery, reviewed sites, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' unsafe-viewer rejection/retry, no duplicate allocation/release');
+    ' unsafe/expired-viewer rejection and retry, no duplicate allocation/release');
 } finally {
   releaseStart?.();
   socket?.close();
