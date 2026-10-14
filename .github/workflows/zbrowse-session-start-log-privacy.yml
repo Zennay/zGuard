@@ -1,0 +1,56 @@
+name: zBrowse browser startup log privacy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_redacted_start_errors:
+        description: "Require browser-start exception logs to omit Docker/session credentials"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-browser-start-log-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-start-logs:
+    name: Gateway browser-start failure log privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_REDACTED_START_ERRORS: ${{ inputs.require_redacted_start_errors || 'false' }}
+    steps:
+      - name: Checkout exact PR-head source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checkout revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without lifecycle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+      - name: Validate source-bound session start error logging
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.session-json-body-real-http.test.mjs
+          node tests/zbrowse.session-start-log-privacy-real-http.test.mjs
+          if [ "$REQUIRE_REDACTED_START_ERRORS" = "true" ]; then
+            node tests/zbrowse.session-start-log-privacy-real-http.test.mjs --require-redacted-start-errors
+          fi
+          test -z "$(git status --porcelain)"
