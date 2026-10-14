@@ -16,6 +16,7 @@ for (const path of [
   'tests/zbrowse.session-response-budget.test.mjs',
   'tests/zbrowse.readonly-content-length-real-http.test.mjs',
   'tests/zbrowse.tv-api-redirect-real-http.test.mjs',
+  'tests/zbrowse.session-start-liveness-real-http.test.mjs',
   'tests/zbrowse.public-origin-readiness.test.mjs',
   'tests/zbrowse.portal-workflow-coverage.test.mjs',
   '.github/workflows/portal-accessibility-validation.yml',
@@ -33,6 +34,7 @@ for (const command of [
   'node tests/zbrowse.session-response-budget.test.mjs',
   'node tests/zbrowse.readonly-content-length-real-http.test.mjs',
   'node tests/zbrowse.tv-api-redirect-real-http.test.mjs',
+  'node tests/zbrowse.session-start-liveness-real-http.test.mjs',
   'node tests/zbrowse.portal-workflow-coverage.test.mjs',
 ]) {
   assert.ok(

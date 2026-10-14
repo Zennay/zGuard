@@ -392,9 +392,15 @@ async function startSession(url) {
   syncStartButton();
   startButton.textContent = "Starting…";
   try {
+    // Gateway readiness can legitimately include a slow kiosk boot, but a
+    // proxy that never completes headers or JSON must not pin the TV in
+    // "Starting" forever. This deadline also covers the response stream.
+    // A timed-out request can still create a server-side browser: gateway
+    // admission, TTL and orphan reconciliation remain independent controls.
     const payload = await request("/api/session", {
       method: "POST",
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(150000)
     });
     let session;
     try {

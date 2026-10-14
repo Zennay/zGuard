@@ -70,8 +70,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const timeoutControls = [];
   const AbortSignal = {
     timeout(ms) {
-      assert.ok(ms === 7000 || ms === 10000,
-        'readiness/DELETE must use 7s, heartbeat must use 10s deadline');
+      assert.ok(ms === 7000 || ms === 10000 || ms === 150000,
+        'readiness/DELETE: 7s, heartbeat: 10s, browser start: 150s deadline');
       const controller = new AbortController();
       timeoutControls.push(controller);
       return controller.signal;
@@ -153,7 +153,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     }
     if (url === '/api/session' && options.method === 'POST') {
       if (!sessionRequest) throw new Error('unexpected session start request');
-      return sessionRequest();
+      return sessionRequest(options);
     }
     throw new Error('unexpected portal request: ' + url);
   };
@@ -781,6 +781,85 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     expiresAt: Date.now() + 60_000,
     maxMinutes: 15
   };
+
+  // The TV must never remain in "Starting…" forever when gateway session
+  // creation hangs before headers; the deadline permits a slow real kiosk boot
+  // but restores UI after a disconnected proxy. This is simulated by firing
+  // the actual signal rather than burning 150 seconds in CI.
+  const stalledStart = await bootPortal({
+    sessionRequest(options) {
+      assert.equal(options.signal?.aborted, false,
+        'browser start must supply an active deadline signal');
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () =>
+          reject(new DOMException('browser start timed out', 'TimeoutError')), { once: true });
+      });
+    }
+  });
+  stalledStart.element('browserView').hidden = true; // HTML initially hides viewer.
+  stalledStart.submit();
+  await settle();
+  const startPost = stalledStart.requests.filter(({ url, options }) =>
+    url === '/api/session' && options.method === 'POST');
+  assert.equal(startPost.length, 1, 'hung start can allocate at most one request');
+  assert.equal(stalledStart.element('startButton').disabled, true,
+    'Open must remain disabled while the start request is in flight');
+  const deadlineSignal = startPost[0].options.signal;
+  assert.ok(deadlineSignal, 'actual start POST must be abortable');
+  const deadlineIndex = stalledStart.timeoutControls.findIndex(c =>
+    c.signal === deadlineSignal);
+  assert.ok(deadlineIndex >= 0, 'the timeout must be the same signal passed to fetch');
+  stalledStart.timeoutControls[deadlineIndex].abort();
+  await settle();
+  assert.equal(stalledStart.element('startButton').disabled, false,
+    'the timed-out start must recover normal UI availability after health refresh');
+  assert.equal(stalledStart.element('startButton').textContent, 'Open',
+    'a timed-out start must restore Open label');
+  assert.equal(stalledStart.element('browserView').hidden, true,
+    'no unconfirmed browser may appear on a failed start');
+  assert.equal(stalledStart.element('browserFrame').srcHistory.length, 0,
+    'stalled browser start cannot navigate to an unverified viewer');
+  assert.match(stalledStart.element('formMessage').textContent,
+    /Could not start browser/, 'the timeout must show generic error guidance');
+
+  // A proxy may complete the HTTP headers but never deliver the successful
+  // JSON. Abort must also reject a stalled stream reader after those headers.
+  let readerCancels = 0;
+  const stalledStartBody = await bootPortal({
+    sessionRequest() {
+      return {
+        status: 201,
+        ok: true,
+        headers: { get(name) {
+          return name.toLowerCase() === 'content-type' ? 'application/json' : null;
+        } },
+        body: { getReader() { return {
+          read() { return new Promise(() => {}); },
+          cancel() { readerCancels++; return Promise.resolve(); },
+          releaseLock() {}
+        }; } },
+        async json() { throw Error('unbounded JSON parser must never run'); }
+      };
+    }
+  });
+  stalledStartBody.element('browserView').hidden = true; // HTML initially hides viewer.
+  stalledStartBody.submit();
+  await settle();
+  const bodyRequest = stalledStartBody.requests.find(({ url, options }) =>
+    url === '/api/session' && options.method === 'POST');
+  assert.ok(bodyRequest?.options.signal, 'post-header read must share start signal');
+  const bodyController = stalledStartBody.timeoutControls.find(c =>
+    c.signal === bodyRequest.options.signal);
+  assert.ok(bodyController, 'actual body read must retain 150s deadline');
+  bodyController.abort();
+  await settle();
+  assert.equal(readerCancels, 1, 'timed-out body read must cancel pending bytes');
+  assert.equal(stalledStartBody.element('startButton').disabled, false,
+    'stalled body must not keep TV stuck in Starting');
+  assert.equal(stalledStartBody.element('browserFrame').srcHistory.length, 0,
+    'partial successful HTTP body must never mount viewer');
+  assert.match(stalledStartBody.element('formMessage').textContent,
+    /Could not start browser/, 'stalled body timeout must be actionable');
 
   // Reproduce network reordering: a slow stale healthy result must never
   // override a newer busy observation, even when both requests succeeded.
