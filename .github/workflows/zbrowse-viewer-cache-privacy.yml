@@ -60,6 +60,7 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.viewer-cache-privacy.test.mjs
           node tests/zbrowse.viewer-cache-real-http.test.mjs
+          node tests/zbrowse.viewer-cdn-cache-real-http.test.mjs
           node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs
           if [ "$REQUIRE_WEBSOCKET_ORIGIN" = "true" ]; then
@@ -76,5 +77,6 @@ jobs:
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store
             node tests/zbrowse.viewer-cache-real-http.test.mjs --require-no-store
+            node tests/zbrowse.viewer-cdn-cache-real-http.test.mjs --require-no-store
             node tests/zbrowse.viewer-path-recovery-real-http.test.mjs --require-no-store
           fi
