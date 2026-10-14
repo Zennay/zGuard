@@ -40,6 +40,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const requests = [];
   const intervals = new Map();
   const windowEvents = new Map();
+  const fullscreenEvents = [];
   let nextInterval = 1;
 
   function element(id) {
@@ -51,7 +52,10 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
         addEventListener(event, callback) { this.listeners[event] = callback; },
         replaceChildren(...children) { this.children = children; },
         focus() { this.focused = true; },
-        requestFullscreen: async () => {}
+        async requestFullscreen() {
+          fullscreenEvents.push('enter:' + id);
+          document.fullscreenElement = this;
+        }
       });
       if (id === 'browserFrame') {
         // Record every iframe assignment, not only its final value:
@@ -73,7 +77,10 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     createElement: () => element('option-' + elements.size),
     addEventListener() {},
     fullscreenElement: null,
-    exitFullscreen: async () => {}
+    async exitFullscreen() {
+      fullscreenEvents.push('exit');
+      this.fullscreenElement = null;
+    }
   };
   const window = {
     addEventListener(name, callback) { windowEvents.set(name, callback); },
@@ -115,6 +122,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     element,
     requests,
     intervals,
+    document,
+    fullscreenEvents,
     pagehide() {
       const callback = windowEvents.get('pagehide');
       assert.equal(typeof callback, 'function', 'portal must register pagehide cleanup');
@@ -416,6 +425,39 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       url === '/api/session/' + validToken && options.method === 'DELETE').length,
     1, 'repeated End and later pagehide must not double-release the same session'
   );
+
+  // A TV user must be able to enter and leave the real shipped fullscreen
+  // handler without issuing another browser POST or replacing the iframe.
+  // This uses the actual app.js listener and a stateful Fullscreen API fake:
+  // a missing listener or inverted document.fullscreenElement check fails.
+  const fullscreenPortal = await bootPortal({
+    sessionRequest: async () => response(validSession)
+  });
+  fullscreenPortal.submit();
+  await settle();
+  assert.equal(fullscreenPortal.element('browserView').hidden, false,
+    'fullscreen fixture requires an active browser');
+  const toggleFullscreen = fullscreenPortal.element('fullscreenButton').listeners.click;
+  assert.equal(typeof toggleFullscreen, 'function',
+    'the TV fullscreen button must register an activation handler');
+  await toggleFullscreen();
+  assert.equal(fullscreenPortal.document.fullscreenElement,
+    fullscreenPortal.element('browserStage'),
+    'first activation must request fullscreen for the browser stage');
+  await toggleFullscreen();
+  assert.equal(fullscreenPortal.document.fullscreenElement, null,
+    'second activation must exit fullscreen without losing the browser session');
+  assert.deepEqual(fullscreenPortal.fullscreenEvents,
+    ['enter:browserStage', 'exit'],
+    'fullscreen enter and exit must each invoke the correct browser API once');
+  assert.equal(fullscreenPortal.element('browserFrame').src, validViewer,
+    'fullscreen toggling must preserve the authenticated viewer iframe');
+  assert.equal(fullscreenPortal.requests.filter(({ url }) =>
+    url === '/api/session').length, 1,
+  'fullscreen toggling must never allocate another gateway browser');
+  await fullscreenPortal.element('endButton').listeners.click();
+  assert.equal(fullscreenPortal.element('browserView').hidden, true,
+    'normal End must still work after fullscreen is explicitly exited');
 
   // When the user ends a viewer, a slow DELETE must hold start admission.
   // Otherwise the same-IP gateway can reuse the about-to-be-revoked token.
