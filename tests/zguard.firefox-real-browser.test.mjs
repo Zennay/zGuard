@@ -22,6 +22,13 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<a id="ordinary" href="__QA_ORDINARY_EXTERNAL__" target="_blank">Ordinary external</a>'
   +'<form id="hostileForm" action="https://ads.al5sm.com/form" target="_blank">'
   +'<button type="submit" id="submitHostile">Submit</button></form>'
+  +'<form id="overrideHostileForm" action="/safe" target="_self">'
+  +'<button type="submit" id="submitOverrideHostile" '
+  +'formaction="https://ads.al5sm.com/overridden" formtarget="_blank">'
+  +'Hostile submitter override</button></form>'
+  +'<form id="overrideOrdinaryForm" action="https://ads.al5sm.com/default" target="_blank">'
+  +'<button type="submit" id="submitOverrideOrdinary" formaction="/safe" '
+  +'formtarget="_self">Allowed submitter override</button></form>'
   +'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100">'
   +'<a id="svgHostile" href="https://ads.al5sm.com/svg" target="_blank">'
   +'<rect width="110" height="80" fill="red"/></a>'
@@ -43,12 +50,13 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0,'
   +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0,'
   +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0,'
-  +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false};'
+  +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false,'
+  +'overrideHostileSubmits:0,overrideOrdinarySubmits:0};'
   +'document.getElementById("openSameOriginPopup").addEventListener("click",()=>{'
   +'window.qa.pagePopupSame++;window.qa.pagePopupSameNative='
   +'!!window.open(location.origin+"/qa-same-origin-popup","_blank");});'
   +'document.getElementById("openCrossOriginPopup").addEventListener("click",()=>{'
-  +'window.qa.pagePopupCross++;window.qa.pagePopupCrossNative='
+  +'window.qa.pagePopupCross++;window.qa.pagePopupCrossNative=
   +'!!window.open("__QA_FRAME_URL__","_blank");});'
   +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary","imageMapHostile","imageMapOrdinary"]){'
   +'document.getElementById(id).addEventListener("click",e=>{'
@@ -65,7 +73,11 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'a.addEventListener("click",e=>{window.qa["shadow"+kind+"Clicks"]++;e.preventDefault();});'
   +'root.appendChild(a);}'
   +'document.getElementById("hostileForm").addEventListener("submit",e=>{'
-  +'window.qa.hostileSubmits++;e.preventDefault();});</script></body></html>';
+  +'window.qa.hostileSubmits++;e.preventDefault();});'
+  +'for(const id of ["overrideHostile","overrideOrdinary"]){'
+  +'document.getElementById(id+"Form").addEventListener("submit",e=>{'
+  +'window.qa[id+"Submits"]++;e.preventDefault();});}'
+  +'</script></body></html>';
 const frameFixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<a id="frameHostile" href="https://ads.al5sm.com/iframe" target="_blank">Blocked frame link</a>'
   +'<a id="frameOrdinary" href="/safe" target="_blank">Allowed frame link</a>'
@@ -205,6 +217,8 @@ try{
   await click('#hostile');
   await click('#ordinary');
   await click('#submitHostile');
+  await click('#submitOverrideHostile');
+  await click('#submitOverrideOrdinary');
   await click('#svgHostile rect');
   await click('#svgOrdinary rect');
   await nativePointer('#hostile',{button:1});
@@ -224,6 +238,10 @@ try{
     'Ordinary Firefox link must still receive native click');
   assert.equal(after.hostileSubmits,before.hostileSubmits,
     'Native hostile target=_blank Firefox form must be stopped');
+  assert.equal(after.overrideHostileSubmits,before.overrideHostileSubmits,
+    'Native Firefox formtarget=_blank/formaction hostile submitter override must be stopped');
+  assert.equal(after.overrideOrdinarySubmits,before.overrideOrdinarySubmits+1,
+    'Native Firefox harmless submitter override must reach local form submit');
   for(const [blocked,allowed,label] of [
     ['svgHostileClicks','svgOrdinaryClicks','SVG link'],
     ['shadowHostileClicks','shadowOrdinaryClicks','open Shadow DOM link'],
@@ -239,6 +257,8 @@ try{
   await keyboardActivate('#hostile');
   await keyboardActivate('#ordinary');
   await keyboardActivate('#submitHostile');
+  await keyboardActivate('#submitOverrideHostile');
+  await keyboardActivate('#submitOverrideOrdinary');
   const afterKeyboard=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(afterKeyboard.hostileClicks,beforeKeyboard.hostileClicks,
     'Trusted Firefox Enter on hostile link must be captured before target');
@@ -246,6 +266,10 @@ try{
     'Trusted Firefox Enter must still activate an ordinary link');
   assert.equal(afterKeyboard.hostileSubmits,beforeKeyboard.hostileSubmits,
     'Trusted Firefox Enter on submit button must not launch hostile form');
+  assert.equal(afterKeyboard.overrideHostileSubmits,beforeKeyboard.overrideHostileSubmits,
+    'Trusted Firefox Enter must block hostile submitter override before form submission');
+  assert.equal(afterKeyboard.overrideOrdinarySubmits,beforeKeyboard.overrideOrdinarySubmits+1,
+    'Trusted Firefox Enter must preserve harmless submitter override');
   // The iframe is served from a *different loopback port*, so it cannot
   // inherit top-level origin or JS globals. Switch real Firefox frame context.
   const iframe=await wd('POST','/session/'+session+'/element',
@@ -401,6 +425,7 @@ try{
   console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map, keyboard and cross-origin iframe protected; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
+  console.log('Native Firefox form submitter overrides PASS: hostile overrides blocked, harmless overrides allowed, trusted click and Enter.');
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
