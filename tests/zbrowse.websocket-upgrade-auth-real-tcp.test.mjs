@@ -7,6 +7,9 @@ import net from 'node:net';
 import vm from 'node:vm';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
+import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
+
+const strictOrigin = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-websocket-origin');
 
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
 function segment(begin, end) {
@@ -133,7 +136,36 @@ try {
   assert.match(restored, /^HTTP\/1\.1 101/m,
     'a valid session must remain usable after rejected attackers');
   assert.equal(seen.length, 2, 'only two legitimate upgrades should be forwarded');
-  console.log('Shipped gateway real TCP WebSocket owner/isolation boundary passed');
+
+  // Browser WebSocket handshakes carry Origin but do not use CORS preflight.
+  // The same peer can have another, unrelated web page. The server must not
+  // assume token ownership is sufficient to authorize that page's upgrade.
+  const target = '/s/' + token + '/websockify?screen=1';
+  const beforeForeign = seen.length;
+  const foreign = await open(target,
+    'Origin: https://attacker.invalid\r\nSec-Fetch-Site: cross-site\r\n');
+  const sandboxed = await open(target,
+    'Origin: null\r\nSec-Fetch-Site: cross-site\r\n');
+  const metadataOnly = await open(target,
+    'Sec-Fetch-Site: cross-site\r\n');
+  const newUpgrades = seen.length - beforeForeign;
+  const foreignAccepted = /^HTTP\/1\.1 101/m.test(foreign);
+  const sandboxedAccepted = /^HTTP\/1\.1 101/m.test(sandboxed);
+  const metadataAccepted = /^HTTP\/1\.1 101/m.test(metadataOnly);
+  if (strictOrigin) {
+    assert.deepEqual({ foreignAccepted, sandboxedAccepted, metadataAccepted, newUpgrades },
+      { foreignAccepted: false, sandboxedAccepted: false,
+        metadataAccepted: false, newUpgrades: 0 },
+      'cross-site WebSocket upgrades must be rejected before reaching browser proxy (issue #342)');
+    console.log('Shipped real TCP WebSocket cross-site Origin isolation passed');
+  } else {
+    console.log('Shipped real TCP WebSocket owner/isolation controls passed; ' +
+      'foreign Origin upgraded=' + foreignAccepted +
+      ', Origin:null upgraded=' + sandboxedAccepted +
+      ', cross-site metadata upgraded=' + metadataAccepted +
+      ', untrusted browser proxy forwards=' + newUpgrades +
+      ' (strict --require-websocket-origin is not a runtime fix)');
+  }
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
