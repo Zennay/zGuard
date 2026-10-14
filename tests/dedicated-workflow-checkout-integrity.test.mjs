@@ -112,17 +112,23 @@ assert.equal(prHeadContractWorkflows.size,
 const manifestWorkflow = workflows.find(({ relative }) =>
   relative === additionalSourceBoundWorkflows[0]);
 assert.ok(manifestWorkflow, 'the protected manifest workflow must be discovered');
+const trustedRef = 'ref: ' + String.fromCharCode(36) +
+  '{{ github.event.pull_request.head.sha || github.sha }}';
+const checkoutProof = 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"';
+assert.ok(manifestWorkflow.source.includes(trustedRef),
+  'manifest workflow must contain the exact trusted PR-head ref');
+assert.ok(manifestWorkflow.source.includes(checkoutProof),
+  'manifest workflow must contain the actual git checkout proof');
 for (const [name, changed] of [
   ['implicit merge checkout', manifestWorkflow.source.replace(
-    /ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}/, 'ref: main')],
+    trustedRef, 'ref: main')],
   ['missing checkout proof', manifestWorkflow.source.replace(
-    'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', 'echo unverified')]
+    checkoutProof, 'echo unverified')]
 ]) {
-  assert.notEqual(changed, manifestWorkflow.source, name + ': mutation must change source');
-  const ref = /ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}/;
-  const verify = /name:\\s*Verify checkout commit[\\s\\S]*?EXPECTED_SHA:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}[\\s\\S]*?run:\\s*test "\\$\\(git rev-parse HEAD\\)" = "\\$EXPECTED_SHA"/;
-  assert.ok(!ref.test(changed) || !verify.test(changed),
-    name + ': an unsafe checkout mutation must not satisfy PR-head identity proof');
+  assert.notEqual(changed, manifestWorkflow.source,
+    name + ': mutation must change source');
+  assert.ok(!(changed.includes(trustedRef) && changed.includes(checkoutProof)),
+    name + ': unsafe checkout mutation must not satisfy source identity');
 }
 
 console.log(
