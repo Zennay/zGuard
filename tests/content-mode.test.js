@@ -220,6 +220,34 @@ async function verifyBrowser(relativePath) {
     relativePath + ': each blocked click must be recorded once'
   );
 
+  // Browsers treat reserved browsing-context targets such as _blank as
+  // ASCII case-insensitive. A hostile link with target=_BLANK must not
+  // bypass click protection while normal external and same-origin targets
+  // remain available across Chromium, Firefox and the zBrowse bundle.
+  for (const target of ['_BLANK', '_BlAnK']) {
+    for (const options of [{ target }, { target, elementTag: 'area' },
+      { target, shadow: true }]) {
+      assert.deepEqual(
+        balanced.click('https://ads.al5sm.com/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': mixed-case popup target must block hostile links'
+      );
+      assert.deepEqual(
+        strict.click('https://example.org/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': strict mode must block mixed-case new-tab targets'
+      );
+      assert.deepEqual(
+        strict.click('/same-origin', options), [],
+        relativePath + ': same-origin mixed-case target must stay usable'
+      );
+      assert.deepEqual(
+        balanced.click('https://example.org/popup', options), [],
+        relativePath + ': balanced mode must allow ordinary mixed-case targets'
+      );
+    }
+  }
+
   // Strict mode isolates origins rather than visual URL prefixes.
   for (const local of [
     '/next',
