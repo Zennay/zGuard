@@ -30,6 +30,21 @@ function eventBlock(source, eventName) {
 
 // Required checks must actually execute against the proposed revision,
 // rather than advertising a check name while skipping or swallowing failures.
+// Required contexts are only enforceable when every PR revision triggers
+// them, and the same checks re-run on the merged main commit.
+function verifyRequiredEvents(entry, source) {
+  const pr = eventBlock(source, 'pull_request');
+  assert.notEqual(pr, null, entry.check + ': pull_request event is required');
+  assert.doesNotMatch(pr, /^    (?:types|paths|paths-ignore|branches|branches-ignore):/m,
+    entry.check + ': pull_request may not filter out opened/synchronize/reopen events');
+  const push = eventBlock(source, 'push');
+  assert.notEqual(push, null, entry.check + ': main push event must exist');
+  assert.match(push, /^    branches:\s*\n      - main\s*$/m,
+    entry.check + ': merged main commits must run the required check');
+  assert.doesNotMatch(push, /^    (?:paths|paths-ignore|tags|tags-ignore|branches-ignore):/m,
+    entry.check + ': push main may not selectively skip required checks');
+}
+
 function verifyRequiredJob(entry, source) {
   const jobs = source.split(/^jobs:\s*$/m)[1] ?? '';
   const headers = [...jobs.matchAll(/^  ([A-Za-z][A-Za-z0-9_-]*):\s*$/gm)];
@@ -78,6 +93,7 @@ for (const entry of catalog.checks) {
   assert.ok(fs.existsSync(workflowPath), `${entry.workflow} must exist`);
   const source = fs.readFileSync(workflowPath, 'utf8');
   verifyRequiredJob(entry, source);
+  verifyRequiredEvents(entry, source);
 
   const pullRequest = eventBlock(source, 'pull_request');
   assert.notEqual(pullRequest, null, `${entry.workflow} must run on pull_request`);
@@ -125,4 +141,23 @@ mutation('default branch checkout', original.replace(
 mutation('missing exact SHA assertion', original.replace(
   'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', 'echo no-verification'));
 
-console.log(`Required-check catalog contract passed for ${catalog.checks.length} always-on exact-head PR checks plus 4 mutation proofs`);
+// Event mutation controls are separate from job controls: a perfect job
+// still gives false assurance when triggered only for closed PRs or when
+// merged main does not run the same checks.
+function eventMutation(label, modified) {
+  assert.notEqual(modified, original, label + ': mutation must alter workflow');
+  assert.throws(() => verifyRequiredEvents(sample, modified),
+    undefined, label + ': filtered event must not pass');
+}
+eventMutation('closed-only PR check',
+  original.replace('  pull_request:\n', '  pull_request:\n    types: [closed]\n'));
+eventMutation('PR path filtering',
+  original.replace('  pull_request:\n',
+    '  pull_request:\n    paths:\n      - docs/**\n'));
+eventMutation('missing main push',
+  original.replace('      - main\n', '      - release\n'));
+eventMutation('filtered main push',
+  original.replace('      - main\n',
+    '      - main\n    paths:\n      - docs/**\n'));
+
+console.log(`Required-check catalog contract passed for ${catalog.checks.length} always-on exact-head PR checks plus 8 mutation proofs`);
