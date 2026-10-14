@@ -34,7 +34,9 @@ function response(body, status = 200, contentType = 'application/json; charset=u
       if (name.toLowerCase() === 'content-length') return options.contentLength ?? null;
       return null;
     } },
-    body: options.missingBody ? null : { getReader() {
+    body: options.missingBody ? null : {
+      async cancel() { mock.cancelled = true; },
+      getReader() {
       return {
         async read() {
           mock.reads++;
