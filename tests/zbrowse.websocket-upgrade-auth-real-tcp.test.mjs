@@ -285,6 +285,45 @@ try {
       '/' + unsafeHostUpgrades.length + ', proxy forwards=' + unreviewedHostForwards +
       ' (strict --require-websocket-origin is not a runtime fix)');
   }
+
+  // Caller-provided HTTP credentials are NOT a substitute for the reviewed
+  // /s/:token/ bearer, and must not replace the gateway's stored upstream
+  // Basic auth. This is the shipped upgrade handler plus a synthetic proxy,
+  // not a real container or public reverse-proxy e2e.
+  const callerCredentialHeaders = [
+    ['Basic authorization and cookie',
+      'Authorization: Basic YXR0YWNrZXI6cGFzcw==\r\n' +
+      'Cookie: viewer=attacker-only\r\n'],
+    ['Bearer and proxy-authorization',
+      'Authorization: Bearer untrusted-only\r\n' +
+      'Proxy-Authorization: Basic YXR0YWNrZXI6cGFzcw==\r\n']
+  ];
+  for (const [label, injected] of callerCredentialHeaders) {
+    const before = seen.length;
+    const hostile = await open('/s/' + 'U'.repeat(32) + '/websockify',
+      injected);
+    assert.doesNotMatch(hostile, /^HTTP\/1\.1 101/m,
+      label + ': client credentials cannot replace a valid path bearer');
+    assert.equal(seen.length, before,
+      label + ': unknown session must never reach the upstream proxy');
+
+    const legitimate = await open('/s/' + token + '/websockify',
+      'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\n' +
+      'Sec-Fetch-Site: same-origin\r\n' + injected);
+    assert.match(legitimate, /^HTTP\/1\.1 101/m,
+      label + ': genuine reviewed TV owner must retain its browser stream');
+    assert.equal(seen.length, before + 1,
+      label + ': exactly one owner-bound upstream call must occur');
+    assert.equal(seen.at(-1).session, session,
+      label + ': cannot substitute a caller-claimed session');
+    assert.equal(seen.at(-1).auth, 'viewer:synthetic-only',
+      label + ': upstream auth must derive only from stored session credentials');
+    assert.equal(seen.at(-1).target, 'https://test-browser:3001',
+      label + ': untrusted headers must never redirect to another container');
+  }
+  console.log('Real TCP WebSocket caller-authorization non-substitution: ' +
+    callerCredentialHeaders.length + ' negative and positive pairs verified');
+
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
