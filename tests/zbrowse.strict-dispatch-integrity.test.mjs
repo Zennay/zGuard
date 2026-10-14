@@ -326,6 +326,30 @@ tamper(fixture, fixture.replace('  workflow_dispatch:\n',
   '  workflow_dispatch:\n    inputs:\n      require_new_gate:\n        type: boolean\n        default: false\n'),
 'unknown dispatch input cannot be silently ignored');
 
+// Do not allow the already passing real-TCP WebSocket privacy guard to
+// silently return to opt-in-only mode on a future runtime refactor. The
+// baseline still runs separately to document route/denial behavior.
+function assertAlwaysOnWebSocketLogRedaction(yaml) {
+  const proof =
+    'node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs\n' +
+    '          # Browser WebSocket credential log privacy must stay green on every PR and main push.\n' +
+    '          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors\n' +
+    '          if [ "$REQUIRE_REDACTED_WS_PROXY_ERRORS" = "true" ]; then';
+  assert.ok(yaml.includes(proof),
+    'every PR/main push must run real-TCP WebSocket redaction strictly, before any opt-in branch');
+}
+const wsWorkflow = fs.readFileSync(
+  path.join(workflowDir, 'zbrowse-websocket-proxy-error-log-privacy.yml'), 'utf8');
+assertAlwaysOnWebSocketLogRedaction(wsWorkflow);
+const weakenedWebSocketWorkflow = wsWorkflow.replace(
+  '          # Browser WebSocket credential log privacy must stay green on every PR and main push.\n' +
+  '          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors\n',
+  '');
+assert.notEqual(weakenedWebSocketWorkflow, wsWorkflow,
+  'WebSocket strict evidence mutation must remove a real always-on command');
+assert.throws(() => assertAlwaysOnWebSocketLogRedaction(weakenedWebSocketWorkflow),
+  undefined, 'baseline-only WebSocket privacy checks must never be certified as strict');
+
 let strictCommands = 0;
 for (const [workflow, gates] of matrix) {
   strictCommands += testWorkflow(workflow, gates,
