@@ -276,6 +276,32 @@ try{
   );
   assert.equal(installed,4,'Four safe Firefox popup-target fixtures must exist');
   for(const [id] of targetCases)await click('#qa'+id);
+  // A submitter can override a same-context parent form to launch an
+  // entirely separate named browsing context. Test genuine Firefox button
+  // clicks (not synthetic submit events), while a target-side listener
+  // prevents any allowed request from reaching a remote destination.
+  const formTargetCases=[
+    ['namedHostileForm','adPopupWindow','https://ads.al5sm.com/form'],
+    ['namedOrdinaryForm','adPopupWindow','http://127.0.0.1:'+frameServer.address().port+'/safe'],
+    ['mixedHostileForm','_BlAnK','https://ads.al5sm.com/form'],
+    ['mixedOrdinaryForm','_BlAnK','http://127.0.0.1:'+frameServer.address().port+'/safe']
+  ];
+  const installedForms=await evaluate(
+    'window.qa.popupFormCounts={};'
+    +'for(const [id,target,action] of '+JSON.stringify(formTargetCases)+'){'
+    +'const form=document.createElement("form");form.id="qa"+id;'
+    +'form.action="/safe";form.target="_self";form.method="GET";'
+    +'const button=document.createElement("button");button.type="submit";'
+    +'button.setAttribute("formaction",action);'
+    +'button.setAttribute("formtarget",target);button.textContent="Local form target QA";'
+    +'form.append(button);'
+    +'form.addEventListener("submit",event=>{window.qa.popupFormCounts[id]++;'
+    +'event.preventDefault();});window.qa.popupFormCounts[id]=0;'
+    +'document.body.append(form);}'
+    +'return Object.keys(window.qa.popupFormCounts).length;'
+  );
+  assert.equal(installedForms,4,'Four safe Firefox form-target fixtures must exist');
+  for(const [id] of formTargetCases)await click('#qa'+id+' button');
   await click('#submitHostile');
   await click('#submitOverrideHostile');
   await click('#submitOverrideOrdinary');
@@ -304,6 +330,15 @@ try{
     assert.equal(after.popupTargetClicks[id],1,
       'Native Firefox harmless popup target must reach its local safety listener: '+id);
   }
+  for(const id of ['namedHostileForm','mixedHostileForm']){
+    assert.equal(after.popupFormCounts[id],0,
+      'Native Firefox hostile formtarget submitter escaped popup guard: '+id);
+  }
+  for(const id of ['namedOrdinaryForm','mixedOrdinaryForm']){
+    assert.equal(after.popupFormCounts[id],1,
+      'Native Firefox harmless formtarget override must submit once: '+id);
+  }
+
 
   assert.equal(after.hostileSubmits,before.hostileSubmits,
     'Native hostile target=_blank Firefox form must be stopped');
