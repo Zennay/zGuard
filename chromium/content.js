@@ -71,7 +71,8 @@
       return originalOpen.call(window, url, target, features);
     };
 
-    document.addEventListener('click', (event) => {
+    const interceptPopupLink = (event) => {
+      if (event.type === 'auxclick' && event.button !== 1) return;
       const anchor = event.target && event.target.closest ? event.target.closest('a,area') : null;
       if (!anchor) return;
       const href = linkValue(anchor, 'href');
@@ -82,7 +83,10 @@
       event.preventDefault();
       event.stopImmediatePropagation();
       send('external-link', { url: href, mode });
-    }, true);
+    };
+    document.addEventListener('click', interceptPopupLink, true);
+    // Native middle-button release dispatches auxclick, not click.
+    document.addEventListener('auxclick', interceptPopupLink, true);
 
     // requestSubmit() and trusted form-submit gestures bypass anchor clicks.
     // Respect the effective submitter's formtarget/formaction overrides.

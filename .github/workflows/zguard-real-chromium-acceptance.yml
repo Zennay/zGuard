@@ -95,6 +95,7 @@ jobs:
           node tests/zguard.chromium-real-browser.test.mjs --require-image-map
           node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
           node tests/zguard.chromium-real-browser.test.mjs --require-form-submit
+          node tests/zguard.chromium-real-browser.test.mjs --require-auxclick
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
           fi

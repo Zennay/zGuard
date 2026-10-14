@@ -10,6 +10,7 @@ async function loadContentScript(relativePath, mode, enabled = true) {
   const events = [];
   let allowedOpenCount = 0;
   let clickHandler;
+  let auxclickHandler;
   let submitHandler;
 
   const api = {
@@ -48,6 +49,7 @@ async function loadContentScript(relativePath, mode, enabled = true) {
     document: {
       addEventListener(name, listener) {
         if (name === 'click') clickHandler = listener;
+        if (name === 'auxclick') auxclickHandler = listener;
         if (name === 'submit') submitHandler = listener;
       }
     }
@@ -61,9 +63,11 @@ async function loadContentScript(relativePath, mode, enabled = true) {
 
   return {
     open: (url) => context.window.open(url),
-    click(href, { target = '_blank', ctrlKey = false, metaKey = false, button = 0, elementTag = 'a' } = {}) {
+    click(href, { target = '_blank', ctrlKey = false, metaKey = false,
+      button = 0, elementTag = 'a', eventType = 'click' } = {}) {
       const actions = [];
       const event = {
+        type: eventType,
         target: {
           closest: (selector) => selector.split(',').includes(elementTag)
             ? { href, target } : null
@@ -72,7 +76,8 @@ async function loadContentScript(relativePath, mode, enabled = true) {
         preventDefault() { actions.push('preventDefault'); },
         stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
       };
-      if (clickHandler) clickHandler(event);
+      const handler = eventType === 'auxclick' ? auxclickHandler : clickHandler;
+      if (handler) handler(event);
       return actions;
     },
     submit(action, { target = '_blank', submitterAction, submitterTarget } = {}) {
@@ -306,6 +311,35 @@ async function verifyBrowser(relativePath) {
     relativePath + ': modified area gesture must be intercepted'
   );
 
+  // Actual browser middle-button release emits auxclick, not click.
+  assert.deepEqual(
+    balanced.click('https://ads.al5sm.com/popup',
+      { target: '_self', button: 1, eventType: 'auxclick' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile native middle auxclick must be intercepted'
+  );
+  assert.deepEqual(
+    balanced.click('https://example.org/video',
+      { target: '_self', button: 1, eventType: 'auxclick' }),
+    [], relativePath + ': harmless middle auxclick must remain available'
+  );
+  assert.deepEqual(
+    strict.click('https://example.org/video',
+      { target: '_self', button: 1, eventType: 'auxclick' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': strict middle auxclick must block external navigation'
+  );
+  assert.deepEqual(
+    strict.click('/next',
+      { target: '_self', button: 1, eventType: 'auxclick' }),
+    [], relativePath + ': same-origin middle auxclick must remain available'
+  );
+  assert.deepEqual(
+    balanced.click('https://ads.al5sm.com/popup',
+      { target: '_blank', button: 2, eventType: 'auxclick' }),
+    [], relativePath + ': ordinary right-button auxclick must not be blocked'
+  );
+
   // Form submissions with target=_blank do not dispatch anchor click events.
   assert.deepEqual(
     balanced.submit('https://ads.al5sm.com/popup'),
@@ -362,6 +396,9 @@ async function verifyBrowser(relativePath) {
   assert.deepEqual(disabled.click({ baseVal: 'https://ads.al5sm.com/popup' },
     { target: { baseVal: '_blank' } }), [],
   relativePath + ': disabled guard must preserve SVG popup gestures');
+  assert.deepEqual(disabled.click('https://ads.al5sm.com/popup',
+    { button: 1, eventType: 'auxclick' }), [],
+  relativePath + ': disabled mode must preserve native middle click');
   assert.deepEqual(disabled.submit('https://ads.al5sm.com/popup'), [],
     relativePath + ': disabled extension must not intercept forms');
   assert.equal(disabled.events.length, 0);
