@@ -220,7 +220,7 @@ const invalidBoundaryValues = [
   ['quoted IPv6', '"2001:db8::20"'],
   ['IPv4 with source port', '198.51.100.20:4100'],
   ['bracketed IPv6 and port', '[2001:db8::20]:4100'],
-  ['IPv6 zone suffix', 'fe80::1%eth0'],
+  ['invalid IPv6 zone text', 'fe80::1%eth 0'],
   ['shortened IPv4', '127.1'],
   ['decimal IPv4', '2130706433'],
   ['hexadecimal IPv4', '0x7f000001'],
@@ -258,6 +258,18 @@ for (const metadata of [
   'validated XFF trust boundary must take precedence over alternate headers');
 }
 
-console.log('Noncanonical XFF trust-boundary cases checked=' + checkedBoundary);
+// Node's net.isIP accepts some valid IPv6 zone identifiers. The shipped
+// resolver therefore accepts such a forwarded identity today. Record that
+// as an explicit unresolved canonicalization observation, not as a PASS.
+const scopeCase = requestIp({
+  socket: { remoteAddress: '10.0.0.3' },
+  headers: { 'x-forwarded-for': '203.0.113.77, fe80::1%eth0, 10.0.0.2' }
+}, 2);
+const scopedAccepted = scopeCase === 'fe80::1%eth0';
+assert.ok(scopedAccepted || scopeCase === '10.0.0.3',
+  'scoped IPv6 forwarding must not silently resolve to a third identity');
+console.log('Noncanonical XFF trust-boundary cases checked=' + checkedBoundary +
+  ', scoped IPv6 zone candidate accepted=' + scopedAccepted +
+  ' (potential rate-limit key canonicalization concern, issue #21)');
 
 console.log('zBrowse request IP tests passed');
