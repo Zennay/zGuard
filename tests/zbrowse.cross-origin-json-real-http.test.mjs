@@ -5,6 +5,7 @@
 // establishes server-side authorization defense-in-depth, NOT preflight bypass.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
@@ -173,6 +174,53 @@ try {
   for (const [name, origin, fetchSite] of deceptiveOrigins) {
     deceptiveResults[name] = await post({ origin, fetchSite });
   }
+
+  // Fetch normalizes one Origin header; use real Node HTTP socket semantics
+  // to test **duplicated** Origin headers, which an intermediary could pass
+  // to Express as either the first value or a comma-joined value.
+  async function duplicateOriginPost(preserve = false) {
+    if (!preserve) {
+      sessions.clear();
+      sessionsByIp.clear();
+    }
+    const initialStarts = starts;
+    const initialReserves = reservations;
+    const body = JSON.stringify({ url: sites[0].url });
+    const result = await new Promise((resolve, reject) => {
+      const request = http.request({
+        hostname: peer, port: server.address().port, path: '/api/session',
+        method: 'POST',
+        headers: [
+          'Content-Type', 'application/json',
+          'Origin', publicTvOrigin,
+          'Origin', 'https://attacker.invalid',
+          'Sec-Fetch-Site', 'same-origin'
+        ]
+      }, response => {
+        const parts = [];
+        response.on('data', chunk => parts.push(chunk));
+        response.once('end', () => resolve({
+          status: response.statusCode,
+          body: Buffer.concat(parts).toString('utf8')
+        }));
+        response.once('error', reject);
+      });
+      request.setTimeout(4000, () => request.destroy(new Error('duplicate Origin fixture timeout')));
+      request.once('error', reject);
+      request.end(body);
+    });
+    return {
+      status: result.status,
+      started: starts - initialStarts,
+      reserved: reservations - initialReserves,
+      returnedBearer: /"token"\\s*:|"viewerUrl"\\s*:/.test(result.body)
+    };
+  }
+  deceptiveResults['duplicate-Origin-new'] = await duplicateOriginPost();
+  const duplicateSeed = await post({ origin: publicTvOrigin, fetchSite: 'same-origin' });
+  assert.equal(duplicateSeed.status, 201,
+    'reviewed Origin control must still establish a browser before duplicate reuse');
+  deceptiveResults['duplicate-Origin-reuse'] = await duplicateOriginPost(true);
 
   // Non-browser clients without browser metadata may legitimately be supported;
   // do not assert a product policy for these existing gateway consumers.
