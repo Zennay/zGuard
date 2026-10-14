@@ -55,7 +55,17 @@ const sandbox = {
         if (req.url.includes('/broken')) {
           throw new Error('synthetic failed upstream');
         }
-        if (req.headers['if-none-match'] === '"synthetic-viewer-resource"') {
+        if (req.url.includes('/login-redirect')) {
+          res.writeHead(302, {
+            ...headers, Location: '/s/' + token + '/login'
+          }).end();
+        } else if (req.url.includes('/auth-required')) {
+          res.writeHead(401, {
+            ...headers, 'WWW-Authenticate': 'Basic realm="synthetic-viewer"'
+          }).end('authorization required');
+        } else if (req.url.includes('/upstream-error')) {
+          res.writeHead(500, headers).end('synthetic upstream 500');
+        } else if (req.headers['if-none-match'] === '"synthetic-viewer-resource"') {
           res.writeHead(304, headers).end();
         } else if (req.headers.range === 'bytes=0-5') {
           res.writeHead(206, { ...headers, 'Content-Range': 'bytes 0-5/12' })
@@ -85,13 +95,15 @@ try {
   const endpoint = 'http://' + peer + ':' + server.address().port;
   async function request(label, method, url, headers = {}) {
     const res = await fetch(endpoint + url, {
-      method, headers, redirect: 'error', signal: AbortSignal.timeout(4000)
+      method, headers, redirect: 'manual', signal: AbortSignal.timeout(4000)
     });
     return {
       label, status: res.status, method, text: await res.text(),
       cache: res.headers.get('cache-control'),
       etag: res.headers.get('etag'),
-      range: res.headers.get('content-range')
+      range: res.headers.get('content-range'),
+      location: res.headers.get('location'),
+      challenge: res.headers.get('www-authenticate')
     };
   }
   const base = '/s/' + token + '/assets/screen.txt?quality=1';
@@ -138,6 +150,31 @@ try {
   assert.equal(unsatisfiable.status, 416);
   assert.equal(unsatisfiable.range, 'bytes */12');
 
+  // A bearer viewer's 302 Location, upstream authorization challenge and
+  // server-error response must remain uncached too, not just successful
+  // assets and conditional/range variants.
+  const redirect = await request('viewer redirect 302', 'GET',
+    '/s/' + token + '/login-redirect?continue=1');
+  cases.push(redirect);
+  assert.equal(redirect.status, 302,
+    'manual redirect must not follow the bearer-scoped Location');
+  assert.equal(new URL(redirect.location, endpoint).pathname,
+    '/s/' + token + '/login',
+    'synthetic redirect should preserve its bearer-scoped viewer target');
+
+  const challenge = await request('upstream auth 401', 'GET',
+    '/s/' + token + '/auth-required');
+  cases.push(challenge);
+  assert.equal(challenge.status, 401);
+  assert.equal(challenge.challenge, 'Basic realm="synthetic-viewer"',
+    'viewer auth challenge must pass through unchanged for real browser');
+
+  const upstream500 = await request('upstream status 500', 'GET',
+    '/s/' + token + '/upstream-error');
+  cases.push(upstream500);
+  assert.equal(upstream500.status, 500,
+    'upstream 500 must not be misclassified as a proxy transport failure');
+
   const rejected = await request('unknown token 403', 'GET',
     '/s/' + 'U'.repeat(32) + '/assets/screen.txt');
   cases.push(rejected);
@@ -154,8 +191,8 @@ try {
   assert.equal(failed.status, 502);
   assert.equal(failed.text, 'Browser connection interrupted.');
   assert.equal(errors, 1);
-  assert.equal(forwarded.length, 7,
-    'all six positive owner requests plus one failure must proxy, never denied tokens');
+  assert.equal(forwarded.length, 10,
+    'all nine owner responses plus one transport failure must proxy, never denied tokens');
   assert.equal(forwarded[0].url, base,
     'viewer proxy must preserve original bearer path/query');
 
@@ -167,7 +204,7 @@ try {
   const safe = cases.filter(row => cacheSafe(row.cache));
   if (strict) {
     assert.equal(safe.length, cases.length,
-      'all viewer 200/206/304/416/403/502 GET/HEAD responses must prohibit storage (issue #284)');
+      'all viewer 200/206/302/304/401/403/416/500/502 GET/HEAD responses must prohibit storage (issue #284)');
   }
   // Deliberately do not output the synthetic token, viewer URL or any
   // session metadata: the response status and aggregate suffice as evidence.
