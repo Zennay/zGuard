@@ -185,7 +185,19 @@ try {
     ['scheme-downgrade', 'Origin: http://zbrowse-tv.lizellay.chatgpt.site\r\n'],
     ['alternate-port', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site:8443\r\n'],
     ['dns-root-dot', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site.\r\n'],
-    ['forged-metadata', 'Origin: https://attacker.invalid\r\nSec-Fetch-Site: same-origin\r\n']
+    ['forged-metadata', 'Origin: https://attacker.invalid\r\nSec-Fetch-Site: same-origin\r\n'],
+    // A strict policy must reject ambiguous or contradictory handshakes,
+    // even when one part appears to name the audited TV origin.
+    ['duplicate-Origin', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\n' +
+      'Origin: https://attacker.invalid\r\n'],
+    ['comma-joined-Origin', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site, ' +
+      'https://attacker.invalid\r\n'],
+    ['empty-Origin', 'Origin: \r\n'],
+    ['trusted-Origin-cross-site-metadata',
+      'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\n' +
+      'Sec-Fetch-Site: cross-site\r\n'],
+    ['null-Origin-forged-metadata',
+      'Origin: null\r\nSec-Fetch-Site: same-origin\r\n']
   ];
   const disguised = [];
   for (const [name, headers] of disguisedOrigins) {
