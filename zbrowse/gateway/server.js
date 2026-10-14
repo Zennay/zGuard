@@ -110,7 +110,9 @@ async function stopContainer(container) {
   try {
     await container.stop({ t: 3 });
   } catch {
-    try { await container.remove({ force: true }); } catch {}
+    // The fallback must surface a failure: silently swallowing both Docker
+    // failures makes the gateway treat a still-running browser as removed.
+    await container.remove({ force: true });
   }
 }
 
@@ -182,9 +184,21 @@ async function createSession(ip, startUrl) {
 async function destroySession(token) {
   const session = sessions.get(token);
   if (!session) return;
-  sessions.delete(token);
-  if (sessionsByIp.get(session.ip) === token) sessionsByIp.delete(session.ip);
-  await stopContainer(session.container);
+  // Coalesce concurrent DELETE/idle/shutdown attempts for one container.
+  // Preserve both session capacity and owner until Docker confirms teardown.
+  if (session.destroyPromise) return session.destroyPromise;
+  session.destroyPromise = (async () => {
+    await stopContainer(session.container);
+    if (sessions.get(token) === session) sessions.delete(token);
+    if (sessionsByIp.get(session.ip) === token) sessionsByIp.delete(session.ip);
+  })();
+  try {
+    await session.destroyPromise;
+  } finally {
+    // On failure the quarantined slot remains tracked for later retry.
+    // Clearing only the attempt allows cleanup to retry a failed removal.
+    delete session.destroyPromise;
+  }
 }
 
 function findSession(req) {

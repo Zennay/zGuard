@@ -55,6 +55,9 @@ jobs:
           node tests/zbrowse.shutdown-admission-race-real-http.test.mjs
           node tests/zbrowse.inflight-shutdown-real-http.test.mjs
           node tests/zbrowse.failed-start-cleanup.test.mjs
+          # No orphaned active browser may vanish from in-memory capacity.
+          node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
+          node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
           if [ "$REQUIRE_FAIL_CLOSED" = "true" ]; then
             node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
             node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
