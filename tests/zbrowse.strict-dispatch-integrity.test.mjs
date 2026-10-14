@@ -145,8 +145,15 @@ function testWorkflow(name, gates, yaml) {
         name + ': strict CLI missing in gate ' + input);
       const sourcePath = path.join(root, 'tests', test);
       assert.ok(fs.statSync(sourcePath).isFile(), test + ': actual test must exist');
-      assert.ok(fs.readFileSync(sourcePath, 'utf8').includes(flag),
-        test + ': strict flag is not handled by the named test');
+      const testSource = fs.readFileSync(sourcePath, 'utf8');
+      // Chromium intentionally delegates its CLI options to a separate,
+      // validated parser; assert both its invocation and the exact flag map.
+      const delegatedBrowserFlag = test === 'zguard.chromium-real-browser.test.mjs' &&
+        testSource.includes('parseAcceptanceFlags(process.argv.slice(2))') &&
+        fs.readFileSync(path.join(root, 'tools/real-browser-flags.mjs'), 'utf8')
+          .includes("['" + flag + "',");
+      assert.ok(testSource.includes(flag) || delegatedBrowserFlag,
+        test + ': strict flag is not handled by the named test or reviewed CLI parser');
       executions++;
     }
   }
