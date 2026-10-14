@@ -39,12 +39,19 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without lifecycle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
       - name: Execute real session route handlers
         shell: bash
         run: |
           set -euo pipefail
           node tests/zbrowse.cache-privacy-cli.test.mjs
           node tests/zbrowse.session-cache-privacy.test.mjs
+          node tests/zbrowse.session-cache-real-http.test.mjs
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.session-cache-privacy.test.mjs --require-no-store
+            node tests/zbrowse.session-cache-real-http.test.mjs --require-no-store
           fi
