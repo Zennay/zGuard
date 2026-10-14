@@ -431,13 +431,45 @@ try {
   await sleep(150);
   assert.equal(deletions, 4, 'rejected heartbeat must not double-delete');
 
+  // Synthetic BFCache transition inside *real Chromium*: exercise the
+  // shipped pageshow handler without relying on browser-history heuristics.
+  // A previous pagehide already attempted DELETE, so restoring must clear
+  // the stale iframe/lease and retry teardown exactly once.
+  viewerResponseMode = 'valid';
+  const startsBeforeRestore = starts;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeRestore + 1, 'BFCache fixture browser start');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'BFCache synthetic session mounted');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'BFCache synthetic viewer loaded');
+  await evaluate('window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })); true');
+  await until(() => deletions === 5, 'BFCache pagehide keepalive release');
+  await evaluate('window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); true');
+  await until(() => deletions === 6, 'BFCache pageshow cleanup retry');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'BFCache resume must clear revoked bearer viewer');
+  assert.equal(await evaluate(
+    'state.session === null && state.heartbeat === null && state.countdown === null'
+  ), true, 'BFCache resume must discard old session-owned timers');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'),
+    true, 'BFCache restore must return to home');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'BFCache refresh must restore start admission');
+
   // Browser-native page navigation must trigger the shipped pagehide
   // keepalive DELETE rather than leaving a session alive until TTL. This
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 8, 'valid retry after rejected gateway lease');
-  assert.equal(deletions, 4, 'a pending fresh browser must not double-delete released sessions');
+  await until(() => starts === 9, 'valid retry after BFCache teardown');
+  assert.equal(deletions, 6, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -448,16 +480,16 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 5,
+  await until(() => deletions === 7,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 5, 'browser pagehide must release the final browser exactly once');
-  assert.equal(starts, 8, 'only explicitly requested browser attempts should be sent');
+  assert.equal(deletions, 7, 'browser pagehide must release the final browser exactly once');
+  assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, unsafe/expired viewer, heartbeat recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
