@@ -67,6 +67,23 @@ async function getJson(origin, route, fetcher) {
       '/api/health: server must declare Cache-Control: no-store');
     assert.equal(directives.includes('public'), false,
       '/api/health: must not allow public response caching');
+    // no-store on an origin response is necessary, but not enough to prove an
+    // intermediary did not actually replay a cached capacity observation.
+    const age = response.headers.get('age');
+    if (age !== null) {
+      assert.match(age, /^[0-9]+$/, '/api/health: malformed cache Age header');
+      assert.equal(BigInt(age), 0n,
+        '/api/health: cached Age must be zero for live browser capacity');
+    }
+    const cacheStatus = response.headers.get('cache-status') || '';
+    assert.doesNotMatch(cacheStatus, /(?:^|[;,])\s*hit(?:\s*[;,]|$)/i,
+      '/api/health: intermediary Cache-Status reports a cache hit');
+    const cloudflareStatus = response.headers.get('cf-cache-status') || '';
+    assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
+      '/api/health: intermediary CF-Cache-Status reports cached content');
+    const xCache = response.headers.get('x-cache') || '';
+    assert.doesNotMatch(xCache, /(?:^|[\s,])hit(?:$|[\s,])/i,
+      '/api/health: intermediary X-Cache reports a cache hit');
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
   // while drip-feeding bytes. Bound the decoded response, not just headers.
@@ -165,12 +182,13 @@ const sampleSites = {
 };
 
 function response(value, status = 200, contentType = 'application/json; charset=utf-8',
-  cacheControl = 'no-store') {
+  cacheControl = 'no-store', extraHeaders = {}) {
   return new Response(contentType.startsWith('application/json') ? JSON.stringify(value) : '<html>Offline</html>', {
     status,
     headers: {
       'content-type': contentType,
-      ...(cacheControl === null ? {} : { 'cache-control': cacheControl })
+      ...(cacheControl === null ? {} : { 'cache-control': cacheControl }),
+      ...extraHeaders
     }
   });
 }
@@ -271,6 +289,41 @@ async function selfTest() {
       ? response(sampleHealth, 200, 'application/json; charset=utf-8', 'private, No-Store')
       : response(sampleSites))).connected, true,
   'case-insensitive no-store with private directive must remain acceptable');
+
+  // A proxy/CDN may accidentally serve stale health even while forwarding
+  // Cache-Control: no-store. Reject explicit evidence that it already cached.
+  for (const [label, headers, expected] of [
+    ['positive Age', { age: '12' }, /cached Age must be zero/],
+    ['invalid Age', { age: 'NaN' }, /malformed cache Age header/],
+    ['standard Cache-Status hit', { 'cache-status': 'edge; hit; ttl=30' },
+      /Cache-Status reports a cache hit/],
+    ['CDN stale', { 'cf-cache-status': 'STALE' },
+      /CF-Cache-Status reports cached content/],
+    ['CDN hit', { 'cf-cache-status': 'HIT' },
+      /CF-Cache-Status reports cached content/],
+    ['intermediary hit', { 'x-cache': 'TCP_HIT, HIT' },
+      /X-Cache reports a cache hit/]
+  ]) {
+    let sitesRead = false;
+    await assert.rejects(checkPublicReadiness(async url => {
+      if (url.endsWith('/api/health')) {
+        return response(sampleHealth, 200, 'application/json; charset=utf-8',
+          'no-store', headers);
+      }
+      sitesRead = true;
+      return response(sampleSites);
+    }), expected, label + ': no cache evidence may be reported as live health');
+    assert.equal(sitesRead, false,
+      label + ': fail before the site catalogue on cached health');
+  }
+  assert.equal((await checkPublicReadiness(async url =>
+    url.endsWith('/api/health')
+      ? response(sampleHealth, 200, 'application/json; charset=utf-8', 'no-store', {
+        age: '0', 'cache-status': 'edge; fwd=miss',
+        'cf-cache-status': 'DYNAMIC', 'x-cache': 'MISS'
+      })
+      : response(sampleSites))).connected, true,
+  'uncached responses must remain accepted with ordinary cache diagnostics');
 
   await assert.rejects(checkPublicReadiness(async () => response({}, 503)), /HTTP 503/);
   for (const code of [201, 202, 206]) {
