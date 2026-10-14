@@ -2,6 +2,18 @@
 // Never creates browser sessions, requests /s/ tokens, or exports session state.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+
+// The API must represent the audited sites shipped with this exact checkout,
+// not just *any* HTTPS website claiming to be a curated entry.
+const reviewedSites = JSON.parse(fs.readFileSync(
+  new URL('../zbrowse/gateway/config/sites.json', import.meta.url), 'utf8'
+));
+assert.ok(Array.isArray(reviewedSites) && reviewedSites.length > 0,
+  'reviewed site catalogue must not be empty');
+const reviewedByUrl = new Map(reviewedSites.map((site) => [site.url, site.name]));
+assert.equal(reviewedByUrl.size, reviewedSites.length,
+  'reviewed catalogue may not contain duplicate URLs');
 
 const PUBLIC_ORIGIN = 'https://zbrowse-tv.lizellay.chatgpt.site/';
 
@@ -75,6 +87,20 @@ export async function checkPublicReadiness(fetcher = globalThis.fetch, rawOrigin
     assert.equal(target.username, '', 'curated site must not embed credentials');
     assert.equal(target.password, '', 'curated site must not embed credentials');
   }
+  // A static/mock JSON endpoint can report status ok while serving unrelated
+  // links. Require the same site identities as the checked-out gateway policy.
+  assert.equal(listed.sites.length, reviewedSites.length,
+    'public catalogue must match the reviewed site count');
+  const seenSiteUrls = new Set();
+  for (const site of listed.sites) {
+    assert.ok(reviewedByUrl.has(site.url),
+      'public catalogue contains an unreviewed site URL');
+    assert.equal(site.name, reviewedByUrl.get(site.url),
+      'public catalogue must preserve the reviewed site identity');
+    assert.equal(seenSiteUrls.has(site.url), false,
+      'public catalogue must not repeat a reviewed site');
+    seenSiteUrls.add(site.url);
+  }
 
   return {
     connected: true,
@@ -89,7 +115,7 @@ export async function checkPublicReadiness(fetcher = globalThis.fetch, rawOrigin
 
 const sampleHealth = { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 };
 const sampleSites = {
-  sites: [{ name: 'Reviewed', url: 'https://reviewed.example/watch' }],
+  sites: reviewedSites.map(({ name, url }) => ({ name, url })),
   maxSessionMinutes: 15
 };
 
@@ -142,6 +168,18 @@ async function selfTest() {
   await assert.rejects(checkPublicReadiness(async (url) =>
     url.endsWith('/api/health') ? response(sampleHealth) : response({ ...sampleSites, sites: [] })),
   /at least one entry/);
+  await assert.rejects(checkPublicReadiness(async (url) =>
+    url.endsWith('/api/health') ? response(sampleHealth) : response({
+      ...sampleSites, sites: [{ name: 'Unreviewed', url: 'https://outside.invalid/' }]
+    })), /unreviewed site URL/);
+  await assert.rejects(checkPublicReadiness(async (url) =>
+    url.endsWith('/api/health') ? response(sampleHealth) : response({
+      ...sampleSites, sites: [{ ...sampleSites.sites[0], name: 'Impersonated name' }]
+    })), /reviewed site identity/);
+  await assert.rejects(checkPublicReadiness(async (url) =>
+    url.endsWith('/api/health') ? response(sampleHealth) : response({
+      ...sampleSites, sites: [...sampleSites.sites, sampleSites.sites[0]]
+    })), /reviewed site count/);
   await assert.rejects(checkPublicReadiness(async () => { throw new Error('unreachable'); }), /unreachable/);
   await assert.rejects(checkPublicReadiness(healthy, 'http://127.0.0.1:8090/'),
     /reviewed public TV origin/);
