@@ -64,6 +64,41 @@ try {
     return result;
   };
 
+  // HTTP method confusion must not extend or destroy a bearer session.
+  // Run the shipped Express router over actual loopback HTTP on both lease
+  // and deletion URLs; even OPTIONS must not mutate the session or counters.
+  let rejectedMethodCount = 0;
+  for (const suffix of ['', '/heartbeat']) {
+    for (const method of ['GET', 'HEAD', 'PUT', 'PATCH', 'OPTIONS']) {
+      const response = await fetch('http://' + ip + ':' + server.address().port +
+        '/api/session/' + token + suffix, {
+        method, redirect: 'error', signal: AbortSignal.timeout(4000)
+      });
+      const body = await response.text();
+      if (method === 'OPTIONS') {
+        assert.equal(response.status, 200,
+          'Express should advertise supported methods without touching a session');
+      } else {
+        assert.equal(response.status, 404,
+          method + ' must not be mapped to a destructive token route');
+        rejectedMethodCount++;
+      }
+      if (method === 'HEAD') {
+        assert.equal(body, '', 'rejected HEAD must never return a body');
+      }
+      bearerPathResponses.push({ method, status: response.status,
+        cache: response.headers.get('cache-control') });
+      assert.equal(session.lastSeenAt, initialTime,
+        method + ' must not renew a session without POST /heartbeat');
+      assert.equal(destroys, 0,
+        method + ' must never tear down the browser without DELETE /:token');
+      assert.equal(sessions.get(token), session,
+        method + ' must keep the existing session intact');
+    }
+  }
+  assert.equal(rejectedMethodCount, 8,
+    'both bearer endpoints must reject all four unsupported HTTP methods');
+
   for (const method of ['POST', 'DELETE']) {
     const unknown = await request(method, 'X'.repeat(32));
     assert.equal(unknown.status, 404,
