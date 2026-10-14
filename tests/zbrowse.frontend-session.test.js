@@ -1009,6 +1009,63 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(leaseGone.element('formMessage').textContent, '',
     '410 must not look like an unresolved transport failure');
 
+  // HTTP status codes are not cleanup acknowledgments by themselves.
+  // A missing reverse-proxy route can return 404 HTML while the browser on
+  // the gateway is still running; trusting that status permits unsafe reuse.
+  for (const [label, untrustedReply] of [
+    ['proxy JSON 404', response({ error: 'Not Found' }, 404)],
+    ['proxy HTML 404', {
+      status: 404, ok: false,
+      json: async () => { throw new SyntaxError('not JSON'); }
+    }],
+    ['wrong error at 404', response({ error: 'Session expired.' }, 404)],
+    ['wrong error at 410', response({ error: 'Session not found.' }, 410)],
+    ['empty 410 response', response({}, 410)],
+    ['gateway text with server error', response({ error: 'Session not found.' }, 503)]
+  ]) {
+    let deleteCount = 0;
+    let startCount = 0;
+    const portal = await bootPortal({
+      sessionRequest: async () => {
+        startCount++;
+        return response(validSession);
+      },
+      deleteRequest: async () => {
+        deleteCount++;
+        return deleteCount === 1
+          ? untrustedReply
+          : response({ error: 'Session not found.' }, 404);
+      }
+    });
+    portal.submit();
+    await settle();
+    await portal.element('endButton').listeners.click();
+    await settle();
+    assert.equal(portal.element('browserFrame').src, 'about:blank',
+      label + ': uncertain browser must be unmounted');
+    assert.equal(portal.element('startButton').disabled, true,
+      label + ': untrusted status must not unlock session admission');
+    assert.match(portal.element('formMessage').textContent, /Retrying automatically/,
+      label + ': failed cleanup should expose retry guidance');
+    portal.submit();
+    await settle();
+    assert.equal(startCount, 1,
+      label + ': scripted form submission must not bypass uncertain teardown');
+    const healthPoll = [...portal.intervals.values()].find(({ milliseconds }) =>
+      milliseconds === 20000);
+    assert.ok(healthPoll, label + ': recovery requires periodic health poll');
+    healthPoll.callback();
+    await settle();
+    assert.equal(deleteCount, 2,
+      label + ': health retry must request independently confirmed teardown');
+    assert.equal(portal.element('startButton').disabled, false,
+      label + ': canonical gateway 404 can release the lock');
+    portal.submit();
+    await settle();
+    assert.equal(startCount, 2,
+      label + ': confirmed release restores admission');
+  }
+
   // A BFCache back-navigation may restore a page after its pagehide
   // keepalive DELETE. A restored viewer must not continue using that token,
   // and a retry DELETE is required if the unload request was lost.
