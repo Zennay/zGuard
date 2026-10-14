@@ -53,6 +53,42 @@ for (const replacement of [
 // Offline release probes are valuable during local validation, but a
 // production --live invocation must never be smuggled into validate.sh.
 // Verify the entire shell command, rather than matching only the script name.
+// The reviewed gateway security checks are mandatory offline release gates.
+// Especially for bearer-token routes, accidentally omitting a strict flag
+// would silently run observational tests instead of acceptance assertions.
+const strictSecurityCommands = [
+  'node ../tests/zbrowse.sites-config-safety.test.mjs',
+  'node ../tests/zbrowse.security-headers-contract.test.mjs',
+  'node ../tests/zbrowse.start-url-allowlist.test.mjs --require-credential-free',
+  'node ../tests/zbrowse.session-cache-privacy.test.mjs --require-no-store',
+  'node ../tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store'
+];
+function assertStrictSecurityCommands(script) {
+  const lines = script.split(/\r?\n/).map(line => line.trim());
+  for (const command of strictSecurityCommands) {
+    const filename = command.split(' ')[2];
+    const invocations = lines.filter(line =>
+      line.startsWith('node ' + filename));
+    assert.deepEqual(invocations, [command],
+      filename + ': require one strict, unmasked offline security command');
+  }
+}
+assertStrictSecurityCommands(validate);
+for (const original of strictSecurityCommands) {
+  for (const altered of [
+    '# ' + original,
+    original + ' || true',
+    original + '\n' + original,
+    original.replace(/ --require-(?:credential-free|no-store)$/, ''),
+    ''
+  ]) {
+    if (altered === original) continue;
+    assert.throws(() => assertStrictSecurityCommands(validate.replace(original, altered)),
+      /strict, unmasked offline security command/,
+      'a weak, skipped or duplicate strict gateway preflight must be rejected');
+  }
+}
+
 const offlineReleaseProbes = [
   'zbrowse.public-origin-readiness.test.mjs',
   'zbrowse.public-tv-static-release.test.mjs'
