@@ -1618,6 +1618,46 @@ try {
     ), label + ': completed genuine cleanup permits deliberate retry');
   }
 
+  // A valid heartbeat can shorten the hard session deadline. The shipped
+  // browser's one-second countdown must honor it without another 30-second
+  // heartbeat or a reload. Exercise real Chromium / localhost HTTP.
+  const startsBeforeShortLease = starts;
+  const deletesBeforeShortLease = deletions;
+  const beatsBeforeShortLease = heartbeats;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeShortLease + 1,
+    'shortened-lease acceptance must create one local browser');
+  assert.ok(releaseStart, 'shortened-lease start response must be controlled');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'shortened-lease browser must mount');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'shortened-lease viewer must fully load');
+  nextHeartbeatReply = {
+    status: 200,
+    body: { ok: true, expiresAt: Date.now() + 1900 }
+  };
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => heartbeats === beatsBeforeShortLease + 1,
+    'shorter lease must be acknowledged over local HTTP');
+  await until(async () => await evaluate(
+    'document.getElementById("timer").textContent.startsWith("00:0")'
+  ), 'real TV must display shorter lease countdown immediately');
+  await until(async () => await evaluate(
+    'document.getElementById("browserView").hidden && ' +
+    'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+  ), 'real one-second countdown must close shorter lease promptly', 140);
+  await until(() => deletions === deletesBeforeShortLease + 1,
+    'expired shortened browser must dispatch one session DELETE');
+  assert.equal(starts, startsBeforeShortLease + 1,
+    'countdown expiry cannot create a second browser');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'successful shortened-lease cleanup must restore manual Open');
+
   // Real Chromium must never render raw error JSON from a failed browser
   // POST. A reverse proxy might echo a bearer route or credentials into its
   // failure body; only intentionally reviewed status-based guidance is safe.
