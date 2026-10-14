@@ -134,17 +134,10 @@ for (const { filename, flag, workflow, input, env } of cases) {
     !line.trimStart().startsWith('#')).join('\n');
   assert.ok(yaml.includes(env + ': ' + '$' + '{{ inputs.' + input + " || 'false' }}"),
     filename + ': missing matching dispatch environment');
-  assert.ok(executable.includes('if [ "
+  assert.ok(executable.includes('if [ "$' + env + '" = "true" ]; then\n' +
     '            node tests/' + filename + ' ' + flag),
     filename + ': conditional must execute exact strict test CLI');
   assert.ok(executable.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
-    filename + ': routine hosted CI must run the negative CLI regression');
-}
-console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
- + env + '" = "true" ]; then\n' +
-    '            node tests/' + filename + ' ' + flag),
-    filename + ': conditional must execute exact strict test CLI');
-  assert.ok(yaml.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
     filename + ': routine hosted CI must run the negative CLI regression');
 }
 console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
