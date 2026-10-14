@@ -22,8 +22,6 @@ A pass reports only that the Docker-configured variables match the reviewed expe
 
 ## Portable no-VPS regression
 
-```sh
-node tests/zbrowse.selkies-effective-env.test.mjs
-```
+From the repository root, run the portable QA regression with `node tests/zbrowse.selkies-effective-env.test.mjs`.
 
 This exercises synthetic inspect documents, missing/relaxed settings, stopped/wrongly named containers, malformed input, oversize input, CLI misuse and secret-output regressions. A passing portable test is **not** live VPS proof.
