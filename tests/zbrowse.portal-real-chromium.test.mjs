@@ -99,7 +99,11 @@ const server = http.createServer(async (req, res) => {
         stalledSiteGets++;
         return;
       }
-      if (sitesMode === 'offline') {
+      if (sitesMode === 'oversized-stream') {
+        // Node sends chunked HTTP without Content-Length; Chrome must stop
+        // after 64KiB even when the JSON contains a plausible curated list.
+        sendJson(res, 200, { sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000) });
+      } else if (sitesMode === 'offline') {
         sendJson(res, 503, { error: 'Synthetic catalogue unavailable' });
       } else if (sitesMode === 'userinfo') {
         sendJson(res, 200, {
@@ -172,6 +176,13 @@ const server = http.createServer(async (req, res) => {
       if (health === 'hang-once') {
         health = 'ready';
         stalledHealthGets++;
+        return;
+      }
+      if (health === 'oversized-stream') {
+        sendJson(res, 200, {
+          status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1,
+          padding: 'x'.repeat(5000)
+        });
         return;
       }
       if (health === 'offline') {
@@ -470,6 +481,34 @@ try {
       return originalSetInterval(callback, delay, ...args);
     };
   })(); true`);
+
+  // End-to-end browser fetch over real chunked HTTP: a proxy can return
+  // a syntactically valid but oversized JSON 200 without Content-Length.
+  // This is the shipped TV's parser, not only the independent release probe.
+  health = 'oversized-stream';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline', 'oversized chunked health must fail closed in real Chromium');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized health cannot enable a new browser');
+  assert.equal(starts, 0, 'oversized health must never allocate a browser');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid gateway health should restore browsing after oversized HTTP');
+  sitesMode = 'oversized-stream';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized chunked catalogue must lock browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+    'oversized catalogue must not render any untrusted choices');
+  assert.equal(starts, 0, 'oversized catalogue may not create browsers');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'canonical bounded catalogue must restore browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'reviewed site suggestions return only after bounded JSON read');
 
   // Real Chromium/loopback GETs: misleading proxy 202/206 JSON may carry
   // superficially valid health or curated sites, but cannot unlock Open.
