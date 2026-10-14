@@ -13,6 +13,18 @@ function fixture(overrides = {}) {
     Id: 'a'.repeat(64),
     Name: '/zbrowse-abc123def456',
     State: { Running: true, Status: 'running' },
+    HostConfig: {
+      Privileged: false, NetworkMode: 'zbrowse_net', AutoRemove: true,
+      Memory: 2147483648, NanoCpus: 1000000000, PidsLimit: 350,
+      SecurityOpt: ['no-new-privileges:true'], CapAdd: [],
+      Binds: null, Mounts: null, Devices: [], DeviceRequests: [],
+      PortBindings: {}, Tmpfs: {
+        '/config': 'rw,noexec,nosuid,size=768m',
+        '/tmp': 'rw,noexec,nosuid,size=256m'
+      }
+    },
+    NetworkSettings: { Ports: {} },
+    Mounts: [],
     Config: {
       Labels: { 'zbrowse.managed': 'true' },
       Env: [
@@ -62,6 +74,69 @@ for (const [key] of REQUIRED) {
   const weak = run(relaxed);
   assert.equal(weak.status, 1, key + ': weakened setting must fail strict CLI');
   privateOutput(weak);
+}
+
+// An apparently hardened Selkies env may still sit inside an effectively
+// privileged, host-attached or unlimited container. Reject those false green
+// states on the actual CLI and never disclose inspect values in diagnostics.
+const containmentCases = [
+  ['privileged', { Privileged: true }, 'DOCKER_PRIVILEGED'],
+  ['host network', { NetworkMode: 'host' }, 'DOCKER_NETWORK'],
+  ['default bridge', { NetworkMode: 'bridge' }, 'DOCKER_NETWORK'],
+  ['container network reuse', { NetworkMode: 'container:another' }, 'DOCKER_NETWORK'],
+  ['persistent browser', { AutoRemove: false }, 'DOCKER_AUTO_REMOVE'],
+  ['unlimited memory', { Memory: 0 }, 'DOCKER_MEMORY_LIMIT'],
+  ['unlimited cpu', { NanoCpus: 0 }, 'DOCKER_CPU_LIMIT'],
+  ['unlimited pids', { PidsLimit: 0 }, 'DOCKER_PID_LIMIT'],
+  ['no privilege control', { SecurityOpt: [] }, 'DOCKER_SECURITY_OPT'],
+  ['unconfined seccomp', { SecurityOpt: ['no-new-privileges:true', 'seccomp=unconfined'] },
+    'DOCKER_SECURITY_OPT'],
+  ['added sysadmin', { CapAdd: ['SYS_ADMIN'] }, 'DOCKER_CAPABILITIES'],
+  ['host PID namespace', { PidMode: 'host' }, 'DOCKER_CAPABILITIES'],
+  ['host user namespace', { UsernsMode: 'host' }, 'DOCKER_CAPABILITIES'],
+  ['docker socket bind', { Binds: ['/var/run/docker.sock:/var/run/docker.sock'] },
+    'DOCKER_HOST_MOUNTS'],
+  ['host home mount', { Mounts: [{ Type: 'bind', Source: '/home', Target: '/home' }] },
+    'DOCKER_HOST_MOUNTS'],
+  ['device passthrough', { Devices: [{ PathOnHost: '/dev/kvm' }] }, 'DOCKER_DEVICES'],
+  ['device request', { DeviceRequests: [{ Driver: 'nvidia' }] }, 'DOCKER_DEVICES'],
+  ['published port', { PortBindings: { '3001/tcp': [{ HostPort: '3001' }] } },
+    'DOCKER_PUBLISHED_PORTS'],
+  ['writable executable config', { Tmpfs: {
+    '/config': 'rw,suid,exec,size=768m', '/tmp': 'rw,noexec,nosuid,size=256m'
+  } }, 'DOCKER_CONFIG_TMPFS'],
+  ['oversized config tmpfs', { Tmpfs: {
+    '/config': 'rw,noexec,nosuid,size=100g', '/tmp': 'rw,noexec,nosuid,size=256m'
+  } }, 'DOCKER_CONFIG_TMPFS'],
+  ['unrestricted temp filesystem', { Tmpfs: {
+    '/config': 'rw,noexec,nosuid,size=768m', '/tmp': 'rw,size=256m'
+  } }, 'DOCKER_TMP_TMPFS']
+];
+for (const [label, mutation, expected] of containmentCases) {
+  const changed = fixture();
+  Object.assign(changed[0].HostConfig, mutation);
+  const result = assessDockerInspect(changed);
+  assert.ok(result.gaps.includes(expected), label + ': source assessor must catch containment');
+  assert.equal(result.acceptable, false, label + ': unsafe container cannot pass');
+  const child = run(changed);
+  assert.equal(child.status, 1, label + ': real verifier CLI must fail closed');
+  assert.match(child.stderr, new RegExp(expected), label + ': report only reviewed gap name');
+  privateOutput(child);
+}
+for (const [label, mutated, expected] of [
+  ['host bind at effective level', { Mounts: [{ Type: 'bind',
+    Source: '/var/run/docker.sock', Destination: '/var/run/docker.sock' }] },
+  'DOCKER_EFFECTIVE_MOUNTS'],
+  ['published network setting', { NetworkSettings: {
+    Ports: { '3001/tcp': [{ HostIp: '0.0.0.0', HostPort: '3001' }] }
+  } }, 'DOCKER_PUBLISHED_PORTS']
+]) {
+  const changed = fixture();
+  Object.assign(changed[0], mutated);
+  assert.ok(assessDockerInspect(changed).gaps.includes(expected), label + ': reject bypass');
+  const child = run(changed);
+  assert.equal(child.status, 1, label + ': real CLI must reject bypass');
+  privateOutput(child);
 }
 
 const deprecated = fixture({ entries: ['SELKIES_ENABLE_FILE_TRANSFER=false'] });
