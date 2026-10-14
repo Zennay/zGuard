@@ -51,6 +51,10 @@ jobs:
           node tests/zbrowse.cross-origin-json-real-http.test.mjs
           # Enforce authorization before even a successful preflight/JSON body.
           node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
+          # Browser-simple cross-site POST encodings must NEVER create or reuse
+          # a browser. Treat the real-handler JSON-only boundary as mandatory,
+          # not an opt-in workflow_dispatch gate (security issue #342).
+          node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only
           if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then
             node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
           fi
