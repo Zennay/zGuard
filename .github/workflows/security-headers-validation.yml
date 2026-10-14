@@ -55,6 +55,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
 
       - name: Validate security header contract and real HTTP behavior
+        shell: bash
         run: |
           set -euo pipefail
           node tests/zbrowse.security-headers-contract.test.mjs
