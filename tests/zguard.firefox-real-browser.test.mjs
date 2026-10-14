@@ -33,6 +33,8 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'href="https://ads.al5sm.com/map" target="_blank" alt="Hostile hotspot"/>'
   +'<area id="imageMapOrdinary" shape="rect" coords="110,0,200,100" '
   +'href="/safe" target="_blank" alt="Ordinary hotspot"/></map>'
+  +'<iframe id="qaCrossOriginFrame" title="Cross-origin Firefox popup boundary" '
+  +'src="__QA_FRAME_URL__"></iframe>'
   +'<div id="shadowHost"></div>'
   +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0,'
   +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0,'
@@ -53,10 +55,24 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'root.appendChild(a);}'
   +'document.getElementById("hostileForm").addEventListener("submit",e=>{'
   +'window.qa.hostileSubmits++;e.preventDefault();});</script></body></html>';
+const frameFixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
+  +'<a id="frameHostile" href="https://ads.al5sm.com/iframe" target="_blank">Blocked frame link</a>'
+  +'<a id="frameOrdinary" href="/safe" target="_blank">Allowed frame link</a>'
+  +'<script>window.frameQA={hostile:0,ordinary:0};'
+  +'document.getElementById("frameHostile").addEventListener("click",e=>{'
+  +'window.frameQA.hostile++;e.preventDefault();});'
+  +'document.getElementById("frameOrdinary").addEventListener("click",e=>{'
+  +'window.frameQA.ordinary++;e.preventDefault();});</script></body></html>';
+const frameServer=http.createServer((_req,res)=>{
+  res.writeHead(200,{'content-type':'text/html; charset=utf-8',
+    'cache-control':'no-store','x-content-type-options':'nosniff'});
+  res.end(frameFixture);
+});
 const server=http.createServer((_req,res)=>{
   res.writeHead(200,{'content-type':'text/html; charset=utf-8',
     'cache-control':'no-store','x-content-type-options':'nosniff'});
-  res.end(fixture);
+  const frameUrl='http://127.0.0.1:'+frameServer.address().port+'/child';
+  res.end(fixture.replace('__QA_FRAME_URL__',frameUrl));
 });
 let driver=null,session=null,port=null,log='';
 async function wd(method,route,body,timeout=20000){
@@ -110,8 +126,13 @@ async function until(fn,description,tries=45){
 }
 try{
   await new Promise((resolve,reject)=>{
+    frameServer.once('error',reject);frameServer.listen(0,'127.0.0.1',resolve);
+  });
+  await new Promise((resolve,reject)=>{
     server.once('error',reject);server.listen(0,'127.0.0.1',resolve);
   });
+  assert.notEqual(frameServer.address().port,server.address().port,
+    'Framed browser fixture must be cross-origin, not same-port DOM');
   const origin='http://127.0.0.1:'+server.address().port+'/';
   const reserved=http.createServer();
   await new Promise(resolve=>reserved.listen(0,'127.0.0.1',resolve));
@@ -193,10 +214,27 @@ try{
     'Trusted Firefox Enter must still activate an ordinary link');
   assert.equal(afterKeyboard.hostileSubmits,beforeKeyboard.hostileSubmits,
     'Trusted Firefox Enter on submit button must not launch hostile form');
+  // The iframe is served from a *different loopback port*, so it cannot
+  // inherit top-level origin or JS globals. Switch real Firefox frame context.
+  const iframe=await wd('POST','/session/'+session+'/element',
+    {using:'css selector',value:'#qaCrossOriginFrame'});
+  assert.ok(iframe?.['element-6066-11e4-a52e-4f735466cecf'],
+    'Cross-origin iframe must be painted in the real browser');
+  await wd('POST','/session/'+session+'/frame',{id:iframe});
+  await until(()=>evaluate('return !!window.frameQA'),'cross-origin frame document');
+  const beforeFrame=JSON.parse(await evaluate('return JSON.stringify(window.frameQA)'));
+  await click('#frameHostile');
+  await click('#frameOrdinary');
+  const afterFrame=JSON.parse(await evaluate('return JSON.stringify(window.frameQA)'));
+  assert.equal(afterFrame.hostile,beforeFrame.hostile,
+    'Firefox all_frames content script must block cross-origin framed hostile link');
+  assert.equal(afterFrame.ordinary,beforeFrame.ordinary+1,
+    'Firefox all_frames content script must allow normal cross-origin frame link');
+  await wd('POST','/session/'+session+'/frame',{id:null});
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
   const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
-  console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map and trusted keyboard Enter form/link blocked; ordinary controls pass; one tab.');
+  console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map, keyboard and cross-origin iframe protected; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
@@ -204,4 +242,5 @@ try{
   if(session)try{await wd('DELETE','/session/'+session,undefined,8000);}catch(_){}
   if(driver){driver.kill('SIGTERM');await sleep(250);if(driver.exitCode===null)driver.kill('SIGKILL');}
   await new Promise(resolve=>server.close(resolve));
+  await new Promise(resolve=>frameServer.close(resolve));
 }
