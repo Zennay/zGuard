@@ -239,10 +239,33 @@ try {
   await sleep(150);
   assert.equal(deletions, 1, 'repeated end must not double release');
   assert.equal(starts, 1, 'real TV UI must not accidentally allocate additional browsers');
+
+  // Browser-native page navigation must trigger the shipped pagehide
+  // keepalive DELETE rather than leaving a session alive until TTL. This
+  // validates genuine Chromium unload networking, not a VM-simulated event.
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === 2, 'second local browser session allocation');
+  assert.equal(deletions, 1, 'a pending fresh browser must not double-delete the old one');
+  assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'second browser mounted before top-level navigation');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'second local viewer completes iframe load');
+  await cdp('Page.navigate', { url: 'about:blank' });
+  await until(() => deletions === 2,
+    'real Chromium pagehide sends keepalive session release after navigation');
+  await sleep(150);
+  assert.equal(deletions, 2, 'browser pagehide must release the second browser exactly once');
+  assert.equal(starts, 2, 'one request per intentionally started browser');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
-    'recovery, reviewed sites, one guarded start, authenticated local iframe,' +
-    ' completed load, one teardown and no duplicate allocation');
+    'recovery, reviewed sites, guarded starts, authenticated local iframe,' +
+    ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
+    ' no duplicate allocation/release');
 } finally {
   releaseStart?.();
   socket?.close();
@@ -252,6 +275,12 @@ try {
     const stop = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 3000);
     child.once('exit', () => { clearTimeout(stop); resolve(); });
   });
-  fs.rmSync(profile, { recursive: true, force: true });
+  // Chrome's helper processes may flush profile files after its parent exits.
+  // A bounded ENOTEMPTY/EBUSY retry avoids false-negative CI after every UI
+  // assertion has already passed, without leaving a persistent test profile.
+  await sleep(200);
+  fs.rmSync(profile, {
+    recursive: true, force: true, maxRetries: 15, retryDelay: 150
+  });
   await new Promise(resolve => server.close(resolve));
 }
