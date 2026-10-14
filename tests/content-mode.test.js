@@ -207,6 +207,49 @@ async function verifyBrowser(relativePath) {
       relativePath + ': strict click handler must enforce the same origin boundary');
   }
 
+  // SVG links expose SVGAnimatedString.href/target with baseVal rather than
+  // HTMLAnchorElement strings. Preserve hostile, strict, ordinary, relative
+  // same-origin and disabled-mode semantics across Chrome, Firefox and zBrowse.
+  const animated = (baseVal) => ({ baseVal });
+  assert.deepEqual(
+    balanced.click(animated('https://ads.al5sm.com/popup'),
+      { target: animated('_blank') }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile inline SVG target=_blank must be intercepted'
+  );
+  assert.equal(balanced.events.at(-1)?.detail?.url, 'https://ads.al5sm.com/popup',
+    relativePath + ': blocked SVG telemetry must carry the normalized URL');
+  assert.deepEqual(
+    balanced.click(animated('https://example.org/watch'),
+      { target: animated('_blank') }),
+    [], relativePath + ': ordinary SVG link stays allowed in balanced mode'
+  );
+  assert.deepEqual(
+    strict.click(animated('https://example.org/watch'),
+      { target: animated('_blank') }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': strict mode intercepts arbitrary external SVG popup'
+  );
+  assert.deepEqual(
+    strict.click(animated('/next'), { target: animated('_blank') }),
+    [], relativePath + ': same-origin relative SVG popup remains allowed'
+  );
+  assert.deepEqual(
+    balanced.click(animated('https://ads.al5sm.com/popup'),
+      { target: animated('_self') }),
+    [], relativePath + ': ordinary same-tab SVG links retain navigation'
+  );
+  assert.deepEqual(
+    balanced.click(animated('https://ads.al5sm.com/popup'),
+      { target: animated('_self'), ctrlKey: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': modified hostile SVG click is still a popup gesture'
+  );
+  assert.deepEqual(
+    strict.click(animated(''), { target: animated('_blank') }),
+    [], relativePath + ': empty SVG href must never throw'
+  );
+
   const disabled = await loadContentScript(relativePath, 'strict', false);
   assert.notEqual(
     disabled.open('https://ads.al5sm.com/popup'),
@@ -219,6 +262,9 @@ async function verifyBrowser(relativePath) {
     relativePath + ': disabled mode must not filter DNS-root-dot hosts'
   );
   assert.deepEqual(disabled.click('https://ads.al5sm.com/popup'), []);
+  assert.deepEqual(disabled.click({ baseVal: 'https://ads.al5sm.com/popup' },
+    { target: { baseVal: '_blank' } }), [],
+  relativePath + ': disabled guard must preserve SVG popup gestures');
   assert.equal(disabled.events.length, 0);
 }
 

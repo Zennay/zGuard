@@ -24,6 +24,15 @@
     return mode === 'strict';
   }
 
+  // SVG <a> exposes SVGAnimatedString instead of the HTML anchor strings.
+  // Normalize only known DOM string forms, never String([object SVGAnimatedString]).
+  function linkValue(anchor, name) {
+    const value = anchor[name];
+    if (typeof value === 'string') return value;
+    if (value && typeof value.baseVal === 'string') return value.baseVal;
+    return '';
+  }
+
   api.storage.local.get(DEFAULTS).then(({ enabled, mode }) => {
     if (!enabled) return;
     const originalOpen = window.open;
@@ -36,12 +45,15 @@
     };
     document.addEventListener('click', (event) => {
       const anchor = event.target && event.target.closest ? event.target.closest('a') : null;
-      if (!anchor || !anchor.href) return;
-      const newTab = anchor.target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
-      if (!newTab || !shouldBlock(anchor.href, mode)) return;
+      if (!anchor) return;
+      const href = linkValue(anchor, 'href');
+      const target = linkValue(anchor, 'target');
+      if (!href) return;
+      const newTab = target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
+      if (!newTab || !shouldBlock(href, mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      send('external-link', { url: anchor.href, mode });
+      send('external-link', { url: href, mode });
     }, true);
   });
 })();

@@ -90,7 +90,8 @@ jobs:
           set -euo pipefail
           "$CHROMIUM_BIN" --version
           node tests/zguard.browser-flag-contract.test.mjs
-          node tests/zguard.chromium-real-browser.test.mjs
+          # SVG popup interception is now a required real-browser security gate.
+          node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
           fi
