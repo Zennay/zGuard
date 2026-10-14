@@ -13,6 +13,10 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zbrowse-trusted-host-origin-qa.yml', [
+    ['require_canonical_host', 'REQUIRE_CANONICAL_HOST',
+      [['zbrowse.host-origin-isolation-real-http.test.mjs', '--require-canonical-host']]]
+  ]],
   ['zbrowse-disconnected-session-start.yml', [
     ['require_disconnect_reconciliation', 'REQUIRE_DISCONNECT_RECONCILIATION',
       [['zbrowse.disconnected-session-start-real-http.test.mjs',
