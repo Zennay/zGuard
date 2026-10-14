@@ -62,6 +62,7 @@ let rejectHeartbeat = false;
 let hangNextHeartbeat = false;
 let hungHeartbeatCalls = 0;
 let deleteAlreadyGone = false;
+let nextDeleteProxyError = null;
 let releaseStart = null;
 let startRequestSeen = false;
 
@@ -178,6 +179,21 @@ const server = http.createServer(async (req, res) => {
         // No HTTP status or response body reaches the browser.
         droppedDeleteAttemptsRemaining--;
         res.socket.destroy();
+        return;
+      }
+      if (nextDeleteProxyError) {
+        // Mimic an ingress route failure: this HTTP reply proves nothing
+        // about whether the gateway's actual browser is still running.
+        const mode = nextDeleteProxyError;
+        nextDeleteProxyError = null;
+        if (mode === 'html-404') {
+          res.writeHead(404, { 'content-type': 'text/html' })
+            .end('<!doctype html><title>Proxy route missing</title>');
+        } else if (mode === 'json-410') {
+          sendJson(res, 410, { error: 'Reverse proxy route gone' });
+        } else {
+          throw new Error('Unknown synthetic proxy error');
+        }
         return;
       }
       if (failNextDelete) {
@@ -1001,6 +1017,49 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'previous successful teardown must finish before transport-drop fixture');
+
+  // A proxy/router can return HTTP 404 HTML or unrelated JSON 410 while
+  // a gateway browser is still alive. Exercise actual Chromium fetch + HTTP
+  // on loopback, not a mocked Promise. Only a later gateway-confirmed DELETE
+  // can restore Open after these untrusted statuses.
+  for (const mode of ['html-404', 'json-410']) {
+    const startBefore = starts;
+    const deleteBefore = deletions;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startBefore + 1,
+      mode + ': browser must be started over real localhost HTTP');
+    assert.ok(releaseStart, mode + ': fixture must hold the local start');
+    releaseStart();
+    releaseStart = null;
+    await until(async () => await evaluate(
+      '!document.getElementById("browserView").hidden'
+    ), mode + ': browser viewer must mount before teardown');
+    nextDeleteProxyError = mode;
+    await evaluate('document.getElementById("endButton").click(); true');
+    await until(() => deletions === deleteBefore + 1,
+      mode + ': actual DELETE reaches local proxy-error fixture');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+    ), mode + ': untrusted response must show pending release');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      mode + ': viewer must unmount despite uncertain release');
+    assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+      'about:blank', mode + ': bearer iframe must be discarded');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+      mode + ': generic proxy status must not unlock Open');
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await sleep(100);
+    assert.equal(starts, startBefore + 1,
+      mode + ': no second gateway browser while cleanup is unconfirmed');
+    await evaluate('refreshHealth(); true');
+    await until(() => deletions === deleteBefore + 2,
+      mode + ': normal health poll must retry DELETE after proxy error');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), mode + ': successful actual HTTP retry restores Open');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+      mode + ': confirmed cleanup clears warning');
+  }
 
   // The browser should also fail closed if the connection is cut *without*
   // any HTTP error response at all. This exercises a genuine broken TCP
