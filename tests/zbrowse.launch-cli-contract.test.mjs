@@ -60,9 +60,9 @@ function run(launcher, startUrl) {
     'shipped kiosk shell must execute without bypassing command shims: ' +
     (child.stderr || '').slice(0, 400));
   assert.ok(fs.existsSync(capture), 'Chromium launch must reach the shim');
-  assert.equal(fs.readFileSync(browserCalls, 'utf8'), 'call\\n',
+  assert.equal(fs.readFileSync(browserCalls, 'utf8'), 'call\n',
     'the actual shell may launch Chromium exactly once');
-  assert.equal(fs.readFileSync(mkdirCalls, 'utf8'), 'call\\n',
+  assert.equal(fs.readFileSync(mkdirCalls, 'utf8'), 'call\n',
     'the shell may prepare directories exactly once');
   const args = fs.readFileSync(capture, 'utf8').trimEnd().split('\n');
   const mkdirArgs = fs.readFileSync(mkdirCapture, 'utf8').trimEnd().split('\n');
@@ -138,7 +138,12 @@ try {
       '--user-data-dir=/tmp/unsafe'],
     ['early URL launch', '"$start_url"', '"https://unknown.invalid/" "$start_url"'],
     ['unsafe extra debug socket', '--disable-background-networking',
-      '--remote-debugging-port=9222 --disable-background-networking']
+      '--remote-debugging-port=9222 --disable-background-networking'],
+    ['hidden early browser launch', 'exec chromium \\',
+      'chromium "https://unknown.invalid/"\nexec chromium \\'],
+    ['repeated directory preparation',
+      'mkdir -p /config/chromium /config/downloads /config/tmp',
+      'mkdir -p /config/chromium /config/downloads /config/tmp\nmkdir -p /config/chromium /config/downloads /config/tmp']
   ]) {
     assert.ok(shipped.includes(before), label + ': fixture anchor must exist');
     const mutated = shipped.replace(before, after);
@@ -152,7 +157,7 @@ try {
     mutations++;
   }
   console.log('kiosk command-line cold-start contract passed: 3 genuine shell ' +
-    'launches, 6 rejected real-shell mutations; actual MV3 timing remains #302');
+    'launches, 8 rejected real-shell mutations; actual MV3 timing remains #302');
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
 }
