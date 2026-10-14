@@ -1271,6 +1271,46 @@ try {
   assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
     sites.length, 'restored real browser must show every curated site');
 
+  // Real browser acceptance of the TV URL gate: input type=url alone
+  // cannot reject credential-bearing HTTPS or a deceptive reviewed-origin
+  // prefix, and scripts can bypass native form validity entirely.
+  const beforeRejectedManualStarts = starts;
+  const invalidManualInputs = [
+    ['credentials', 'https://viewer:password@fawesome.tv/watch'],
+    ['encoded-credentials', 'https://us%65r@fawesome.tv/watch'],
+    ['deceptive authority', 'https://fawesome.tv@outside.invalid/watch'],
+    ['lookalike suffix', 'https://fawesome.tv.outside.invalid/watch'],
+    ['non-HTTPS', 'http://fawesome.tv/watch']
+  ];
+  for (const [label, url] of invalidManualInputs) {
+    await evaluate(`(() => {
+      const input = document.getElementById('urlInput');
+      input.value = ${JSON.stringify(url)};
+      return document.getElementById('browserForm').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+    })()`);
+    assert.equal(await evaluate(
+      'document.getElementById("formMessage").textContent.includes("approved HTTPS website without credentials")'),
+      true, label + ': real Chrome must show reviewed URL admission feedback');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+      label + ': rejected manual URL must not lock legitimate future navigation');
+    await sleep(75);
+    assert.equal(starts, beforeRejectedManualStarts,
+      label + ': real browser must not POST an unreviewed or credential-bearing start URL');
+  }
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+    'rejected manual URLs must never mount an authenticated viewer');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'rejected manual URL must not restore a bearer-bearing iframe');
+  await evaluate(`(() => {
+    const input = document.getElementById('urlInput');
+    input.value = ${JSON.stringify(approvedStart)};
+    return true;
+  })()`);
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'real browser still accepts its reviewed input after invalid attempts');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
