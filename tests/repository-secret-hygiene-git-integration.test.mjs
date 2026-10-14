@@ -198,10 +198,38 @@ try {
   // disposable Git index and disk without emitting the unsafe pathname.
   git('rm', '-f', '-q', '--', unsafeRelative);
 
+  // Git commits record the staged index version, which may differ from
+  // the checkout on disk. This is a real staged-secret bypass if the scanner
+  // only reads fs.readFileSync() for each tracked file.
+  const cleanBinary = Buffer.from([0, 255, 128, 10, 0, 40]);
+  writeAndTrack(Buffer.from(first, 'ascii'));
+  fs.writeFileSync(repoFile, cleanBinary);
+  const stagedLeak = runScanner();
+  assert.equal(stagedLeak.status, 1,
+    'staged credential must fail even after worktree was replaced by safe bytes');
+  assert.ok(stagedLeak.stderr.includes('fixtures/blob.bin (staged index)') &&
+    stagedLeak.stderr.includes('OpenAI-style secret'),
+    'rejection must identify the Git index source and secret family');
+  assert.ok(!(stagedLeak.stdout + stagedLeak.stderr).includes(first),
+    'staged credential value must never appear in scanner logs');
+
+  // Also keep protecting the inverse: an unstaged secret in the checkout
+  // must not be overlooked because the corresponding index blob is clean.
+  writeAndTrack(cleanBinary);
+  fs.writeFileSync(repoFile, Buffer.from(first, 'ascii'));
+  const worktreeLeak = runScanner();
+  assert.equal(worktreeLeak.status, 1,
+    'unstaged worktree credential must fail despite a safe staged index blob');
+  assert.ok(worktreeLeak.stderr.includes('fixtures/blob.bin') &&
+    worktreeLeak.stderr.includes('OpenAI-style secret'),
+    'worktree rejection must retain path and signature evidence');
+  assert.ok(!(worktreeLeak.stdout + worktreeLeak.stderr).includes(first),
+    'unstaged credential value must never appear in scanner logs');
+
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
-    'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, benign public headers, and recovery');
+    'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, divergent staged/worktree credential checks, benign public headers, and recovery');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
