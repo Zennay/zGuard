@@ -19,7 +19,12 @@ const additionalSourceBoundWorkflows = [
   '.github/workflows/browser-image-integrity-validation.yml',
   '.github/workflows/zguard-local-resource-integrity.yml',
   '.github/workflows/image-build-hygiene-validation.yml',
-  '.github/workflows/zbrowse-autostart-contract.yml'
+  '.github/workflows/zbrowse-autostart-contract.yml',
+  '.github/workflows/gateway-containment-validation.yml',
+  '.github/workflows/gateway-node-runtime-compatibility.yml',
+  '.github/workflows/gateway-package-policy-validation.yml',
+  '.github/workflows/workflow-pr-runner-boundary.yml',
+  '.github/workflows/workflow-runner-availability.yml'
 ];
 const prHeadContractWorkflows = new Set([
   ...requiredChecks, ...additionalSourceBoundWorkflows
