@@ -14,13 +14,13 @@ const workflow = fs.readFileSync(
   'utf8'
 );
 const cmd = 'node tests/repository-secret-hygiene-git-integration.test.mjs';
-assert.ok(workflow.includes('node tests/repository-secret-hygiene.test.mjs\\n' +
+assert.ok(workflow.includes('node tests/repository-secret-hygiene.test.mjs\n' +
   '      - name: Verify tracked binary scanning end-to-end') &&
   workflow.includes(cmd),
   'required secret workflow must run real tracked-binary integration after its scanner');
-assert.match(workflow, /^  pull_request:\\s*$/m,
+assert.match(workflow, /^  pull_request:\s*$/m,
   'real binary integration must execute on PRs');
-assert.match(workflow, /^  push:\\s*\\n    branches:\\s*\\n      - main\\s*$/m,
+assert.match(workflow, /^  push:\s*\n    branches:\s*\n      - main\s*$/m,
   'real binary integration must execute on every main push');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'secret-hygiene-git-'));
@@ -40,7 +40,7 @@ function runScanner() {
 function writeAndTrack(bytes) {
   fs.writeFileSync(repoFile, bytes);
   git('add', '--', 'fixtures/blob.bin');
-  const paths = git('ls-files', '-z').split('\\0').filter(Boolean);
+  const paths = git('ls-files', '-z').split('\0').filter(Boolean);
   assert.ok(paths.includes('fixtures/blob.bin'),
     'the bytes must be in the actual Git index before scanning');
 }
@@ -68,7 +68,7 @@ try {
   fs.mkdirSync(path.join(tmp, 'fixtures'), { recursive: true });
   fs.mkdirSync(path.join(tmp, 'zbrowse'), { recursive: true });
   fs.copyFileSync(sourceFile, scannerCopy);
-  fs.writeFileSync(path.join(tmp, 'zbrowse', '.env.example'), 'PORT=8090\\n');
+  fs.writeFileSync(path.join(tmp, 'zbrowse', '.env.example'), 'PORT=8090\n');
   git('init', '-q');
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   git('add', '--', 'tests/repository-secret-hygiene.test.mjs', 'zbrowse/.env.example');
