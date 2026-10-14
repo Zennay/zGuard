@@ -462,6 +462,36 @@ try{
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
   assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
     new Set(balancedHandles),'Closing the allowed popup must restore original two tabs');
+  // Follow the strict-mode eventless form.submit() rejection with a live
+  // strict -> balanced mode transition in this *same already-open Firefox tab*.
+  // In balanced mode an ordinary distinct-origin form.submit() must survive.
+  // Assert a real new tab and loaded target, not merely a DOM click handler.
+  const balancedFormBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await click('#programmaticCrossForm');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'balanced native cross-origin form.submit() must open a real tab',60);
+  const balancedFormAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedFormAfter.programmaticCross,balancedFormBefore.programmaticCross+1,
+    'Trusted native click must execute balanced page-authored form.submit()');
+  assert.equal(balancedFormAfter.programmaticSubmitEvents,0,
+    'Balanced programmatic form.submit() must remain an eventless bypass fixture');
+  const withBalancedForm=await wd('GET','/session/'+session+'/window/handles');
+  const balancedFormTab=withBalancedForm.find(h=>!balancedHandles.includes(h));
+  assert.ok(balancedFormTab,
+    'Ordinary balanced programmatic form must create its own native Firefox tab');
+  await wd('POST','/session/'+session+'/window',{handle:balancedFormTab});
+  await until(async()=>
+    new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'balanced cross-origin form.submit() target must load',50);
+  assert.equal(new URL(await wd('GET','/session/'+session+'/url')).origin,
+    'http://127.0.0.1:'+frameServer.address().port,
+    'The allowed balanced form destination must be a distinct loopback origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),
+    'Closing balanced programmatic form tab must restore original Firefox handles');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -473,6 +503,7 @@ try{
   console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
   console.log('Native Firefox form submitter overrides PASS: hostile overrides blocked, harmless overrides allowed, trusted click and Enter.');
   console.log('Firefox programmatic form fallback PASS: permitted local form.submit opens real tab; strict foreign target leaves none; no submit event.');
+  console.log('Firefox balanced form.submit PASS: separate-origin eventless form opens and loads native tab, cleans up after strict-mode rejection.');
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
