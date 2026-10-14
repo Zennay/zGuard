@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
 
 const PUBLIC_ORIGIN = 'https://zbrowse-tv.lizellay.chatgpt.site/';
 const reviewedAssets = [
@@ -157,6 +158,20 @@ async function realTcpStaticReleaseAcceptance() {
         res.end();
         return;
       }
+      if (active.mode?.startsWith('compressed-')) {
+        const source = Buffer.from(asset.bytes);
+        if (active.mode === 'compressed-tampered') source[0] ^= 1;
+        const isBrotli = active.algorithm === 'br';
+        const compressed = isBrotli ? brotliCompressSync(source) : gzipSync(source);
+        res.writeHead(200, {
+          'content-type': asset.mediaTypes[0],
+          'content-encoding': isBrotli ? 'br' : 'gzip',
+          'content-length': String(compressed.length),
+          'cache-control': 'no-store'
+        });
+        res.end(compressed);
+        return;
+      }
       res.once('close', () => { active.closed = true; });
       res.writeHead(active.status, {
         'content-type': active.contentType,
@@ -237,6 +252,34 @@ async function realTcpStaticReleaseAcceptance() {
       assert.equal(active.closed, true,
         route + ': timed-out HTTP response must close the real connection');
     }
+    // Production CDNs commonly gzip or Brotli assets. HTTP Content-Length
+    // describes compressed *wire* bytes, while the audited hash must be
+    // computed over the decoded HTML/JS/CSS. Exercise actual Node fetch
+    // decompression over TCP rather than a fake in-memory Response.
+    for (const algorithm of ['gzip', 'br']) {
+      for (const route of ['/', '/app.js', '/styles.css']) {
+        scenario = { route, mode: 'compressed-valid', algorithm };
+        const unchanged = await verifyPublicStaticRelease(localFetch);
+        assert.deepEqual(unchanged.map(item => item.route),
+          ['/', '/app.js', '/styles.css'],
+          algorithm + ' ' + route + ': compressed audited release must remain valid');
+      }
+    }
+    // Same media type, same uncompressed byte count, and legitimate gzip
+    // framing cannot hide tampered JS that fails the checked-out SHA256.
+    scenario = {
+      route: '/app.js', mode: 'compressed-tampered', algorithm: 'gzip'
+    };
+    await assert.rejects(verifyPublicStaticRelease(localFetch),
+      /hash differs from reviewed checkout/,
+      'gzip must not make modified JavaScript look like the reviewed release');
+    scenario = {
+      route: '/styles.css', mode: 'compressed-tampered', algorithm: 'br'
+    };
+    await assert.rejects(verifyPublicStaticRelease(localFetch),
+      /hash differs from reviewed checkout/,
+      'Brotli must not make modified CSS look like the reviewed release');
+
     scenario = { route: '/', mode: 'redirect', closed: false };
     await assert.rejects(verifyPublicStaticRelease(localFetch),
       /fetch failed|redirect/i, 'HTTP redirect must never certify the wrong public static identity');
