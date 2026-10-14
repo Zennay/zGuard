@@ -248,6 +248,18 @@ window.addEventListener("pagehide", () => {
   }
 });
 
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  // A BFCache restore brings back JavaScript and iframe state from before
+  // pagehide, but pagehide already attempted to destroy that browser token.
+  // Never resurrect a possibly revoked bearer iframe or its heartbeat timer.
+  if (state.session) {
+    endSession(); // retry DELETE if unload's keepalive send was lost
+  } else {
+    refreshHealth();
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !browserView.hidden && !document.fullscreenElement) {
     $("endButton").focus();

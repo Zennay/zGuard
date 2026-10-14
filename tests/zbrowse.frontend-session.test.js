@@ -120,6 +120,11 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
       assert.equal(typeof callback, 'function', 'portal must register pagehide cleanup');
       callback();
     },
+    pageshow(persisted = true) {
+      const callback = windowEvents.get('pageshow');
+      assert.equal(typeof callback, 'function', 'portal must register BFCache recovery');
+      callback({ persisted });
+    },
     submit() {
       const listener = element('browserForm').listeners.submit;
       assert.equal(typeof listener, 'function', 'real portal must install form submit listener');
@@ -355,6 +360,50 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     manual.requests.filter(({ url, options }) =>
       url === '/api/session/' + validToken && options.method === 'DELETE').length,
     1, 'repeated End and later pagehide must not double-release the same session'
+  );
+
+  // A BFCache back-navigation may restore a page after its pagehide
+  // keepalive DELETE. A restored viewer must not continue using that token,
+  // and a retry DELETE is required if the unload request was lost.
+  const restored = await bootPortal({ sessionRequest: async () => response(validSession) });
+  restored.submit();
+  await settle();
+  assert.equal(restored.element('browserView').hidden, false);
+  restored.pageshow(false);
+  await settle();
+  assert.equal(
+    restored.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    0, 'ordinary initial pageshow must never end a working session'
+  );
+  restored.pagehide();
+  await settle();
+  assert.equal(
+    restored.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    1, 'pagehide must dispatch first capacity release'
+  );
+  restored.pageshow(true);
+  await settle();
+  assert.equal(restored.element('browserFrame').src, 'about:blank',
+    'BFCache restore must immediately discard stale bearer viewer');
+  assert.equal(restored.element('browserView').hidden, true,
+    'restored page must return to browser start form');
+  assert.equal(restored.element('homeView').hidden, false);
+  assert.deepEqual(
+    [...restored.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'BFCache restore must clear the old heartbeat and countdown');
+  assert.equal(
+    restored.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    2, 'BFCache restore should retry teardown if pagehide keepalive was lost'
+  );
+  restored.pagehide();
+  await settle();
+  assert.equal(
+    restored.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+    2, 'subsequent pagehide must not release a discarded BFCache session again'
   );
 
   // A lost heartbeat must invalidate the portal session. The viewer cannot
