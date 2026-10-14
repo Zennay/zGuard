@@ -28,9 +28,15 @@ async function request(url, options = {}) {
     // A proxy/router HTML 404 (or an arbitrary 410) does not prove that a
     // browser container was destroyed. Only the gateway's documented JSON
     // not-found contract may clear an uncertain session release.
-    error.confirmedSessionGone =
+    // A proxy may serve a lookalike JSON body as plain text or HTML.
+    // Only the gateway's declared JSON response is a trustworthy
+    // application-level not-found acknowledgement.
+    const contentType = response.headers?.get?.("content-type") || "";
+    const gatewayJson = /^application\/json(?:\s*;|$)/i.test(contentType);
+    error.confirmedSessionGone = gatewayJson && (
       (response.status === 404 && body?.error === "Session not found.") ||
-      (response.status === 410 && body?.error === "Session expired.");
+      (response.status === 410 && body?.error === "Session expired.")
+    );
     throw error;
   }
   return body;

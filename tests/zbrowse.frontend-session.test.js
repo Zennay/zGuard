@@ -18,10 +18,11 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function response(body, status = 200) {
+function response(body, status = 200, contentType = 'application/json; charset=utf-8') {
   return {
     status,
     ok: status >= 200 && status < 300,
+    headers: { get: (name) => name.toLowerCase() === 'content-type' ? contentType : null },
     json: async () => body
   };
 }
@@ -1018,6 +1019,9 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       status: 404, ok: false,
       json: async () => { throw new SyntaxError('not JSON'); }
     }],
+    ['wrong media type', response({ error: 'Session not found.' }, 404, 'text/html')],
+    ['missing media type', response({ error: 'Session not found.' }, 404, null)],
+    ['unreviewed JSON variant', response({ error: 'Session not found.' }, 404, 'application/problem+json')],
     ['wrong error at 404', response({ error: 'Session expired.' }, 404)],
     ['wrong error at 410', response({ error: 'Session not found.' }, 410)],
     ['empty 410 response', response({}, 410)],
