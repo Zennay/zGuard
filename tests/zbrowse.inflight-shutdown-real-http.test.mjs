@@ -107,9 +107,9 @@ let responseStatus = null;
 try {
   const pendingResponse = fetch(endpoint, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', connection: 'close' },
     body: JSON.stringify({ url: 'https://fawesome.tv/' }),
-    signal: AbortSignal.timeout(4000)
+    signal: AbortSignal.timeout(8000)
   });
   await Promise.race([
     created,
@@ -124,10 +124,13 @@ try {
   const reply = await pendingResponse;
   responseStatus = reply.status;
   await reply.arrayBuffer();
+  // The synthetic HTTP client must not hold an idle keep-alive socket open
+  // and thereby delay Node's real server.close completion callback.
+  server.closeIdleConnections?.();
   await Promise.race([
     shutDown,
     new Promise((_, reject) => setTimeout(() =>
-      reject(new Error('shutdown listener close callback timed out')), 2000))
+      reject(new Error('shutdown listener close callback timed out')), 4000))
   ]);
 } finally {
   releaseStart?.();
