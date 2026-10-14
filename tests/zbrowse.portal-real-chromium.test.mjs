@@ -37,6 +37,7 @@ let notifyHeldDelete = null;
 let viewerRequests = 0;
 let heartbeats = 0;
 let rejectHeartbeat = false;
+let deleteAlreadyGone = false;
 let releaseStart = null;
 let startRequestSeen = false;
 
@@ -129,6 +130,11 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 503, { error: 'Synthetic teardown failure' });
         return;
       }
+      if (deleteAlreadyGone) {
+        deleteAlreadyGone = false;
+        sendJson(res, 404, { error: 'Session not found.' });
+        return;
+      }
       res.writeHead(204, { 'cache-control': 'no-store' }).end();
       return;
     }
@@ -136,6 +142,9 @@ const server = http.createServer(async (req, res) => {
         pathname === '/api/session/' + syntheticToken + '/heartbeat') {
       heartbeats++;
       if (rejectHeartbeat) {
+        // Shipped gateway rejects DELETE with 404 after lease expiry.
+        // A second DELETE cannot make an already expired token more dead.
+        deleteAlreadyGone = true;
         sendJson(res, 410, { error: 'Synthetic session expired.' });
       } else {
         sendJson(res, 200, { ok: true, expiresAt: Date.now() + 900_000 });
@@ -589,6 +598,13 @@ try {
   rejectHeartbeat = false;
   await sleep(150);
   assert.equal(deletions, 4, 'rejected heartbeat must not double-delete');
+  assert.equal(deleteAlreadyGone, false,
+    '410 heartbeat should be followed by exactly one already-gone DELETE');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'HTTP 404 on expired-lease DELETE must not permanently lock Open');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'),
+    '', 'already-expired session should not show a failed-cleanup warning');
 
   // Synthetic BFCache transition inside *real Chromium*: exercise the
   // shipped pageshow handler without relying on browser-history heuristics.
@@ -803,7 +819,7 @@ try {
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, heartbeat recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, heartbeat 410/DELETE 404 recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
