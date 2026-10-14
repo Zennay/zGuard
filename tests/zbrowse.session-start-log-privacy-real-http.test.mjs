@@ -66,6 +66,12 @@ const sandbox = {
       throw new Error('synthetic container setup failed Env PASSWORD=' +
         password + ' zbrowse.token=' + token);
     }
+    if (createCalls === 2) {
+      // A terminal escape and Unicode line-separator sequence can forge a
+      // diagnostic line without literal CRLF in a Docker error message.
+      throw new Error('synthetic startup failure\u001b[2J\u001b[H[OK] spoofed readiness\u2028' +
+        ' Env PASSWORD=' + password);
+    }
     const fixture = {
       token, ip, expiresAt: Date.now() + 900_000, lastSeenAt: Date.now()
     };
@@ -109,27 +115,42 @@ try {
   assert.equal(releases, 1, 'failure must release reserved browser capacity');
   assert.equal(sessions.size, 0, 'failure must never publish synthetic session');
 
+  const secondFailure = await submit(sites[0].url);
+  assert.equal(secondFailure.status, 500,
+    'terminal-control Docker exception must retain bounded HTTP failure');
+  assert.equal(JSON.parse(secondFailure.text).error, 'The browser could not be started.',
+    'terminal-control diagnostics must never reach the HTTP client');
+  assert.doesNotMatch(secondFailure.text, /spoofed|PASSWORD|synthetic/i,
+    'untrusted terminal-control error must not reach the browser');
+  assert.equal(createCalls, 2);
+  assert.equal(reservations, 2);
+  assert.equal(releases, 2, 'second startup failure must also release capacity');
+  assert.equal(sessions.size, 0,
+    'second startup error must not expose an unauthorized browser session');
+
   const recovered = await submit(sites[0].url);
-  assert.equal(recovered.status, 201, 'valid browser creation must recover after failed attempt');
+  assert.equal(recovered.status, 201, 'valid browser creation must recover after repeated failures');
   const payload = JSON.parse(recovered.text);
   assert.equal(payload.token, token, 'successful bearer delivery must remain functional');
   assert.equal(payload.viewerUrl, '/s/' + token + '/');
   const reused = await submit(sites[0].url);
   assert.equal(reused.status, 200, 'existing session must be reused after recovery');
   assert.equal(JSON.parse(reused.text).token, token);
-  assert.equal(createCalls, 2, 'reused HTTP session must not start another browser');
+  assert.equal(createCalls, 3, 'reused HTTP session must not start another browser');
   assert.equal(reservations, releases, 'every attempted browser start must release capacity');
 
-  assert.equal(logs.length, 1, 'one upstream Docker exception must be logged');
+  assert.equal(logs.length, 2, 'both synthetic Docker exceptions must produce diagnostics');
   assert.ok(logs[0].includes('Session creation failed'),
     'safe generic diagnostic label must be preserved');
-  const leaking = logs.filter(line => line.includes(token) || line.includes(password));
+  const leaking = logs.filter(line =>
+    line.includes(token) || line.includes(password) ||
+    /[\r\n\x1b\u2028\u2029]/.test(line));
   if (strict) {
     assert.equal(leaking.length, 0,
       'startup failure logger must not print Docker error payload containing session bearer/credentials');
   }
   console.log('Shipped real HTTP browser-start failure diagnostics: ' +
-    logs.length + ' synthetic Docker error, privacy-safe logs=' +
+    logs.length + ' synthetic Docker errors, privacy-safe logs=' +
     (logs.length - leaking.length) + '/' + logs.length +
     '; strict proof: --require-redacted-start-errors');
 } finally {
