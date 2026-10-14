@@ -127,12 +127,17 @@ const server = http.createServer(async (req, res) => {
           { name: 'Video\u202Efake.invalid', url: sites[0].url }
         ], maxSessionMinutes: 15 });
       } else if (['c1-label', 'arabic-mark-label', 'rtl-mark-label',
-        'paragraph-separator-label'].includes(sitesMode)) {
+        'paragraph-separator-label', 'zero-width-label', 'soft-hyphen-label',
+        'word-joiner-label', 'bom-label'].includes(sitesMode)) {
         const mark = {
           'c1-label': '\u0085',
           'arabic-mark-label': '\u061c',
           'rtl-mark-label': '\u200f',
-          'paragraph-separator-label': '\u2029'
+          'paragraph-separator-label': '\u2029',
+          'zero-width-label': '\u200b',
+          'soft-hyphen-label': '\u00ad',
+          'word-joiner-label': '\u2060',
+          'bom-label': '\ufeff'
         }[sitesMode];
         sendJson(res, 200, { sites: [
           { name: 'Video' + mark + 'spoofed.invalid', url: sites[0].url }
@@ -1477,7 +1482,8 @@ try {
   const beforeCatalogueProbes = starts;
   for (const mode of ['offline', 'userinfo', 'empty',
     'many', 'long-name', 'long-url', 'bidi-name',
-    'c1-label', 'arabic-mark-label', 'rtl-mark-label', 'paragraph-separator-label']) {
+    'c1-label', 'arabic-mark-label', 'rtl-mark-label', 'paragraph-separator-label',
+    'zero-width-label', 'soft-hyphen-label', 'word-joiner-label', 'bom-label']) {
     sitesMode = mode;
     await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
     await until(async () => await evaluate(
