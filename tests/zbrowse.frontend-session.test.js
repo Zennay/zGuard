@@ -279,10 +279,10 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       { name: 'Long URL', url: 'https://approved.test/' + 'x'.repeat(2050) }
     ] })],
     ['control character name', () => response({ sites: [
-      { name: 'Safe\\nFake', url: 'https://approved.test/' }
+      { name: 'Safe\nFake', url: 'https://approved.test/' }
     ] })],
     ['directional override in name', () => response({ sites: [
-      { name: 'Video\\u202Eevil.test', url: 'https://approved.test/' }
+      { name: 'Video\u202Eevil.test', url: 'https://approved.test/' }
     ] })]
   ];
   for (const [label, siteRequest] of catalogueFailures) {
