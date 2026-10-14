@@ -520,11 +520,17 @@ document.addEventListener("keydown", (event) => {
 });
 
 function reviewedSiteCatalogue(data) {
-  if (!Array.isArray(data?.sites) || data.sites.length === 0) return false;
+  // A proxy must not be able to inflate a short curated list into thousands
+  // of DOM option nodes or use control/bidi characters to mislabel choices.
+  // Bounds are applied before constructing suggestions or normalizing URLs.
+  if (!Array.isArray(data?.sites) || data.sites.length === 0 ||
+      data.sites.length > 32) return false;
   const urls = new Set();
   return data.sites.every((site) => {
     if (!site || typeof site.name !== "string" || !site.name.trim() ||
-        typeof site.url !== "string") return false;
+        site.name.length > 96 ||
+        /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(site.name) ||
+        typeof site.url !== "string" || site.url.length > 2048) return false;
     try {
       const url = new URL(site.url);
       if (url.protocol !== "https:" || url.username || url.password ||
