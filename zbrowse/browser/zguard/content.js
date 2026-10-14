@@ -65,6 +65,21 @@
       if (validSetting(name, stored[name])) liveSettings[name] = stored[name];
     }
   }
+  // One-way, capability-free bridge to the separate MAIN-world script.
+  // Only public boolean/mode values cross the page boundary. Never accept
+  // page events as commands or forward them to privileged extension APIs.
+  function announcePagePolicy() {
+    try {
+      document.dispatchEvent(new CustomEvent('zguard:policy-v1', {
+        detail: JSON.stringify({
+          enabled: liveSettings.enabled, mode: liveSettings.mode
+        })
+      }));
+    } catch (_) {
+      // The page can be unloading or the DOM environment may be unavailable.
+    }
+  }
+
   try {
     api.storage.onChanged?.addListener?.((changes, namespace) => {
       if (namespace !== 'local' || !changes || typeof changes !== 'object') return;
@@ -75,6 +90,7 @@
         changedDuringHydration.add(name);
         liveSettings[name] = value;
       }
+      announcePagePolicy();
     });
   } catch (_) {
     // A disabled extension context may lose its storage event API.
@@ -92,6 +108,7 @@
 
   currentSettings().then((stored) => {
     applyStoredSettings(stored);
+    announcePagePolicy();
 
     const originalOpen = window.open;
     window.open = function zGuardWindowOpen(url, target, features) {
