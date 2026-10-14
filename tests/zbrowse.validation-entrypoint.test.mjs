@@ -66,7 +66,7 @@ const strictSecurityCommands = [
 function assertStrictSecurityCommands(script) {
   const lines = script.split(/\r?\n/).map(line => line.trim());
   for (const command of strictSecurityCommands) {
-    const filename = command.split(' ')[2];
+    const filename = command.split(' ')[1];
     const invocations = lines.filter(line =>
       line.startsWith('node ' + filename));
     assert.deepEqual(invocations, [command],
