@@ -60,7 +60,22 @@ async function cancelQuietly(cancel) {
   }
 }
 
+// Some fetch implementations resolve headers before a body that then stalls.
+// Race each stream read against the same overall fetch signal; relying only
+// on fetch() to propagate abort into an already-created reader can hang.
+function readWithSignal(reader, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let abort;
+  const aborted = new Promise((_, reject) => {
+    abort = () => reject(signal.reason || new Error('Readiness deadline exceeded'));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  return Promise.race([reader.read(), aborted]).finally(() =>
+    signal.removeEventListener('abort', abort));
+}
+
 async function getJson(origin, route, fetcher) {
+  const timeoutSignal = AbortSignal.timeout(7000);
   const url = new URL(route, origin);
   assert.equal(url.origin, origin.origin, 'readiness must never leave the public origin');
   // No redirects: a static hosting redirect must not be mistaken for a real
@@ -72,7 +87,7 @@ async function getJson(origin, route, fetcher) {
     referrerPolicy: 'no-referrer',
     cache: 'no-store',
     headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(7000)
+    signal: timeoutSignal
   });
   // Even a refused HTTP status, HTML fallback or cached capacity snapshot
   // may have a still-open response stream: stop it before failing readiness.
@@ -145,7 +160,7 @@ async function getJson(origin, route, fetcher) {
   let received = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithSignal(reader, timeoutSignal);
       if (done) break;
       received += value.byteLength;
       if (received > maximumBytes) {
@@ -160,7 +175,9 @@ async function getJson(origin, route, fetcher) {
     await cancelQuietly(() => reader.cancel());
     throw error;
   } finally {
-    reader.releaseLock();
+    // A signal can win the race while reader.read() is still outstanding.
+    // Releasing its lock is best-effort and must not mask the abort reason.
+    try { reader.releaseLock(); } catch { /* Pending read is being cancelled. */ }
   }
   let data;
   try {
