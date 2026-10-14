@@ -96,8 +96,10 @@ await probe(source);
 
 let mutations = 0;
 for (const [label, original, weakened] of [
-  ['Express fingerprint', 'app.disable("x-powered-by");',
-    'app.enable("x-powered-by");'],
+  // Helmet also strips X-Powered-By itself; toggling app.disable alone is
+  // not a sufficient negative mutation. Inject an actual later header leak.
+  ['Express fingerprint', 'app.use(express.json(',
+    'app.use((_req, res, next) => { res.set("X-Powered-By", "Express"); next(); });\\napp.use(express.json('],
   ['CSP inline scripts', 'scriptSrc: ["\'self\'"]',
     'scriptSrc: ["\'unsafe-inline\'"]'],
   ['CSP foreign frames', 'frameSrc: ["\'self\'"]',
