@@ -23,6 +23,12 @@ const required = [
     "for (const stage of ['parser', 'domContentLoaded', 'load'])"],
   ['record blocked and cancelled at each stage',
     "gesture?.blocked !== true || gesture?.cancelled !== true"],
+  ['parser-time ordinary link exists before page scripts',
+    'id="ordinaryStartup"'],
+  ['every stage proves safe link is operable and fixture-cancelled',
+    'gesture?.ordinaryAllowed !== true || gesture?.ordinaryCancelled !== true'],
+  ['safe link navigation is intentionally cancelled locally',
+    "ordinaryAnchor.addEventListener('click', cancelOrdinaryNavigation"],
   ['latch the first observed top-frame result',
     'firstObservedTopFrameProtected === null'],
   ['reject an initially unprotected top frame',
@@ -36,6 +42,12 @@ function verify(sourceText) {
     assert.ok(sourceText.includes(needle),
       label + ': cold-start release evidence is missing or weakened');
   }
+  // A parser-time safe control has to exist before the first inline
+  // script dispatches the event. A late fixture anchor would make every
+  // ordinary-control result fail for harness reasons, not extension behavior.
+  assert.ok(sourceText.indexOf('id="ordinaryStartup"') <
+    sourceText.indexOf('<script>'),
+    'ordinary startup control must precede parser-stage script');
   // Failure aggregation must run after the browser loop; no mid-loop reset
   // may turn a previously observed unsafe startup into a green final result.
   const errorStore = sourceText.indexOf('const coldStartFailures = [];');
@@ -57,6 +69,9 @@ for (const [label, oldValue, replacement] of [
   ['no parser-stage observation',
     "['parser', 'domContentLoaded', 'load']",
     "['domContentLoaded', 'load']"],
+  ['drop safe-link positive control',
+    'gesture?.ordinaryAllowed !== true || gesture?.ordinaryCancelled !== true',
+    'false'],
   ['ignore first observed unprotected frame',
     'observed.firstObservedTopFrameProtected !== true',
     'false'],
