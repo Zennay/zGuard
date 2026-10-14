@@ -33,6 +33,18 @@ function requireCount(value, name, minimum = 0) {
   );
 }
 
+// Cache-Status is a Structured Fields member list. An intermediary can
+// report a hit as a bare flag, hit=?1, or another truthy/unknown value.
+// Only an explicit false marker is not evidence of cached health.
+function reportsCacheHit(value) {
+  return value.split(/[;,]/).some(part => {
+    const match = /^hit(?:\s*=\s*(.*))?$/i.exec(part.trim());
+    if (!match) return false;
+    return match[1] === undefined ||
+      !['?0', '0', 'false'].includes(match[1].trim().toLowerCase());
+  });
+}
+
 async function getJson(origin, route, fetcher) {
   const url = new URL(route, origin);
   assert.equal(url.origin, origin.origin, 'readiness must never leave the public origin');
@@ -76,13 +88,15 @@ async function getJson(origin, route, fetcher) {
         '/api/health: cached Age must be zero for live browser capacity');
     }
     const cacheStatus = response.headers.get('cache-status') || '';
-    assert.doesNotMatch(cacheStatus, /(?:^|[;,])\s*hit(?:\s*[;,]|$)/i,
+    assert.equal(reportsCacheHit(cacheStatus), false,
       '/api/health: intermediary Cache-Status reports a cache hit');
     const cloudflareStatus = response.headers.get('cf-cache-status') || '';
     assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
       '/api/health: intermediary CF-Cache-Status reports cached content');
     const xCache = response.headers.get('x-cache') || '';
-    assert.doesNotMatch(xCache, /(?:^|[\s,])hit(?:$|[\s,])/i,
+    // Vendor markers include TCP_HIT, RefreshHit and HIT; matching only
+    // whitespace-delimited "HIT" misses common cached responses.
+    assert.doesNotMatch(xCache, /hit/i,
       '/api/health: intermediary X-Cache reports a cache hit');
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
@@ -297,11 +311,21 @@ async function selfTest() {
     ['invalid Age', { age: 'NaN' }, /malformed cache Age header/],
     ['standard Cache-Status hit', { 'cache-status': 'edge; hit; ttl=30' },
       /Cache-Status reports a cache hit/],
+    ['Cache-Status boolean hit', { 'cache-status': 'edge; hit=?1; ttl=30' },
+      /Cache-Status reports a cache hit/],
+    ['Cache-Status truthy hit assignment', { 'cache-status': 'edge; hit=true' },
+      /Cache-Status reports a cache hit/],
+    ['Cache-Status ambiguous hit assignment', { 'cache-status': 'edge; hit=unknown' },
+      /Cache-Status reports a cache hit/],
     ['CDN stale', { 'cf-cache-status': 'STALE' },
       /CF-Cache-Status reports cached content/],
     ['CDN hit', { 'cf-cache-status': 'HIT' },
       /CF-Cache-Status reports cached content/],
     ['intermediary hit', { 'x-cache': 'TCP_HIT, HIT' },
+      /X-Cache reports a cache hit/],
+    ['intermediary standalone TCP_HIT', { 'x-cache': 'TCP_HIT' },
+      /X-Cache reports a cache hit/],
+    ['intermediary refresh-hit marker', { 'x-cache': 'RefreshHit' },
       /X-Cache reports a cache hit/]
   ]) {
     let sitesRead = false;
@@ -319,7 +343,7 @@ async function selfTest() {
   assert.equal((await checkPublicReadiness(async url =>
     url.endsWith('/api/health')
       ? response(sampleHealth, 200, 'application/json; charset=utf-8', 'no-store', {
-        age: '0', 'cache-status': 'edge; fwd=miss',
+        age: '0', 'cache-status': 'edge; hit=?0; fwd=miss',
         'cf-cache-status': 'DYNAMIC', 'x-cache': 'MISS'
       })
       : response(sampleSites))).connected, true,
