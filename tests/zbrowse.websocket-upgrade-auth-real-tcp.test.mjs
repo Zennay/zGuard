@@ -117,6 +117,27 @@ try {
     'short bearer tokens may not authenticate WebSocket upgrades');
   assert.equal(seen.length, 1);
 
+  // Strictly extract the complete bearer segment from the raw upgrade path:
+  // neither a valid token *prefix* nor URL encoding may authorize a socket.
+  // These are real TCP handshakes, not a synthetic request URL matcher.
+  const malformedPaths = [
+    ['token suffix', '/s/' + token + 'x/websockify'],
+    ['missing separator', '/s/' + token + '?screen=1'],
+    ['split token', '/s/' + token.slice(0, 16) + '/' + token.slice(16) + '/websockify'],
+    ['encoded route', '/%73/' + token + '/websockify'],
+    ['encoded bearer', '/s/%57' + token.slice(1) + '/websockify'],
+    ['path case', '/S/' + token + '/websockify'],
+    ['duplicate prefix', '/s/s/' + token + '/websockify'],
+    ['unrelated endpoint', '/api/session/' + token + '/websockify']
+  ];
+  for (const [label, url] of malformedPaths) {
+    const denied = await open(url);
+    assert.doesNotMatch(denied, /^HTTP\\/1\\.1 101/m,
+      label + ': malformed/unreviewed bearer path must never upgrade');
+    assert.equal(seen.length, 1,
+      label + ': denied upgrade must not even invoke the browser proxy');
+  }
+
   session.expired = true;
   const expired = await open('/s/' + token + '/websockify');
   assert.doesNotMatch(expired, /^HTTP\/1\.1 101/m,
