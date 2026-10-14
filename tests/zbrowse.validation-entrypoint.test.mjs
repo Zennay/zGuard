@@ -23,10 +23,31 @@ const requiredPortableChecks = [
   'zbrowse.repository-hygiene.test.js',
 ];
 
-for (const test of requiredPortableChecks) {
-  const command = `node ../tests/${test}`;
-  const matches = validate.split(command).length - 1;
-  assert.equal(matches, 1, `validate.sh must execute ${test} exactly once`);
+// Substring matches can incorrectly count comments, disabled commands or
+// a test whose failure is masked by '|| true' as executed validation.
+// Require one canonical, unmasked shell line for each portable regression.
+function assertPortableChecks(script) {
+  const lines = script.split(/\r?\n/).map(line => line.trim());
+  for (const test of requiredPortableChecks) {
+    const command = `node ../tests/${test}`;
+    const invocations = lines.filter(line => line.startsWith(command));
+    assert.deepEqual(invocations, [command],
+      `validate.sh must execute ${test} exactly once without masking failures`);
+  }
+}
+assertPortableChecks(validate);
+const mutationTarget = 'node ../tests/zbrowse.request-ip.test.mjs';
+for (const replacement of [
+  '# ' + mutationTarget,
+  mutationTarget + ' || true',
+  mutationTarget + ' >/dev/null 2>&1 || :',
+  mutationTarget + ' # disabled',
+  mutationTarget + '\n' + mutationTarget,
+  ''
+]) {
+  assert.throws(() => assertPortableChecks(validate.replace(mutationTarget, replacement)),
+    /without masking failures/,
+    'a disabled, duplicated or failure-masked portable check must fail validation');
 }
 
 // Offline release probes are valuable during local validation, but a
