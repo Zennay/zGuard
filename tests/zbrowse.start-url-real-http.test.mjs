@@ -103,24 +103,47 @@ try {
     ['encoded-user', 'https://us%65r@' + authority + '/watch'],
     ['encoded-password', 'https://user:%70ass@' + authority + '/watch'],
     ['encoded-at-in-user', 'https://user%40attacker.invalid@' + authority + '/watch'],
-    ['multiple-at', 'https://user@attacker.invalid@' + authority + '/watch']
+    ['multiple-at', 'https://user@attacker.invalid@' + authority + '/watch'],
+    ['encoded-colon-user', 'https://u%3Aser:pass@' + authority + '/watch'],
+    ['encoded-slash-password', 'https://user:pa%2Fss@' + authority + '/watch'],
+    ['encoded-null-user', 'https://%00user:pass@' + authority + '/watch']
   ];
   const failures = [];
   for (const [label, candidate] of credentialCases) {
     const outcome = await postStartUrl(candidate);
     if (outcome.status !== 400 || outcome.newStarts !== 0) failures.push(label);
   }
+  // Each userinfo encoding must also be rejected when a valid session
+  // already exists for the same peer. The current fast path runs before
+  // URL validation; otherwise one bad URL can recover a live bearer 200.
+  const active = await postStartUrl(sites[0].url);
+  assert.deepEqual(active, { status: 201, newStarts: 1 },
+    'fixture must establish a single existing session for reuse checks');
+  const ownerBefore = sessionsByIp.get(ip);
+  const reusedFailures = [];
+  for (const [label, candidate] of credentialCases) {
+    const outcome = await postStartUrl(candidate, true);
+    if (outcome.status !== 400 || outcome.newStarts !== 0) {
+      reusedFailures.push(label);
+    }
+    assert.equal(sessionsByIp.get(ip), ownerBefore,
+      'malformed reuse must never replace the current browser owner');
+    assert.equal(sessions.size, 1, 'credential-bearing reuse must not allocate a second browser');
+  }
   assert.equal(releases, starts, 'every synthetic browser admission must release reservation');
   if (strict) {
     assert.equal(reusedDenied, true,
       'existing-session fast path must not return token-bearing HTTP 200 for credential URLs (issue #266)');
+    assert.deepEqual(reusedFailures, [],
+      'existing-session fast path must reject every encoded userinfo form before returning a bearer');
     assert.deepEqual(failures, [],
       'real HTTP start URL guard accepts embedded userinfo (issue #266): ' + failures.join(', '));
     console.log('Real HTTP credential-free start URL acceptance PASS');
   } else {
     console.log('Shipped HTTP start URL guard validates reviewed origin/lookalikes; ' +
       'userinfo cases accepted=' + failures.length + '/' + credentialCases.length +
-      ', existing-session credential reuse rejected=' + reusedDenied +
+      ', existing-session credential reuse denied=' +
+      (credentialCases.length - reusedFailures.length) + '/' + credentialCases.length +
       ' (strict gate requires --require-credential-free; issue #266 remains open)');
   }
 } finally {
