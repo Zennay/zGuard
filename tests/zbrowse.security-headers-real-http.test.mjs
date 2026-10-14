@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { gzipSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
@@ -39,6 +40,10 @@ function verifyHeaders(headers, label) {
     label + ': untrusted Origin must not receive CORS read permission');
   assert.equal(get('access-control-allow-credentials'), null,
     label + ': gateway must not grant cross-origin credential access');
+  assert.equal(get('access-control-allow-methods'), null,
+    label + ': gateway must not authorize cross-origin preflight methods');
+  assert.equal(get('access-control-allow-headers'), null,
+    label + ': gateway must not authorize cross-origin preflight request headers');
   const csp = get('content-security-policy') || '';
   // Express finalhandler intentionally overrides the app CSP on generated
   // 400/404/413 HTML errors with a stricter default-src 'none' policy. Treat
@@ -67,6 +72,10 @@ async function probe(shipped) {
   vm.runInNewContext(block, { app, express, helmet, trustProxyHops: 0 },
     { filename: 'zbrowse/gateway/server.js', timeout: 1000 });
   app.get('/api/health', (_request, reply) => reply.json({ status: 'ok' }));
+  // Keep the positive compressed-parser control source-bound to the exact
+  // shipped middleware while using a disposable fixture-only route.
+  app.post('/api/echo', (request, reply) =>
+    reply.json({ accepted: request.body?.padding?.length === 128 }));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
     listener.once('error', reject);
@@ -78,6 +87,19 @@ async function probe(shipped) {
       ['JSON success', '/api/health', {
         method: 'GET', headers: { origin: 'https://untrusted.example.invalid' }
       }, 200],
+      ['foreign CORS preflight', '/api/health', {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://untrusted.example.invalid',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization,content-type'
+        }
+      }, 200],
+      ['JSON success', '/api/echo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' },
+        body: gzipSync(JSON.stringify({ padding: 'Q'.repeat(128) }))
+      }, 200],
       ['unmatched path', '/not-found', { method: 'GET' }, 404],
       ['invalid JSON body', '/api/health', {
         method: 'POST',
@@ -88,6 +110,11 @@ async function probe(shipped) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ padding: 'Q'.repeat(9 * 1024) })
+      }, 413],
+      ['compressed oversized JSON body', '/api/echo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' },
+        body: gzipSync(JSON.stringify({ padding: 'Q'.repeat(24 * 1024) }))
       }, 413]
     ]) {
       const response = await fetch(base + url, {
@@ -95,8 +122,12 @@ async function probe(shipped) {
         signal: AbortSignal.timeout(4000)
       });
       assert.equal(response.status, expected, label + ': source middleware HTTP status');
-      verifyHeaders(response.headers, label);
-      await response.arrayBuffer();
+      verifyHeaders(response.headers, label === 'foreign CORS preflight' ? 'JSON success' : label);
+      const body = await response.text();
+      if (label === 'JSON success' && url === '/api/echo') {
+        assert.deepEqual(JSON.parse(body), { accepted: true },
+          'shipped Express parser must decompress and accept bounded JSON');
+      }
     }
   } finally {
     server.closeAllConnections();
@@ -123,16 +154,20 @@ for (const [label, original, weakened] of [
   ['foreign CORS origin', 'app.use(express.json(',
     'app.use((_req, res, next) => { res.set("Access-Control-Allow-Origin", "*"); next(); });\napp.use(express.json('],
   ['CORS credentials', 'app.use(express.json(',
-    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Credentials", "true"); next(); });\napp.use(express.json(']
+    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Credentials", "true"); next(); });\napp.use(express.json('],
+  ['CORS preflight methods', 'app.use(express.json(',
+    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Methods", "POST"); next(); });\napp.use(express.json('],
+  ['CORS preflight headers', 'app.use(express.json(',
+    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Headers", "Authorization"); next(); });\napp.use(express.json(']
 ]) {
   assert.ok(source.includes(original), label + ': mutation target missing');
   const changed = source.replace(original, weakened);
   assert.notEqual(changed, source, label + ': fixture must actually be weakened');
   await assert.rejects(probe(changed),
     error => error?.code === 'ERR_ASSERTION' &&
-      /(?:JSON success|oversized JSON body):/.test(error.message),
+      /(?:JSON success|oversized JSON body|compressed oversized JSON body):/.test(error.message),
     label + ': changed middleware must fail the actual HTTP header assertion, not syntax parsing');
   mutations++;
 }
-console.log('Shipped gateway Helmet real HTTP: 200/400/404/413, foreign-Origin and ' +
+console.log('Shipped gateway Helmet real HTTP: 200/400/404/413, gzip-inflate, CORS preflight and ' +
   mutations + ' failing policy mutations PASS; live public HTTPS unverified');
