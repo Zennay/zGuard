@@ -44,6 +44,12 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'href="/safe" target="_blank" alt="Ordinary hotspot"/>'
   +'<area id="nativeTabMapArea" shape="rect" coords="91,0,109,100" '
   +'href="__QA_FRAME_URL__" target="_blank" alt="Native new-tab hotspot"/></map>'
+  +'<img id="earlyWindowMap" width="100" height="40" alt="Early page popup hotspot" '
+  +'src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%2240%22%3E%3Crect width=%22100%22 height=%2240%22 fill=%22%23999%22/%3E%3C/svg%3E" '
+  +'usemap="#qaEarlyWindowHotspot"/>'
+  +'<map name="qaEarlyWindowHotspot"><area id="earlyWindowMapArea" '
+  +'shape="rect" coords="0,0,100,40" href="/safe" target="_blank" '
+  +'alt="Ordinary map link with early page-authored popup"/></map>'
   +'<form id="programmaticForm" target="_blank" method="get"></form>'
   +'<button id="programmaticSameForm" type="button">Allowed programmatic form</button>'
   +'<button id="programmaticCrossForm" type="button">Cross-origin programmatic form</button>'
@@ -61,7 +67,14 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'overrideHostileSubmits:0,overrideOrdinarySubmits:0,'
   +'programmaticSame:0,programmaticCross:0,programmaticSubmitEvents:0,'
   +'middleForeignDown:0,middleForeignUp:0,middleForeignAux:0,middleForeignTrusted:false,'
-  +'nativeMapClicks:0,nativeMapTrusted:false};'
+  +'nativeMapClicks:0,nativeMapTrusted:false,'
+  +'earlyMapClicks:0,earlyMapTrusted:false,earlyMapNative:false};'
+  +'window.addEventListener("click",e=>{'
+  +'if(e.target?.id!=="earlyWindowMapArea")return;'
+  +'window.qa.earlyMapClicks++;window.qa.earlyMapTrusted=e.isTrusted;'
+  +'e.preventDefault();'
+  +'window.qa.earlyMapNative=!!window.open("__QA_FRAME_URL__","_blank");'
+  +'},true);'
   +'document.getElementById("nativeTabMapArea").addEventListener("click",e=>{'
   +'window.qa.nativeMapClicks++;window.qa.nativeMapTrusted=e.isTrusted;});'
   +'for(const kind of ["mousedown","mouseup","auxclick"]){'
@@ -393,6 +406,23 @@ try{
     'Strict Firefox Enter on a native image-map area must be intercepted');
   assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
     'Strict image-map keyboard Enter must not open a new tab');
+  // A page capture listener on window runs BEFORE zGuard's document listener.
+  // Its visible <area> is an ordinary same-origin link, but page JavaScript
+  // launches a second-origin popup while the native user gesture is active.
+  // Default anchor navigation is cancelled by fixture; only window.open can
+  // create a tab. This directly exercises background tabs.onCreated fallback
+  // on a genuine image-map click, even when click-level policy cannot help.
+  const strictEarlyBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#earlyWindowMap');
+  const strictEarlyAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(strictEarlyAfter.earlyMapClicks,strictEarlyBefore.earlyMapClicks+1,
+    'Real Firefox image-map click must run page window-capture JS');
+  assert.equal(strictEarlyAfter.earlyMapTrusted,true,
+    'Early page capture handler must observe trusted native image-map input');
+  assert.equal(strictEarlyAfter.earlyMapNative,true,
+    'Firefox page script must actually call and open a popup before background removal');
+  await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===2,
+    'Strict background fallback must remove early image-map page popup',60);
   // Browser-level fallback: invoke a page-authored window.open from an actual
   // trusted WebDriver button click. The different loopback port is a separate
   // origin, and no external website or production browser is contacted.
@@ -619,6 +649,33 @@ try{
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
   assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
     new Set(balancedHandles),'Image-map keyboard popup cleanup must restore two original tabs');
+  // The SAME early page-world capture popup must survive in balanced mode.
+  // Its href itself is harmless /safe, and the independent page-created popup
+  // has a separately verified same-localhost-host, different-port origin.
+  const balancedEarlyBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#earlyWindowMap');
+  await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'Balanced mode must preserve early page-created image-map popup',60);
+  const balancedEarlyAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedEarlyAfter.earlyMapClicks,balancedEarlyBefore.earlyMapClicks+1,
+    'Balanced early image-map capture handler must run again');
+  assert.equal(balancedEarlyAfter.earlyMapNative,true,
+    'Balanced early window-capture must call native page window.open');
+  assert.equal(balancedEarlyAfter.earlyMapTrusted,true,
+    'Balanced early image-map window capture must receive trusted click');
+  const earlyHandles=await wd('GET','/session/'+session+'/window/handles');
+  const earlyHandle=earlyHandles.find(h=>!balancedHandles.includes(h));
+  assert.ok(earlyHandle,'Early captured image-map popup must have distinct Firefox tab');
+  await wd('POST','/session/'+session+'/window',{handle:earlyHandle});
+  await until(async()=> new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'Early page-created map popup must load actual second-origin page',50);
+  assert.equal(new URL(await wd('GET','/session/'+session+'/url')).origin,
+    'http://127.0.0.1:'+frameServer.address().port,
+    'Page-authored popup from map must reach separate loopback origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),'Early map popup teardown must leave only original tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -636,6 +693,7 @@ try{
   console.log('Firefox native middle-button real-tab PASS: strict cross-origin cancelled; balanced trusted auxclick opens and loads ordinary second-origin tab.');
   console.log('Firefox real image-map tab PASS: strict centre hotspot suppressed; balanced trusted hotspot opens loaded second-origin tab.');
   console.log('Firefox keyboard image-map PASS: strict native Enter rejected; balanced Enter opened a loaded separate-origin tab.');
+  console.log('Firefox image-map early window capture PASS: strict background removes page-created tab; balanced preserves real loaded tab.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
