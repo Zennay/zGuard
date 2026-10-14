@@ -5,6 +5,7 @@ on:
     paths:
       - 'zbrowse/gateway/server.js'
       - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - 'tests/zbrowse.security-headers-real-http.test.mjs'
       - '.github/workflows/security-headers-validation.yml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'zbrowse/gateway/server.js'
       - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - 'tests/zbrowse.security-headers-real-http.test.mjs'
       - '.github/workflows/security-headers-validation.yml'
   workflow_dispatch:
 
@@ -49,5 +51,11 @@ jobs:
       - name: Syntax-check gateway
         run: node --check zbrowse/gateway/server.js
 
-      - name: Validate security header contract
-        run: node tests/zbrowse.security-headers-contract.test.mjs
+      - name: Install gateway dependencies for HTTP proof
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+
+      - name: Validate security header contract and real HTTP behavior
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.security-headers-contract.test.mjs
+          node tests/zbrowse.security-headers-real-http.test.mjs
