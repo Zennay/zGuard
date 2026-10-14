@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { format } from 'node:util';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
@@ -45,6 +46,19 @@ const errors = [
   new Error('synthetic proxy failure\u001b[2J\u001b[H[OK] forged healthy session\u2028' +
     'PASSWORD=' + password)
 ];
+// A future logging refactor must never print Error objects wholesale: Node
+// util.format recursively renders nested causes and enumerable request data.
+const nestedFailure = new Error('synthetic proxy upstream disconnected');
+nestedFailure.cause = new Error('Authorization: Bearer ' + token);
+nestedFailure.code = 'secret-' + token;
+nestedFailure.request = {
+  url: 'https://sample-user:sample-pass@example.invalid/s/' + token,
+  headers: { authorization: 'Basic ' + basicAuth },
+  env: { PASSWORD: password }
+};
+assert.ok(format('Browser proxy error', nestedFailure).includes(token),
+  'negative control: native Node Error formatting exposes nested bearer data');
+errors.push(nestedFailure);
 // Confirm a reviewed network failure remains diagnosable, while arbitrary
 // external error codes cannot smuggle an otherwise secret bearer into logs.
 errors[0].code = 'ECONNRESET';
@@ -54,7 +68,7 @@ const sandbox = {
   app, sessions, requestIp, requestPath, trustProxyHops: 0,
   config: { idleMs: 300_000 },
   isSessionExpired() { return false; },
-  console: { error(...args) { captured.push(args.map(String).join(' ')); } },
+  console: { error(...args) { captured.push(format(...args)); } },
   createProxyServer() {
     return {
       async web(req, res, options) {
@@ -108,25 +122,26 @@ try {
   const second = await get(viewer);
   const third = await get(viewer);
   const fourth = await get(viewer);
-  for (const response of [first, second, third, fourth]) {
+  const fifth = await get(viewer);
+  for (const response of [first, second, third, fourth, fifth]) {
     assert.equal(response.status, 502,
       'real gateway must report synthetic upstream connection failure');
     assert.equal(response.body, 'Browser connection interrupted.',
       'the public 502 error must remain generic and credential-free');
   }
-  assert.equal(captured.length, 4, 'every upstream failure should record a diagnostic');
+  assert.equal(captured.length, 5, 'every upstream failure should record a diagnostic');
   assert.ok(captured.every(line => line.includes('Browser proxy error')),
     'logging must keep a generic upstream failure signal');
 
   const denied = await get('/s/' + 'U'.repeat(32) + '/assets/player.js');
   assert.equal(denied.status, 403,
     'invalid token must be blocked before any upstream error path');
-  assert.equal(forwards, 4, 'denied tokens must never be forwarded upstream');
+  assert.equal(forwards, 5, 'denied tokens must never be forwarded upstream');
 
   const restored = await get(viewer);
   assert.deepEqual(restored, { status: 200, body: 'recovered' },
     'a connection failure must not disable later authorized browser use');
-  assert.equal(forwards, 5);
+  assert.equal(forwards, 6);
 
   // A streaming proxy can fail AFTER its first bytes have reached the HTTP
   // client. The handler must close the already-committed response, not try
@@ -135,14 +150,19 @@ try {
     get('/s/' + token + '/partial/stream'),
     'a partially written, interrupted gateway stream must terminate abruptly'
   );
-  assert.equal(forwards, 6, 'only the authorized streamed request reached proxy');
-  assert.equal(captured.length, 5,
+  assert.equal(forwards, 7, 'only the authorized streamed request reached proxy');
+  assert.equal(captured.length, 6,
     'the partially sent response must also record a proxy failure diagnostic');
 
   // Deliberately inspect only in memory. Do not include any synthetic bearer
   // or credential text in CI diagnostics; the pass/fail count is sufficient.
   const sensitiveCanaries = [token, password, basicAuth,
     'sample-user', 'sample-pass', 'viewerToken='];
+  // Model the rejected unsafe logger with real util.format, not String(error)
+  // which hides the exact nested credentials that Node console would expose.
+  const unsafeObjectLog = format('Browser proxy error', nestedFailure);
+  assert.ok(sensitiveCanaries.some(needle => unsafeObjectLog.includes(needle)),
+    'negative control: serializing a nested proxy Error must fail log privacy');
   const leaking = captured.filter(line =>
     sensitiveCanaries.some(needle => line.includes(needle)) ||
     /[\r\n\x1b\u2028\u2029]/.test(line));
