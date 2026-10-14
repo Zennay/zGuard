@@ -234,6 +234,13 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
   }
 });
 
+// Every method on a bearer-bearing session URL must be non-cacheable,
+// including Express-generated OPTIONS/404/405 responses that bypass handlers.
+app.use("/api/session/:token", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 app.post("/api/session/:token/heartbeat", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
