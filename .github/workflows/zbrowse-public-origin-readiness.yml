@@ -6,6 +6,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      require_valid_readiness:
+        description: "Reject invalid HTTP 3xx, 404, and 429 readiness from browser upstream (issue #293)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,6 +27,7 @@ jobs:
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       LIVE_PROBE_EVENT: ${{ github.event_name }}
+      REQUIRE_VALID_READINESS: ${{ inputs.require_valid_readiness || 'false' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -45,6 +51,10 @@ jobs:
           set -euo pipefail
           node tests/zbrowse.public-origin-readiness.test.mjs --self-test
           node tests/zbrowse.gateway-public-api-real-http.test.mjs
+          node tests/zbrowse.wait-for-browser-readiness.test.mjs
+          if [ "$REQUIRE_VALID_READINESS" = "true" ]; then
+            node tests/zbrowse.wait-for-browser-readiness.test.mjs --require-valid-readiness
+          fi
           if [ "$LIVE_PROBE_EVENT" = "workflow_dispatch" ]; then
             node tests/zbrowse.public-origin-readiness.test.mjs --live
           fi
