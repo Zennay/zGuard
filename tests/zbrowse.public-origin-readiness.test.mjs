@@ -59,45 +59,52 @@ async function getJson(origin, route, fetcher) {
     headers: { accept: 'application/json' },
     signal: AbortSignal.timeout(7000)
   });
-  // The production gateway's two public JSON GETs return exactly 200.
-  // Merely checking Response.ok would also accept a 202 placeholder or a
-  // 206 partial response from an incorrect CDN/proxy route as live readiness.
-  assert.equal(response.status, 200,
-    route + ': API must return exactly HTTP 200, got HTTP ' + response.status);
-  assert.match(
-    response.headers.get('content-type') || '',
-    /^application\/json(?:\s*;|$)/i,
-    route + ': API must return JSON, not a static-site HTML fallback'
-  );
-  if (route === '/api/health') {
-    // Request cache: no-store is only a client preference, not proof of
-    // server/reverse-proxy policy. This is a live-capacity status endpoint:
-    // stale cached "ok" must never certify production browser readiness.
-    const directives = (response.headers.get('cache-control') || '')
-      .split(',').map(directive => directive.trim().toLowerCase());
-    assert.ok(directives.includes('no-store'),
-      '/api/health: server must declare Cache-Control: no-store');
-    assert.equal(directives.includes('public'), false,
-      '/api/health: must not allow public response caching');
-    // no-store on an origin response is necessary, but not enough to prove an
-    // intermediary did not actually replay a cached capacity observation.
-    const age = response.headers.get('age');
-    if (age !== null) {
-      assert.match(age, /^[0-9]+$/, '/api/health: malformed cache Age header');
-      assert.equal(BigInt(age), 0n,
-        '/api/health: cached Age must be zero for live browser capacity');
+  // Even a refused HTTP status, HTML fallback or cached capacity snapshot
+  // may have a still-open response stream: stop it before failing readiness.
+  try {
+    // The production gateway's two public JSON GETs return exactly 200.
+    // Merely checking Response.ok would also accept a 202 placeholder or a
+    // 206 partial response from an incorrect CDN/proxy route as live readiness.
+    assert.equal(response.status, 200,
+      route + ': API must return exactly HTTP 200, got HTTP ' + response.status);
+    assert.match(
+      response.headers.get('content-type') || '',
+      /^application\/json(?:\s*;|$)/i,
+      route + ': API must return JSON, not a static-site HTML fallback'
+    );
+    if (route === '/api/health') {
+      // Request cache: no-store is only a client preference, not proof of
+      // server/reverse-proxy policy. This is a live-capacity status endpoint:
+      // stale cached "ok" must never certify production browser readiness.
+      const directives = (response.headers.get('cache-control') || '')
+        .split(',').map(directive => directive.trim().toLowerCase());
+      assert.ok(directives.includes('no-store'),
+        '/api/health: server must declare Cache-Control: no-store');
+      assert.equal(directives.includes('public'), false,
+        '/api/health: must not allow public response caching');
+      // no-store on an origin response is necessary, but not enough to prove an
+      // intermediary did not actually replay a cached capacity observation.
+      const age = response.headers.get('age');
+      if (age !== null) {
+        assert.match(age, /^[0-9]+$/, '/api/health: malformed cache Age header');
+        assert.equal(BigInt(age), 0n,
+          '/api/health: cached Age must be zero for live browser capacity');
+      }
+      const cacheStatus = response.headers.get('cache-status') || '';
+      assert.equal(reportsCacheHit(cacheStatus), false,
+        '/api/health: intermediary Cache-Status reports a cache hit');
+      const cloudflareStatus = response.headers.get('cf-cache-status') || '';
+      assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
+        '/api/health: intermediary CF-Cache-Status reports cached content');
+      const xCache = response.headers.get('x-cache') || '';
+      // Vendor markers include TCP_HIT, RefreshHit and HIT; matching only
+      // whitespace-delimited "HIT" misses common cached responses.
+      assert.doesNotMatch(xCache, /hit/i,
+        '/api/health: intermediary X-Cache reports a cache hit');
     }
-    const cacheStatus = response.headers.get('cache-status') || '';
-    assert.equal(reportsCacheHit(cacheStatus), false,
-      '/api/health: intermediary Cache-Status reports a cache hit');
-    const cloudflareStatus = response.headers.get('cf-cache-status') || '';
-    assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
-      '/api/health: intermediary CF-Cache-Status reports cached content');
-    const xCache = response.headers.get('x-cache') || '';
-    // Vendor markers include TCP_HIT, RefreshHit and HIT; matching only
-    // whitespace-delimited "HIT" misses common cached responses.
-    assert.doesNotMatch(xCache, /hit/i,
-      '/api/health: intermediary X-Cache reports a cache hit');
+  } catch (error) {
+    try { await response.body?.cancel(); } catch { /* Keep the primary policy failure. */ }
+    throw error;
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
   // while drip-feeding bytes. Bound the decoded response, not just headers.
@@ -272,6 +279,41 @@ async function selfTest() {
       : httpJson(JSON.stringify({ ...sampleSites, filler: 'X'.repeat(66000) }))),
   /JSON body exceeds 65536 bytes/);
 
+  // Reject invalid metadata before consuming even one body byte, for BOTH
+  // health and catalog readiness. Proxy HTML/errors/cache hits often stream
+  // substantial bodies and must not continue after a failed release gate.
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const [kind, status, contentType, cacheControl, extraHeaders, expected] of [
+      ['HTTP failure', 503, 'application/json', 'no-store', {}, /exactly HTTP 200/],
+      ['noncanonical 2xx', 202, 'application/json', 'no-store', {}, /exactly HTTP 200/],
+      ['HTML fallback', 200, 'text/html', 'no-store', {}, /must return JSON/],
+      ...(route === '/api/health' ? [
+        ['missing no-store', 200, 'application/json', null, {},
+          /must declare Cache-Control: no-store/],
+        ['cached response', 200, 'application/json', 'no-store',
+          { 'cache-status': 'edge; hit' }, /Cache-Status reports a cache hit/]
+      ] : [])
+    ]) {
+      let reads = 0;
+      let cancellations = 0;
+      const bad = new Response(new ReadableStream({
+        pull() { reads++; throw new Error('invalid metadata must not read body'); },
+        cancel() { cancellations++; }
+      }, { highWaterMark: 0 }), {
+        status,
+        headers: {
+          'content-type': contentType,
+          ...(cacheControl === null ? {} : { 'cache-control': cacheControl }),
+          ...extraHeaders
+        }
+      });
+      await assert.rejects(checkPublicReadiness(async url =>
+        url.endsWith(route) ? bad : response(sampleHealth)), expected,
+      route + ' ' + kind + ' must reject unsafe response metadata');
+      assert.equal(reads, 0, route + ' ' + kind + ' must reject before reading');
+      assert.equal(cancellations, 1, route + ' ' + kind + ' must cancel the stream');
+    }
+  }
   // Prove early cancellation for both public readiness GETs. This must
   // stop an untrusted stream (not merely fail the readiness JSON assertion).
   for (const route of ['/api/health', '/api/sites']) {
