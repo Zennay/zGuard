@@ -1597,6 +1597,10 @@ try {
   for (const [label, reply] of [
     ['html-typed-valid-json', { status: 200, mediaType: 'text/html',
       body: { ok: true, expiresAt: Date.now() + 900_000 } }],
+    ['accepted-202-but-not-renewed', { status: 202,
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
+    ['partial-206-not-authoritative', { status: 206,
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
     ['no-content', { status: 204 }],
     ['negative-json', { status: 200, body: { ok: false, expiresAt: Date.now() + 900_000 } }],
     ['expired-json', { status: 200, body: { ok: true, expiresAt: Date.now() - 1000 } }]

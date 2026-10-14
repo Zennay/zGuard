@@ -25,6 +25,12 @@ async function request(url, options = {}) {
   // not an HTML/plain-text proxy response that happens to parse as JSON.
   // Other API results have their own schema and cleanup validation.
   if (response.ok && url.endsWith("/heartbeat")) {
+    // The Express gateway only acknowledges a renewed lease with HTTP 200.
+    // A proxy-generated 202 Accepted, 203 Non-Authoritative Information or
+    // 206 Partial Content is not confirmation, even with plausible JSON.
+    if (response.status !== 200) {
+      throw new Error("Unexpected heartbeat status.");
+    }
     const contentType = response.headers?.get?.("content-type") || "";
     if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
       throw new Error("Invalid heartbeat response format.");
