@@ -14,7 +14,7 @@ const required = [
   ['fresh profile for every cold start',
     "fs.mkdtempSync(path.join(os.tmpdir(), 'zguard-chromium-'))"],
   ['cold start must navigate on Chrome command line',
-    "coldStart ? url : 'about:blank'"],
+    "'--remote-debugging-port=0', coldStart ? url : 'about:blank'"],
   ['warm navigation must not replace cold-start proof',
     "if (!coldStart) {"],
   ['three independent starts per shipped extension',
@@ -50,7 +50,7 @@ verify(source);
 
 let checked = 0;
 for (const [label, oldValue, replacement] of [
-  ['wrong launch mode', "coldStart ? url : 'about:blank'",
+  ['wrong launch mode', "'--remote-debugging-port=0', coldStart ? url : 'about:blank'",
     "'about:blank'"],
   ['only one start per package', 'coldStart ? 3 : 1',
     'coldStart ? 1 : 1'],
