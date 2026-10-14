@@ -1,0 +1,142 @@
+// Source-tethered HTTP check: valid JSON does not by itself establish
+// that a cross-site caller may allocate or reuse a token-bearing session.
+// Deliberately uses synthetic Docker operations and local 127.0.0.1 only.
+// A browser normally preflights cross-origin application/json; this check
+// establishes server-side authorization defense-in-depth, NOT preflight bypass.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { requestIp } from '../zbrowse/gateway/request-ip.js';
+import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
+
+const strict = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-origin-isolation');
+const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
+const express = require('express');
+const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
+const sites = JSON.parse(fs.readFileSync(
+  new URL('../zbrowse/gateway/config/sites.json', import.meta.url), 'utf8'));
+assert.ok(Array.isArray(sites) && sites.length > 0, 'reviewed start site required');
+function section(begin, end) {
+  const a = source.indexOf(begin);
+  const b = source.indexOf(end, a);
+  assert.ok(a >= 0 && b > a, 'shipped gateway route must remain extractable');
+  return source.slice(a, b);
+}
+const parser = source.match(/app\.use\(express\.json\(\{ limit: "8kb" \}\)\);/)?.[0];
+assert.ok(parser, 'real gateway must retain a bounded JSON parser');
+const code = [
+  parser,
+  section('const allowedOrigins = new Set(', 'const trustProxyHops'),
+  section('function publicSession(', 'function validStartUrl('),
+  section('function validStartUrl(', 'async function waitForBrowser('),
+  section('app.post("/api/session",', 'app.post("/api/session/:token/heartbeat"')
+].join('\n');
+
+const app = express();
+const peer = '127.0.0.1';
+const sessions = new Map();
+const sessionsByIp = new Map();
+let starts = 0;
+let reservations = 0;
+let releases = 0;
+const sandbox = {
+  app, express, sites, URL, Date, Math, requestIp, trustProxyHops: 0,
+  sessions, sessionsByIp,
+  config: { startUrl: sites[0].url, ttlMs: 900_000, idleMs: 600_000 },
+  sessionLimiter(_req, _res, next) { next(); },
+  isSessionExpired() { return false; },
+  destroySession() { throw new Error('unexpected teardown'); },
+  sessionAdmission: {
+    tryReserve() { reservations++; return { ok: true }; },
+    release() { releases++; }
+  },
+  async createSession(ip, startUrl) {
+    assert.equal(ip, peer);
+    assert.equal(startUrl, sites[0].url);
+    starts++;
+    const session = {
+      ip, token: 'S'.repeat(32),
+      expiresAt: Date.now() + 900_000, lastSeenAt: Date.now()
+    };
+    sessions.set(session.token, session);
+    sessionsByIp.set(ip, session.token);
+    return session;
+  },
+  console: { error() { throw new Error('unexpected browser creation failure'); } }
+};
+vm.runInNewContext(code, sandbox, { filename: 'zbrowse/gateway/server.js', timeout: 1000 });
+const server = await new Promise((resolve, reject) => {
+  const listening = app.listen(0, peer, () => resolve(listening));
+  listening.once('error', reject);
+});
+try {
+  const sameOrigin = 'http://' + peer + ':' + server.address().port;
+  async function post({ origin, fetchSite, preserve = false }) {
+    if (!preserve) {
+      sessions.clear();
+      sessionsByIp.clear();
+    }
+    const previousStarts = starts;
+    const previousReserves = reservations;
+    const headers = { 'content-type': 'application/json' };
+    if (origin !== undefined) headers.origin = origin;
+    if (fetchSite !== undefined) headers['sec-fetch-site'] = fetchSite;
+    const response = await fetch(sameOrigin + '/api/session', {
+      method: 'POST', headers,
+      body: JSON.stringify({ url: sites[0].url }),
+      redirect: 'error', signal: AbortSignal.timeout(4000)
+    });
+    const text = await response.text();
+    return {
+      status: response.status,
+      started: starts - previousStarts,
+      reserved: reservations - previousReserves,
+      returnedBearer: /"token"\s*:|"viewerUrl"\s*:/.test(text)
+    };
+  }
+
+  const allowed = await post({ origin: sameOrigin, fetchSite: 'same-origin' });
+  assert.deepEqual({status: allowed.status, started: allowed.started, reserved: allowed.reserved},
+    {status: 201, started: 1, reserved: 1}, 'same-origin JSON must remain usable');
+
+  // The fast-path reuse check precedes validStartUrl(). A remote Origin must
+  // not receive a token-bearing 200 even when it causes no new allocation.
+  const crossSiteReuse = await post({
+    origin: 'https://attacker.invalid', fetchSite: 'cross-site', preserve: true
+  });
+  const crossSiteNew = await post({
+    origin: 'https://attacker.invalid', fetchSite: 'cross-site'
+  });
+  const sandboxed = await post({ origin: 'null', fetchSite: 'cross-site' });
+  const metadataOnly = await post({ fetchSite: 'cross-site' });
+
+  // Non-browser clients without browser metadata may legitimately be supported;
+  // do not assert a product policy for these existing gateway consumers.
+  const nonBrowser = await post({});
+  assert.equal(nonBrowser.status, 201, 'legacy non-browser JSON control must remain admitted');
+  assert.equal(nonBrowser.started, 1);
+  assert.equal(reservations, releases, 'all synthetic admissions must release capacity');
+
+  const unsafe = { crossSiteReuse, crossSiteNew, sandboxed, metadataOnly };
+  function denied(outcome) {
+    return outcome.status >= 400 && outcome.started === 0 &&
+      outcome.reserved === 0 && !outcome.returnedBearer;
+  }
+  if (strict) {
+    assert.deepEqual(Object.fromEntries(
+      Object.entries(unsafe).map(([name, outcome]) => [name, denied(outcome)])),
+      {crossSiteReuse: true, crossSiteNew: true, sandboxed: true, metadataOnly: true},
+      'strict admission must reject external and null Origin/Fetch Metadata before reuse/allocation');
+    console.log('Real HTTP origin isolation and existing-session reuse PASS');
+  } else {
+    console.log('Shipped JSON cross-site HTTP isolation: ' + JSON.stringify(
+      Object.fromEntries(Object.entries(unsafe).map(([name, outcome]) =>
+        [name, {status: outcome.status, started: outcome.started,
+          rejectedBeforeBearer: denied(outcome)}]))
+    ) + '; strict origin proof requires --require-origin-isolation');
+  }
+} finally {
+  await new Promise((resolve, reject) =>
+    server.close(error => error ? reject(error) : resolve()));
+}
