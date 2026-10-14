@@ -888,11 +888,66 @@ try {
   await until(() => deletions === droppedDeleteBefore + failedNetworkDeletes + 2,
     'new browser after socket drop must still end normally');
 
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'previous End must finish before late-start release-failure fixture');
+
+  // A POST response can arrive after synthetic pagehide and BFCache restore:
+  // the viewer must never mount, and a failed 503 cleanup must retain its
+  // release token until the existing periodic health refresh retries it.
+  const lateFailStartsBefore = starts;
+  const lateFailDeletesBefore = deletions;
+  const lateFailViewersBefore = viewerRequests;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === lateFailStartsBefore + 1,
+    'late-start cleanup failure fixture begins real browser POST');
+  assert.ok(releaseStart, 'browser launch must remain pending during pagehide');
+  await evaluate('window.dispatchEvent(new Event("pagehide")); true');
+  assert.equal(deletions, lateFailDeletesBefore,
+    'pagehide cannot delete a browser whose token is still pending');
+  await evaluate('window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); true');
+  failNextDelete = true;
+  releaseStart();
+  releaseStart = null;
+  await until(() => deletions === lateFailDeletesBefore + 1,
+    'abandoned late POST must send cleanup DELETE through real HTTP');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'failed late HTTP DELETE must report pending retry on BFCache-restored page');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'BFCache restoration cannot reopen a still-live late session');
+  assert.equal(viewerRequests, lateFailViewersBefore,
+    'late browser token must never reach the real Chromium iframe');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Finishing previous browser session');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(100);
+  assert.equal(starts, lateFailStartsBefore + 1,
+    'new start must be blocked until failed late release is reconciled');
+  await evaluate('refreshHealth(); true');
+  await until(() => deletions === lateFailDeletesBefore + 2,
+    'health poll must retry the abandoned issued token');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'successful late token cleanup must restore start admission');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === lateFailStartsBefore + 2,
+    'new browser POST succeeds after late failed cleanup recovery');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'recovered browser should mount normally');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === lateFailDeletesBefore + 3,
+    'post-reconciliation viewer must remain closable');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, failed late-start cleanup and BFCache reconciliation, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
