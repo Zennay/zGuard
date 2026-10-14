@@ -335,7 +335,16 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       ['left-to-right mark', '\u200e'],
       ['right-to-left mark', '\u200f'],
       ['line separator', '\u2028'],
-      ['paragraph separator', '\u2029']
+      ['paragraph separator', '\u2029'],
+      ['soft hyphen', '\u00ad'],
+      ['combining grapheme joiner', '\u034f'],
+      ['Mongolian vowel separator', '\u180e'],
+      ['zero-width space', '\u200b'],
+      ['zero-width non-joiner', '\u200c'],
+      ['zero-width joiner', '\u200d'],
+      ['word joiner', '\u2060'],
+      ['invisible separator', '\u2063'],
+      ['byte-order mark', '\ufeff']
     ].map(([label, mark]) => [label + ' in name', () => response({
       sites: [{ name: 'Safe' + mark + 'fake.invalid', url: 'https://approved.test/' }]
     })])
