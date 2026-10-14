@@ -682,6 +682,9 @@ try {
   await until(() => deletions === afterHistoryDeletions + 1,
     'new post-history browser must be releasable through the actual End button');
   assert.equal(starts, 10, 'no duplicate starts across browser history recovery');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'prior history-recovery End must complete before starting a separate race fixture');
 
   // A slow DELETE can race a new Open from the returned home form. The
   // gateway may reuse the same-owner token until DELETE finishes, which
