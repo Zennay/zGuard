@@ -9,7 +9,13 @@ import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
 import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
 
-const strictOrigin = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-websocket-origin');
+// The Host boundary can be verified independently of the still-open
+// cross-site WebSocket Origin policy. Unknown/combined flags fail closed.
+const selectedGate = process.argv[2] === '--require-websocket-host'
+  ? '--require-websocket-host' : '--require-websocket-origin';
+const strictEnabled = parseStrictAcceptanceArgs(process.argv.slice(2), selectedGate);
+const strictOrigin = strictEnabled && selectedGate === '--require-websocket-origin';
+const strictHost = strictEnabled && selectedGate === '--require-websocket-host';
 
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
 function segment(begin, end) {
@@ -185,10 +191,12 @@ try {
     ['unreviewed Host + no browser metadata', '']
   ];
   const unsafeHostUpgrades = [];
+  const forwardedBeforeHost = seen.length;
   for (const [name, headers] of unsafeHostCases) {
     const response = await open(target, headers, foreignHost);
     unsafeHostUpgrades.push([name, /^HTTP\/1\.1 101/m.test(response)]);
   }
+  const unreviewedHostForwards = seen.length - forwardedBeforeHost;
   const foreign = await open(target,
     'Origin: https://attacker.invalid\r\nSec-Fetch-Site: cross-site\r\n');
   const sandboxed = await open(target,
@@ -226,7 +234,13 @@ try {
   const foreignAccepted = /^HTTP\/1\.1 101/m.test(foreign);
   const sandboxedAccepted = /^HTTP\/1\.1 101/m.test(sandboxed);
   const metadataAccepted = /^HTTP\/1\.1 101/m.test(metadataOnly);
-  if (strictOrigin) {
+  if (strictHost) {
+    assert.deepEqual(unsafeHostUpgrades.filter(([, accepted]) => accepted), [],
+      'unreviewed Host must never upgrade a bearer stream via trusted or missing Origin');
+    assert.equal(unreviewedHostForwards, 0,
+      'unreviewed Host must be rejected before any browser upstream proxy');
+    console.log('Shipped real TCP WebSocket Host authority isolation PASS');
+  } else if (strictOrigin) {
     assert.deepEqual({ foreignAccepted, sandboxedAccepted, metadataAccepted, newUpgrades },
       { foreignAccepted: false, sandboxedAccepted: false,
         metadataAccepted: false, newUpgrades: 0 },
@@ -245,7 +259,7 @@ try {
       ', lookalike Origins upgraded=' + disguised.filter(([, accepted]) => accepted).length +
       '/' + disguised.length +
       ', unreviewed Host upgrades=' + unsafeHostUpgrades.filter(([, accepted]) => accepted).length +
-      '/' + unsafeHostUpgrades.length +
+      '/' + unsafeHostUpgrades.length + ', proxy forwards=' + unreviewedHostForwards +
       ' (strict --require-websocket-origin is not a runtime fix)');
   }
 } finally {
