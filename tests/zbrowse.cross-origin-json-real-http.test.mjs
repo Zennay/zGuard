@@ -13,6 +13,7 @@ import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-fl
 const strict = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-origin-isolation');
 const require = createRequire(new URL('../zbrowse/gateway/package.json', import.meta.url));
 const express = require('express');
+const helmet = require('helmet');
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
 const sites = JSON.parse(fs.readFileSync(
   new URL('../zbrowse/gateway/config/sites.json', import.meta.url), 'utf8'));
@@ -23,10 +24,12 @@ function section(begin, end) {
   assert.ok(a >= 0 && b > a, 'shipped gateway route must remain extractable');
   return source.slice(a, b);
 }
-const parser = source.match(/app\.use\(express\.json\(\{ limit: "8kb" \}\)\);/)?.[0];
-assert.ok(parser, 'real gateway must retain a bounded JSON parser');
+const middleware = section('app.set("trust proxy", trustProxyHops);',
+  'const sessionLimiter = rateLimit(');
+assert.match(middleware, /app\\.use\\(express\\.json\\(\\{ limit: "8kb" \\}\\)\\);/,
+  'real gateway must retain a bounded JSON parser');
 const code = [
-  parser,
+  middleware,
   section('const allowedOrigins = new Set(', 'const trustProxyHops'),
   section('function publicSession(', 'function validStartUrl('),
   section('function validStartUrl(', 'async function waitForBrowser('),
@@ -41,7 +44,7 @@ let starts = 0;
 let reservations = 0;
 let releases = 0;
 const sandbox = {
-  app, express, sites, URL, Date, Math, requestIp, trustProxyHops: 0,
+  app, express, helmet, sites, URL, Date, Math, requestIp, trustProxyHops: 0,
   sessions, sessionsByIp,
   config: { startUrl: sites[0].url, ttlMs: 900_000, idleMs: 600_000 },
   sessionLimiter(_req, _res, next) { next(); },
@@ -119,6 +122,33 @@ try {
     { status: 200, started: 0, reserved: 0, bearer: true },
     'reviewed TV frontend Origin must reuse its existing session');
 
+  // Browser JavaScript normally cannot send application/json from a foreign
+  // Origin without a successful OPTIONS preflight. Validate that current
+  // mitigation separately from raw server-side POST admission behavior.
+  const startsBeforePreflight = starts;
+  const reservationsBeforePreflight = reservations;
+  const preflightResults = [];
+  for (const untrustedOrigin of ['https://attacker.invalid', 'null']) {
+    const response = await fetch(sameOrigin + '/api/session', {
+      method: 'OPTIONS',
+      headers: {
+        origin: untrustedOrigin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type'
+      }, signal: AbortSignal.timeout(4000)
+    });
+    await response.arrayBuffer();
+    const allowOrigin = response.headers.get('access-control-allow-origin');
+    const denied = allowOrigin !== '*' && allowOrigin !== untrustedOrigin;
+    preflightResults.push(denied);
+    assert.equal(denied, true,
+      'foreign browser JSON preflight must not authorize a cross-site Origin');
+  }
+  assert.equal(starts, startsBeforePreflight,
+    'OPTIONS preflight must not launch any browser');
+  assert.equal(reservations, reservationsBeforePreflight,
+    'OPTIONS preflight must not consume a session reservation');
+
   // The fast-path reuse check precedes validStartUrl(). A remote Origin must
   // not receive a token-bearing 200 even when it causes no new allocation.
   const crossSiteReuse = await post({
@@ -149,7 +179,9 @@ try {
       'strict admission must reject external and null Origin/Fetch Metadata before reuse/allocation');
     console.log('Real HTTP origin isolation and existing-session reuse PASS');
   } else {
-    console.log('Shipped JSON cross-site HTTP isolation: ' + JSON.stringify(
+    console.log('Browser JSON preflight denied=' +
+      preflightResults.filter(Boolean).length + '/' + preflightResults.length +
+      '; raw shipped JSON cross-site HTTP isolation: ' + JSON.stringify(
       Object.fromEntries(Object.entries(unsafe).map(([name, outcome]) =>
         [name, {status: outcome.status, started: outcome.started,
           rejectedBeforeBearer: denied(outcome)}]))
