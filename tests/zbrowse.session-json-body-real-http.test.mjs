@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { gzipSync, deflateSync } from 'node:zlib';
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 
@@ -159,7 +159,7 @@ try {
   });
   const compressedOutcomes = [];
   for (const [encoding, compress] of [
-    ['gzip', gzipSync], ['deflate', deflateSync]
+    ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]
   ]) {
     const acceptedCompressed = await submit(compress(normalCompressed), {
       'content-type': 'application/json',
@@ -182,6 +182,34 @@ try {
     compressedOutcomes.push(rejectedCompressed);
   }
 
+  // A malformed compressed payload must fail *at the real shipped JSON
+  // parser*, not consume a browser slot or create an owner. Broken compressed
+  // bytes previously lacked a route-level assertion despite codec coverage.
+  const malformedCompression = [];
+  for (const encoding of ['gzip', 'deflate', 'br']) {
+    const rejected = await submit(Buffer.from('not-compressed-json'), {
+      'content-type': 'application/json',
+      'content-encoding': encoding
+    });
+    assert.equal(rejected.status, 400,
+      encoding + ': malformed compressed bytes must return HTTP 400');
+    assert.equal(rejected.newStarts, 0,
+      encoding + ': invalid compressed body cannot start a browser');
+    assert.equal(rejected.newReservations, 0,
+      encoding + ': invalid compressed body cannot reserve capacity');
+    malformedCompression.push(rejected);
+  }
+  const unsupportedEncoding = await submit(normalCompressed, {
+    'content-type': 'application/json',
+    'content-encoding': 'compress'
+  });
+  assert.equal(unsupportedEncoding.status, 415,
+    'unreviewed compression algorithm must return HTTP 415');
+  assert.equal(unsupportedEncoding.newStarts, 0,
+    'unsupported compression cannot start a browser');
+  assert.equal(unsupportedEncoding.newReservations, 0,
+    'unsupported compression cannot reserve browser capacity');
+
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
   assert.equal(badCharset.status, 415, 'unsupported JSON charset must be rejected');
@@ -194,12 +222,13 @@ try {
   assert.equal(reservations, releases, 'every admitted start must release admission reservation');
 
   for (const rejected of [truncated, oneByteOver, tooLarge, badCharset,
-    ...malformedResults, ...compressedOutcomes]) {
+    ...malformedResults, ...compressedOutcomes,
+    ...malformedCompression, unsupportedEncoding]) {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
-  console.log('Shipped gateway exact 8 KiB JSON boundary, two compressed ' +
-    'inflation-limit cases, ' + malformedBodies.length +
+  console.log('Shipped gateway exact 8 KiB JSON boundary, three compressed ' +
+    'inflation-limit cases, invalid gzip/deflate/Brotli and unsupported encoding, ' + malformedBodies.length +
     ' malformed parser failures and recovery passed');
 } finally {
   await new Promise((resolve, reject) =>
