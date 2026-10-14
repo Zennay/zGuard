@@ -126,6 +126,16 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { sites: [
           { name: 'Video\u202Efake.invalid', url: sites[0].url }
         ], maxSessionMinutes: 15 });
+      } else if (['duplicate-label', 'casefold-label', 'fullwidth-label'].includes(sitesMode)) {
+        const duplicate = {
+          'duplicate-label': 'Fawesome',
+          'casefold-label': 'FAWESOME',
+          'fullwidth-label': '\uFF26\uFF41\uFF57\uFF45\uFF53\uFF4F\uFF4D\uFF45'
+        }[sitesMode];
+        sendJson(res, 200, { sites: [
+          { name: 'Fawesome', url: sites[0].url },
+          { name: duplicate, url: 'https://another-curated.invalid/' }
+        ], maxSessionMinutes: 15 });
       } else if (['c1-label', 'arabic-mark-label', 'rtl-mark-label',
         'paragraph-separator-label', 'zero-width-label', 'soft-hyphen-label',
         'word-joiner-label', 'bom-label'].includes(sitesMode)) {
@@ -1492,7 +1502,8 @@ try {
   for (const mode of ['offline', 'userinfo', 'empty',
     'many', 'long-name', 'long-url', 'bidi-name',
     'c1-label', 'arabic-mark-label', 'rtl-mark-label', 'paragraph-separator-label',
-    'zero-width-label', 'soft-hyphen-label', 'word-joiner-label', 'bom-label']) {
+    'zero-width-label', 'soft-hyphen-label', 'word-joiner-label', 'bom-label',
+    'duplicate-label', 'casefold-label', 'fullwidth-label']) {
     sitesMode = mode;
     await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
     await until(async () => await evaluate(
