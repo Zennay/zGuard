@@ -39,12 +39,19 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
       - name: Exercise production teardown functions with deterministic containers
         shell: bash
         run: |
           set -euo pipefail
           node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.teardown-failclosed.test.mjs
+          node tests/zbrowse.teardown-admission-real-http.test.mjs
           if [ "$REQUIRE_FAIL_CLOSED" = "true" ]; then
             node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
+            node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
           fi
