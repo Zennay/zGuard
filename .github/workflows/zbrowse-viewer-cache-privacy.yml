@@ -51,6 +51,7 @@ jobs:
           node tests/zbrowse.viewer-cache-privacy.test.mjs
           node tests/zbrowse.viewer-cache-real-http.test.mjs
           node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs
+          node tests/zbrowse.viewer-path-recovery-real-http.test.mjs
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store
             node tests/zbrowse.viewer-cache-real-http.test.mjs --require-no-store
