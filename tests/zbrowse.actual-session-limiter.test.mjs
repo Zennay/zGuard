@@ -84,16 +84,31 @@ assert.equal(incomplete[0].status, 200, 'first incomplete chain request should b
 assert.equal(incomplete[0].identity.sessionIdentity, '127.0.0.1',
   'gateway session ownership must fail closed to the socket on incomplete forwarding');
 
+// A full-length chain with a syntactically invalid client hop must not mint
+// independent quotas by changing only the malformed leftmost value. The
+// gateway's requestIp() rejects that identity and falls back to the TCP peer.
+const malformed = await scenario(i => 'invalid-client-' + i + ', 10.0.0.2');
+assert.equal(malformed[0].status, 200,
+  'first invalid client address request must reach the actual limiter');
+assert.equal(malformed[0].identity.sessionIdentity, '127.0.0.1',
+  'invalid XFF client address must not become the gateway session owner');
+
 const matched = incomplete[0].identity.limiterIdentity ===
   incomplete[0].identity.sessionIdentity;
 const enforced = incomplete.at(-1).status === 429;
+const malformedMatched = malformed[0].identity.limiterIdentity ===
+  malformed[0].identity.sessionIdentity;
+const malformedEnforced = malformed.at(-1).status === 429;
 if (strict) {
-  assert.deepEqual({ matched, enforced }, { matched: true, enforced: true },
-    'source-tethered gateway rate limiter and session ownership diverge on forged incomplete XFF (issue #21)');
+  assert.deepEqual({ matched, enforced, malformedMatched, malformedEnforced },
+    { matched: true, enforced: true, malformedMatched: true, malformedEnforced: true },
+    'source-tethered gateway limiter and session ownership must share a fail-closed key for incomplete or invalid XFF (issue #21)');
   console.log('Source-tethered production session limiter identity parity PASS');
 } else {
   console.log('Source-tethered gateway session limiter validated for complete chains: ' +
     'limit=' + limit + ', incomplete-chain identityParity=' + matched +
     ', quotaEnforced=' + enforced +
+    ', malformed-chain identityParity=' + malformedMatched +
+    ', malformed-chain quotaEnforced=' + malformedEnforced +
     '; require --require-source-parity for the unresolved issue #21');
 }
