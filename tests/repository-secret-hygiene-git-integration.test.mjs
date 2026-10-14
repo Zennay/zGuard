@@ -84,10 +84,21 @@ try {
     Buffer.concat([Buffer.from([255, 254, 0]),
       Buffer.from('[' + second + ']', 'ascii'), Buffer.from([0, 128])]));
 
+  // A Windows/PowerShell-style encoded secret has a NUL between each
+  // ASCII character. Exercise both endiannesses against the *real* scanner
+  // in a temporary tracked Git repository, not a replicated regex.
+  reject('misaligned UTF-16LE API secret', 'OpenAI-style secret',
+    Buffer.concat([Buffer.from([255]), Buffer.from(first, 'utf16le'),
+      Buffer.from([0])]));
+  reject('BOM-prefixed UTF-16BE Git token', 'GitHub fine-grained token',
+    Buffer.concat([Buffer.from([0xfe, 0xff]),
+      Buffer.from(Buffer.from(second, 'utf16le')).swap16(),
+      Buffer.from([0])]));
+
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
-    'two rejected tracked binary secrets, and successful recovery');
+    'four rejected binary/UTF-16 tracked secrets, and successful recovery');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
