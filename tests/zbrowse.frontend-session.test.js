@@ -35,7 +35,7 @@ async function settle() {
 
 // Execute the real browser script with deterministic DOM, HTTP and timer fakes.
 // No network requests, browser installation or gateway containers are required.
-async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest } = {}) {
+async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest, siteRequest } = {}) {
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
@@ -99,7 +99,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const fetch = async (url, options = {}) => {
     requests.push({ url, options });
     if (url === '/api/sites') {
-      return response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] });
+      return siteRequest ? siteRequest() :
+        response({ sites: [{ name: 'Approved', url: 'https://approved.test/' }] });
     }
     if (url === '/api/health') {
       if (healthRequest) return healthRequest();
@@ -117,7 +118,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     throw new Error('unexpected portal request: ' + url);
   };
 
-  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, console }, {
+  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, console }, {
     filename: 'zbrowse/gateway/public/app.js',
     timeout: 1000
   });
@@ -225,6 +226,71 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     assert.equal(portal.requests.filter(({ url }) => url === '/api/session').length, 0,
       label + ': scripted submit must never start browser on malformed health');
   }
+
+  // Public health may be green while /api/sites is offline or supplies an
+  // invalid catalogue (issue #293). Do not enable the Open button, prefill an
+  // unreviewed URL or send a browser POST merely because capacity is free.
+  const healthy = { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 };
+  const catalogueFailures = [
+    ['offline catalogue', () => Promise.reject(new TypeError('gateway route unreachable'))],
+    ['missing sites', () => response({})],
+    ['null sites', () => response({ sites: null })],
+    ['empty catalogue', () => response({ sites: [] })],
+    ['unreadable name', () => response({ sites: [
+      { name: ' ', url: 'https://approved.test/' }
+    ] })],
+    ['HTTP suggestion', () => response({ sites: [
+      { name: 'Untrusted', url: 'http://approved.test/' }
+    ] })],
+    ['userinfo suggestion', () => response({ sites: [
+      { name: 'Credentials', url: 'https://user:pass@approved.test/' }
+    ] })],
+    ['unsafe scheme', () => response({ sites: [
+      { name: 'Executable', url: 'javascript:alert(1)' }
+    ] })],
+    ['duplicate site', () => response({ sites: [
+      { name: 'Primary', url: 'https://approved.test/' },
+      { name: 'Duplicate', url: 'https://approved.test/' }
+    ] })]
+  ];
+  for (const [label, siteRequest] of catalogueFailures) {
+    const bad = await bootPortal({ health: healthy, siteRequest });
+    assert.equal(bad.element('startButton').disabled, true,
+      label + ': healthy API status must not enable a missing/unreviewed site catalogue');
+    assert.equal(bad.element('capacityText').textContent, 'Site catalogue unavailable',
+      label + ': capacity status must not advertise a usable browser');
+    assert.equal(bad.element('capacityText').parentElement.className, 'status',
+      label + ': stale green readiness must be removed');
+    assert.match(bad.element('formMessage').textContent, /Reload to retry/,
+      label + ': user needs actionable recovery information');
+    assert.equal(bad.element('urlInput').value, '',
+      label + ': unsafe first suggestion must not be prefilled');
+    assert.equal(bad.element('siteSuggestions').children.length, 0,
+      label + ': never display suggestions from a rejected catalogue');
+    bad.element('urlInput').value = 'https://approved.test/';
+    bad.submit();
+    await settle();
+    assert.equal(bad.requests.filter(({ url }) => url === '/api/session').length, 0,
+      label + ': scripted submit must not allocate a browser');
+    const poll = [...bad.intervals.values()].find(({ milliseconds }) => milliseconds === 20000);
+    assert.ok(poll, label + ': healthy polling must remain active for recovery UI');
+    poll.callback();
+    await settle();
+    assert.equal(bad.element('startButton').disabled, true,
+      label + ': repeated good health must not bypass site catalogue gate');
+  }
+  const reviewedSite = await bootPortal({
+    health: healthy,
+    siteRequest: () => response({ sites: [
+      { name: 'Curated', url: 'https://approved.test/' }
+    ] })
+  });
+  assert.equal(reviewedSite.element('startButton').disabled, false,
+    'valid catalogue and healthy gateway must keep normal start functionality');
+  assert.equal(reviewedSite.element('urlInput').value, 'https://approved.test/',
+    'reviewed suggestion must still prefill the canonical URL');
+  assert.equal(reviewedSite.element('siteSuggestions').children.length, 1,
+    'valid reviewed catalogue must still render its suggested site');
 
   const validToken = 'A'.repeat(32);
   const validViewer = '/s/' + validToken + '/';
