@@ -94,10 +94,17 @@ try {
     if (origin !== undefined) headers.Origin = origin;
     if (fetchSite !== null) headers['Sec-Fetch-Site'] = fetchSite;
     if (forwardedProto) headers['X-Forwarded-Proto'] = forwardedProto;
+    // http.request's flat header-array form preserves duplicate Host lines
+    // on the actual TCP request. Test both field orders, not a JS mock.
+    const wireHeaders = Array.isArray(host)
+      ? [...host.flatMap(value => ['Host', value]),
+        ...Object.entries(headers).filter(([name]) => name !== 'Host')
+          .flatMap(([name, value]) => [name, value])]
+      : headers;
     const reply = await new Promise((resolve, reject) => {
       const request = http.request({
         host: peer, port, method: 'POST', path: '/api/session',
-        headers
+        headers: wireHeaders
       }, response => {
         const chunks = [];
         response.on('data', chunk => chunks.push(chunk));
@@ -156,6 +163,26 @@ try {
     origin: undefined, fetchSite: null });
   const metadataFreeReuse = await submit({ host: forgedHost,
     origin: undefined, fetchSite: null, reuse: true });
+  // Ambiguous Host headers can be processed differently by intermediaries
+  // and Node. Preserve both lines on real TCP and reject them regardless of
+  // their order or whether their string values happen to match.
+  const duplicateHostOutcomes = [];
+  const duplicateHostReuses = [];
+  for (const hostValues of [
+    [legitimateHost, forgedHost],
+    [forgedHost, legitimateHost],
+    [legitimateHost, legitimateHost]
+  ]) {
+    duplicateHostOutcomes.push(await submit({ host: hostValues, origin: publicTv }));
+    duplicateHostReuses.push(await submit({ host: hostValues, origin: publicTv,
+      reuse: true }));
+  }
+  const wrongPortHost = peer + ':' + (port === 65535 ? 1 : port + 1);
+  const alternatePort = await submit({ host: wrongPortHost, origin: publicTv });
+  const alternatePortReuse = await submit({ host: wrongPortHost,
+    origin: publicTv, reuse: true });
+  const emptyHost = await submit({ host: '', origin: publicTv });
+  const emptyHostReuse = await submit({ host: '', origin: publicTv, reuse: true });
   const canonicalNonBrowser = await submit({ host: legitimateHost,
     origin: undefined, fetchSite: null });
   assert.ok(admitted(canonicalNonBrowser, 201),
@@ -203,6 +230,10 @@ try {
       'reviewed TV Origin cannot reuse a bearer through an unreviewed Host');
     assert.ok(denied(metadataFreeHost) && denied(metadataFreeReuse),
       'metadata-free clients cannot start or reuse browsers through unreviewed Host');
+    assert.ok(duplicateHostOutcomes.every(denied) && duplicateHostReuses.every(denied),
+      'duplicate Host must deny both browser creation and existing bearer reuse');
+    assert.ok([alternatePort, alternatePortReuse, emptyHost, emptyHostReuse].every(denied),
+      'alternate-port or empty Host cannot mint or reuse session credentials');
     for (const [name, outcome] of [
       ['proxy same-origin start', proxyForeign],
       ['proxy same-origin reuse', proxyForeignReuse],
@@ -222,6 +253,14 @@ try {
       '; foreign Host with reviewed TV Origin reuse denied=' + denied(tvReusedViaForeignHost) +
       '; metadata-free foreign Host denied=' + denied(metadataFreeHost) +
       '; metadata-free foreign Host reuse denied=' + denied(metadataFreeReuse) +
+      '; duplicate Host new denied=' + duplicateHostOutcomes.filter(denied).length +
+      '/' + duplicateHostOutcomes.length +
+      '; duplicate Host reuse denied=' + duplicateHostReuses.filter(denied).length +
+      '/' + duplicateHostReuses.length +
+      '; alternate-port Host denied=' + denied(alternatePort) +
+      '; alternate-port reuse denied=' + denied(alternatePortReuse) +
+      '; empty Host denied=' + denied(emptyHost) +
+      '; empty Host reuse denied=' + denied(emptyHostReuse) +
       '; canonical-Host negative control denied=' + denied(mismatch) +
       '; proxy-HTTPS foreign Host denied=' + denied(proxyForeign) +
       '; proxy-HTTPS foreign Host reuse denied=' + denied(proxyForeignReuse) +
