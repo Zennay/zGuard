@@ -445,6 +445,48 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
 
+  // Test the actual TV viewer toolbar at narrow remote-control viewports.
+  // A fullscreen control outside the viewport can still pass DOM presence
+  // checks while a real user cannot hit it or reach End session.
+  for (const width of [320, 375, 680, 1280]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {
+      width, height: 568, deviceScaleFactor: 1, mobile: false
+    });
+    const layout = await evaluate(`(() => {
+      const toolbar = document.querySelector('.browser-toolbar');
+      const ids = ['fullscreenButton', 'endButton'];
+      return {
+        viewport: window.innerWidth,
+        visible: !document.getElementById('browserView').hidden,
+        toolbarWidth: toolbar.clientWidth,
+        toolbarScrollWidth: toolbar.scrollWidth,
+        controls: ids.map(id => {
+          const button = document.getElementById(id);
+          const box = button.getBoundingClientRect();
+          return {
+            id, left: box.left, right: box.right,
+            hit: document.elementFromPoint(
+              box.left + box.width / 2, box.top + box.height / 2
+            ) === button
+          };
+        })
+      };
+    })()`);
+    assert.equal(layout.viewport, width,
+      'Chromium test must actually emulate requested TV viewport');
+    assert.equal(layout.visible, true,
+      'viewer should remain visible across viewport changes');
+    assert.ok(layout.toolbarScrollWidth <= layout.toolbarWidth + 1,
+      width + 'px TV toolbar must not clip its contents');
+    for (const control of layout.controls) {
+      assert.ok(control.left >= 0 && control.right <= width + 1 && control.hit,
+        width + 'px TV toolbar must keep ' + control.id + ' physically reachable: ' +
+          JSON.stringify(control));
+    }
+    assert.equal(starts, 1, 'viewport changes must not start extra sessions');
+  }
+  await cdp('Emulation.clearDeviceMetricsOverride');
+
   // Actual Fullscreen API + trusted keyboard activation: fullscreen on the
   // iframe-only stage would hide the toolbar and strand TV users. Chrome must
   // retain real keyboard-accessible Exit fullscreen and End session controls.

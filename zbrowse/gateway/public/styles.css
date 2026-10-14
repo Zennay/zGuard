@@ -313,3 +313,24 @@ h1 {
   .browser-toolbar { padding-inline: .55rem; }
   .toolbar-button { padding: .66rem .75rem; }
 }
+
+/* Keep essential TV controls reachable on narrow remote/mobile viewports.
+   The previous rigid brand + 5.5rem timer + two buttons overflowed at 320px,
+   clipping the fullscreen exit and/or End session action. */
+@media (max-width: 480px) {
+  .browser-toolbar {
+    gap: .35rem;
+    padding-inline: .4rem;
+  }
+  .browser-brand { display: none; }
+  .session-pill {
+    min-width: 0;
+    margin-right: auto;
+    font-size: .74rem;
+  }
+  .toolbar-button {
+    padding: .55rem .45rem;
+    font-size: .78rem;
+    white-space: nowrap;
+  }
+}
