@@ -1313,6 +1313,34 @@ try {
   assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
     'real browser still accepts its reviewed input after invalid attempts');
 
+  // After a transient /api/sites 503, the shipped portal's regular health
+  // callback must re-fetch the catalogue and recover WITHOUT a page reload.
+  // Call the same refreshHealth function registered with the 20-second timer,
+  // avoiding a wall-clock wait while still executing real Chrome fetch/DOM.
+  const beforeAutoCatalogueRecovery = starts;
+  sitesMode = 'offline';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=transient' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Site catalogue unavailable"'
+  ), 'actual TV must show transient catalogue outage');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'transient site API failure may not permit a browser start');
+  sitesMode = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'TV health callback must restore catalogue readiness without reload');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified catalogue recovery must re-enable Open in the same loaded page');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'TV must refill reviewed suggestions after transient outage');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'recovered TV must prefill the genuine reviewed start URL');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+    'successful recovery must clear old failure guidance');
+  assert.equal(starts, beforeAutoCatalogueRecovery,
+    'recovering the catalogue is read-only and must not start a browser');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
