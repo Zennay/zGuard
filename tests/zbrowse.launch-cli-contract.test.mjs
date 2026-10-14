@@ -30,6 +30,8 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zbrowse-launch-qa-'));
 const fakePath = path.join(directory, 'bin');
 fs.mkdirSync(fakePath);
 const capture = path.join(directory, 'browser-args');
+const browserCalls = path.join(directory, 'browser-calls');
+const mkdirCalls = path.join(directory, 'mkdir-calls');
 const mkdirCapture = path.join(directory, 'mkdir-args');
 function shim(name, script) {
   const filename = path.join(fakePath, name);
@@ -37,15 +39,18 @@ function shim(name, script) {
 }
 // These shims keep the production launcher from touching /config or running
 // Chromium; only the shell's actual argument construction gets executed.
-shim('mkdir', 'printf "%s\n" "$@" > "$CAPTURE_MKDIR"');
-shim('chromium', 'printf "%s\n" "$@" > "$CAPTURE_ARGS"');
+shim('mkdir', 'printf "call\n" >> "$CAPTURE_MKDIR_CALLS"; printf "%s\n" "$@" > "$CAPTURE_MKDIR"');
+shim('chromium', 'printf "call\n" >> "$CAPTURE_BROWSER_CALLS"; printf "%s\n" "$@" > "$CAPTURE_ARGS"');
 
 function run(launcher, startUrl) {
   fs.rmSync(capture, { force: true });
   fs.rmSync(mkdirCapture, { force: true });
+  fs.rmSync(browserCalls, { force: true });
+  fs.rmSync(mkdirCalls, { force: true });
   const env = {
     PATH: fakePath + ':/usr/bin:/bin',
-    CAPTURE_ARGS: capture, CAPTURE_MKDIR: mkdirCapture
+    CAPTURE_ARGS: capture, CAPTURE_MKDIR: mkdirCapture,
+    CAPTURE_BROWSER_CALLS: browserCalls, CAPTURE_MKDIR_CALLS: mkdirCalls
   };
   if (startUrl !== undefined) env.START_URL = startUrl;
   const child = spawnSync('/bin/bash', [launcher], {
@@ -55,6 +60,10 @@ function run(launcher, startUrl) {
     'shipped kiosk shell must execute without bypassing command shims: ' +
     (child.stderr || '').slice(0, 400));
   assert.ok(fs.existsSync(capture), 'Chromium launch must reach the shim');
+  assert.equal(fs.readFileSync(browserCalls, 'utf8'), 'call\n',
+    'the actual shell may launch Chromium exactly once');
+  assert.equal(fs.readFileSync(mkdirCalls, 'utf8'), 'call\n',
+    'the shell may prepare directories exactly once');
   const args = fs.readFileSync(capture, 'utf8').trimEnd().split('\n');
   const mkdirArgs = fs.readFileSync(mkdirCapture, 'utf8').trimEnd().split('\n');
   assert.deepEqual(mkdirArgs, ['-p', '/config/chromium', '/config/downloads', '/config/tmp'],
@@ -129,20 +138,26 @@ try {
       '--user-data-dir=/tmp/unsafe'],
     ['early URL launch', '"$start_url"', '"https://unknown.invalid/" "$start_url"'],
     ['unsafe extra debug socket', '--disable-background-networking',
-      '--remote-debugging-port=9222 --disable-background-networking']
+      '--remote-debugging-port=9222 --disable-background-networking'],
+    ['hidden early browser launch', 'exec chromium \\',
+      'chromium "https://unknown.invalid/"\nexec chromium \\'],
+    ['repeated directory preparation',
+      'mkdir -p /config/chromium /config/downloads /config/tmp',
+      'mkdir -p /config/chromium /config/downloads /config/tmp\nmkdir -p /config/chromium /config/downloads /config/tmp']
   ]) {
     assert.ok(shipped.includes(before), label + ': fixture anchor must exist');
     const mutated = shipped.replace(before, after);
     assert.notEqual(mutated, shipped, 'mutation must change launched script');
     const badFile = path.join(directory, 'mutated-start.sh');
     fs.writeFileSync(badFile, mutated, { mode: 0o700 });
-    const args = run(badFile, 'https://approved.invalid/');
-    assert.throws(() => verify(args, 'https://approved.invalid/'), undefined,
-      label + ': unsafe actual CLI must fail the QA contract');
+    assert.throws(() => {
+      const args = run(badFile, 'https://approved.invalid/');
+      verify(args, 'https://approved.invalid/');
+    }, undefined, label + ': unsafe actual CLI must fail the QA contract');
     mutations++;
   }
   console.log('kiosk command-line cold-start contract passed: 3 genuine shell ' +
-    'launches, 6 rejected real-shell mutations; actual MV3 timing remains #302');
+    'launches, 8 rejected real-shell mutations; actual MV3 timing remains #302');
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
 }
