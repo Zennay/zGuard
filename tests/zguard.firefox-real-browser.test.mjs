@@ -254,6 +254,28 @@ try{
   const before=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   await click('#hostile');
   await click('#ordinary');
+  // Browser-native Firefox proof for mixed-case _blank and named popup
+  // targets. Target-side safety callbacks cancel every allowed external
+  // click before any navigation; the negative checks require the extension
+  // to intercept first, so no hostile remote URL is requested.
+  const targetCases=[
+    ['namedHostile','adPopupWindow','https://ads.al5sm.com/popup'],
+    ['namedOrdinary','adPopupWindow','http://127.0.0.1:'+frameServer.address().port+'/safe'],
+    ['mixedHostile','_BlAnK','https://ads.al5sm.com/popup'],
+    ['mixedOrdinary','_BlAnK','http://127.0.0.1:'+frameServer.address().port+'/safe']
+  ];
+  const installed=await evaluate(
+    'window.qa.popupTargetClicks={};'
+    +'for(const [id,target,href] of '+JSON.stringify(targetCases)+'){'
+    +'const a=document.createElement("a");a.id="qa"+id;'
+    +'a.href=href;a.target=target;a.textContent="Local popup-target fixture";'
+    +'a.addEventListener("click",event=>{window.qa.popupTargetClicks[id]++;'
+    +'event.preventDefault();});'
+    +'window.qa.popupTargetClicks[id]=0;document.body.append(a);}'
+    +'return Object.keys(window.qa.popupTargetClicks).length;'
+  );
+  assert.equal(installed,4,'Four safe Firefox popup-target fixtures must exist');
+  for(const [id] of targetCases)await click('#qa'+id);
   await click('#submitHostile');
   await click('#submitOverrideHostile');
   await click('#submitOverrideOrdinary');
@@ -274,6 +296,15 @@ try{
     'Native hostile Firefox link must be stopped before target');
   assert.equal(after.ordinaryClicks,before.ordinaryClicks+1,
     'Ordinary Firefox link must still receive native click');
+  for(const id of ['namedHostile','mixedHostile']){
+    assert.equal(after.popupTargetClicks[id],0,
+      'Native Firefox hostile popup-target click bypassed capture: '+id);
+  }
+  for(const id of ['namedOrdinary','mixedOrdinary']){
+    assert.equal(after.popupTargetClicks[id],1,
+      'Native Firefox harmless popup target must reach its local safety listener: '+id);
+  }
+
   assert.equal(after.hostileSubmits,before.hostileSubmits,
     'Native hostile target=_blank Firefox form must be stopped');
   assert.equal(after.overrideHostileSubmits,before.overrideHostileSubmits,
