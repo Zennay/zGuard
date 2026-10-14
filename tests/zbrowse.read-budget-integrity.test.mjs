@@ -10,7 +10,7 @@ const readiness = fs.readFileSync(
   new URL('./zbrowse.public-origin-readiness.test.mjs', import.meta.url), 'utf8');
 
 function verify(tv, probe) {
-  const tvBudget = /boundedGatewayJson\(response,\s*url === "\/api\/health" \? (\d+) : (\d+), options\.signal\)/.exec(tv);
+  const tvBudget = /url === "\/api\/health" \? (\d+) :\s*url === "\/api\/sites" \? (\d+) :/.exec(tv);
   const publicBudget = /const maximumBytes = route === '\/api\/health' \? (\d+) : (\d+);/.exec(probe);
   assert.ok(tvBudget, 'TV must actually invoke the bounded reader for both public GETs');
   assert.ok(publicBudget, 'public release probe must retain route-specific byte bounds');
@@ -37,7 +37,7 @@ function verify(tv, probe) {
   }
   // Ordinary browser/cache tests must still have the seven-second network
   // timeout: a byte cap alone cannot stop indefinitely trickled tiny chunks.
-  assert.ok(tv.includes('await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)'),
+  assert.ok(tv.includes('await boundedGatewayJson(response, maximumBytes, options.signal)'),
     'bounded JSON reader must receive the same fetch abort signal');
   assert.ok(tv.includes('AbortSignal.timeout(7000)'),
     'gateway read limits must be paired with bounded network waiting');
@@ -46,8 +46,10 @@ function verify(tv, probe) {
 verify(app, readiness);
 let mutations = 0;
 for (const [label, source, oldPart, newPart] of [
-  ['raise TV health cap', 'tv', '? 4096 : 65536', '? 8192 : 65536'],
-  ['raise TV catalogue cap', 'tv', '? 4096 : 65536', '? 4096 : 1048576'],
+  ['raise TV health cap', 'tv', 'url === "/api/health" ? 4096 :',
+    'url === "/api/health" ? 8192 :'],
+  ['raise TV catalogue cap', 'tv', 'url === "/api/sites" ? 65536 :',
+    'url === "/api/sites" ? 1048576 :'],
   ['raise release-probe cap', 'probe', '? 4096 : 65536', '? 4096 : 131072'],
   ['skip Content-Length preflight', 'tv',
     'BigInt(declared) > BigInt(maximumBytes)', 'false'],
@@ -56,12 +58,12 @@ for (const [label, source, oldPart, newPart] of [
   ['remove streamed abort enforcement', 'tv',
     'await readWithSignal(reader, signal)', 'await reader.read()'],
   ['drop signal forwarding', 'tv',
-    'boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)',
-    'boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536)'],
+    'boundedGatewayJson(response, maximumBytes, options.signal)',
+    'boundedGatewayJson(response, maximumBytes)'],
   ['ignore invalid UTF-8', 'tv', 'new TextDecoder("utf-8", { fatal: true })',
     'new TextDecoder("utf-8")'],
   ['parse unbounded direct response', 'tv',
-    'boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)',
+    'boundedGatewayJson(response, maximumBytes, options.signal)',
     'response.json()'],
 ]) {
   const initial = source === 'tv' ? app : readiness;

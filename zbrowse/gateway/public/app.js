@@ -49,7 +49,7 @@ function readWithSignal(reader, signal) {
 async function boundedGatewayJson(response, maximumBytes, signal) {
   const declared = response.headers?.get?.("content-length");
   if (declared !== null && declared !== undefined) {
-    if (!/^\\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+    if (!/^\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
       await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid gateway response size.");
     }
@@ -89,7 +89,7 @@ async function request(url, options = {}) {
   // A reverse proxy may send an enormous 502 HTML/JSON error response: do not
   // parse or buffer it just to display the already reviewed offline state.
   if ((url === "/api/health" || url === "/api/sites") && !response.ok) {
-    try { await response.body?.cancel?.(); } catch { /* disconnected already */ }
+    await cancelQuietly(() => response.body?.cancel?.());
     const error = new Error("Gateway read unavailable.");
     error.status = response.status;
     throw error;
@@ -98,7 +98,7 @@ async function request(url, options = {}) {
   // bodies: their HTTP status is sufficient for reviewed TV guidance / safe
   // lease teardown. Do not parse unbounded HTML/JSON proxy diagnostics.
   if (!response.ok && (url === "/api/session" || url.endsWith("/heartbeat"))) {
-    try { await response.body?.cancel?.(); } catch { /* already closed */ }
+    await cancelQuietly(() => response.body?.cancel?.());
     const error = new Error("Gateway operation rejected.");
     error.status = response.status;
     throw error;
@@ -107,18 +107,36 @@ async function request(url, options = {}) {
   // A proxy-generated 200/202/206 is not evidence of Docker cleanup, even
   // when its body looks successful. Keep the old token locked for retry.
   if (options.method === "DELETE" && response.ok && response.status !== 204) {
+    await cancelQuietly(() => response.body?.cancel?.());
     throw new Error("Unexpected session release status.");
+  }
+  // An intermediary's 500/502/503/429 response cannot confirm teardown.
+  // Do not read arbitrary, potentially unbounded upstream diagnostics.
+  // A gateway JSON 404/410 is the only error that may prove release.
+  if (options.method === "DELETE" && !response.ok) {
+    const contentType = response.headers?.get?.("content-type") || "";
+    if ((response.status !== 404 && response.status !== 410) ||
+        !/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
+      const error = new Error("Session release not confirmed.");
+      error.status = response.status;
+      throw error;
+    }
   }
   // These are read-only gateway routes with a 200 JSON contract. A proxy
   // returning 202/203/205/206 must not advertise readiness or populate a
   // trusted site catalogue from a status it cannot authoritatively confirm.
   if ((url === "/api/health" || url === "/api/sites") && response.ok) {
-    if (response.status !== 200) throw new Error("Unexpected gateway read status.");
+    if (response.status !== 200) {
+      await cancelQuietly(() => response.body?.cancel?.());
+      throw new Error("Unexpected gateway read status.");
+    }
     // A parseable JSON body with a proxy-provided HTML/plain-text label is
     // not an authoritative health or curated-site response. Both actual
     // Express routes send application/json, optionally with a charset.
     const mediaType = response.headers?.get?.("content-type") || "";
     if (!/^application\/json(?:\s*;|$)/i.test(mediaType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid gateway read response format.");
     }
   }
@@ -131,16 +149,25 @@ async function request(url, options = {}) {
     // A proxy-generated 202 Accepted, 203 Non-Authoritative Information or
     // 206 Partial Content is not confirmation, even with plausible JSON.
     if (response.status !== 200) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Unexpected heartbeat status.");
     }
     const contentType = response.headers?.get?.("content-type") || "";
     if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+      await cancelQuietly(() => response.body?.cancel?.());
       throw new Error("Invalid heartbeat response format.");
     }
   }
-  const body = response.ok && (url === "/api/health" || url === "/api/sites")
-    ? await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536, options.signal)
-    : await response.json().catch(() => ({}));
+  // Bound *decoded* JSON for every API response, not only readiness GETs.
+  // A compressed or chunked session response can expand far beyond its wire
+  // Content-Length. Never invoke unbounded Response.json() on a bearer route.
+  const maximumBytes = url === "/api/health" ? 4096 :
+    url === "/api/sites" ? 65536 :
+    url === "/api/session" ? 4096 :
+    options.method === "DELETE" ? 512 :
+    url.endsWith("/heartbeat") ? 1024 : 0;
+  if (!maximumBytes) throw new Error("Unexpected gateway response route.");
+  const body = await boundedGatewayJson(response, maximumBytes, options.signal);
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");
     error.status = response.status;
