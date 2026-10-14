@@ -67,9 +67,11 @@ const server = await new Promise((resolve, reject) => {
   listening.once('error', reject);
 });
 try {
-  async function postStartUrl(url) {
-    sessions.clear();
-    sessionsByIp.clear();
+  async function postStartUrl(url, preserveExisting = false) {
+    if (!preserveExisting) {
+      sessions.clear();
+      sessionsByIp.clear();
+    }
     const before = starts;
     const reply = await fetch('http://' + ip + ':' + server.address().port +
       '/api/session', {
@@ -85,6 +87,11 @@ try {
   assert.deepEqual(approved, { status: 201, newStarts: 1 },
     'actual HTTP route must still admit a reviewed start URL');
   const authority = new URL(sites[0].url).host;
+  // Source-bound regression for the existing-session fast path. An accepted
+  // request for an existing client must not bypass userinfo validation and
+  // return its bearer-bearing HTTP 200 for a credential-bearing start URL.
+  const reusedCredential = await postStartUrl('https://user:pass@' + authority + '/watch', true);
+  const reusedDenied = reusedCredential.status === 400 && reusedCredential.newStarts === 0;
   const lookalike = await postStartUrl('https://' + authority + '.attacker.invalid/watch');
   assert.deepEqual(lookalike, { status: 400, newStarts: 0 },
     'actual HTTP route must reject an unreviewed lookalike origin');
@@ -94,7 +101,9 @@ try {
     ['user-only', 'https://user@' + authority + '/watch'],
     ['password-only', 'https://:pass@' + authority + '/watch'],
     ['encoded-user', 'https://us%65r@' + authority + '/watch'],
-    ['encoded-password', 'https://user:%70ass@' + authority + '/watch']
+    ['encoded-password', 'https://user:%70ass@' + authority + '/watch'],
+    ['encoded-at-in-user', 'https://user%40attacker.invalid@' + authority + '/watch'],
+    ['multiple-at', 'https://user@attacker.invalid@' + authority + '/watch']
   ];
   const failures = [];
   for (const [label, candidate] of credentialCases) {
@@ -103,12 +112,15 @@ try {
   }
   assert.equal(releases, starts, 'every synthetic browser admission must release reservation');
   if (strict) {
+    assert.equal(reusedDenied, true,
+      'existing-session fast path must not return token-bearing HTTP 200 for credential URLs (issue #266)');
     assert.deepEqual(failures, [],
       'real HTTP start URL guard accepts embedded userinfo (issue #266): ' + failures.join(', '));
     console.log('Real HTTP credential-free start URL acceptance PASS');
   } else {
     console.log('Shipped HTTP start URL guard validates reviewed origin/lookalikes; ' +
       'userinfo cases accepted=' + failures.length + '/' + credentialCases.length +
+      ', existing-session credential reuse rejected=' + reusedDenied +
       ' (strict gate requires --require-credential-free; issue #266 remains open)');
   }
 } finally {
