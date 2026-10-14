@@ -219,8 +219,10 @@ const server = http.createServer(async (req, res) => {
         '/s/' + syntheticToken + '/';
       const payload = {
         token: syntheticToken, viewerUrl,
-        maxMinutes: 15, expiresAt: viewerResponseMode === 'expired' ?
-          Date.now() - 1000 : Date.now() + 900_000
+        maxMinutes: viewerResponseMode === 'duration-mismatch' ? 1 : 15,
+        expiresAt: viewerResponseMode === 'expired' ? Date.now() - 1000 :
+          viewerResponseMode === 'overlong-lease' ? Date.now() + 3_600_000 :
+          Date.now() + 900_000
       };
       const successStatus = nextStartStatus ?? 201;
       nextStartStatus = null;
@@ -830,7 +832,8 @@ try {
   // navigation to a malicious viewer, javascript: URL or another token.
   // These use the actual shipped DOM and iframe in real Chromium, rather
   // than calling checkedSessionPayload() in a VM with no browser.
-  const unsafeViewerModes = ['external', 'javascript', 'mismatched-token'];
+  const unsafeViewerModes = ['external', 'javascript', 'mismatched-token',
+    'overlong-lease', 'duration-mismatch'];
   for (const mode of unsafeViewerModes) {
     viewerResponseMode = mode;
     const before = starts;
