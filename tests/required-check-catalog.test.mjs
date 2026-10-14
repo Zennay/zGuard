@@ -56,8 +56,12 @@ function verifyRequiredJob(entry, source) {
   const job = matched[0];
   assert.doesNotMatch(job, /^    (?:if|needs|continue-on-error):/m,
     entry.check + ': required job may not be conditional');
-  assert.doesNotMatch(job, /^\s+continue-on-error:\s*true\s*$/m,
-    entry.check + ': required job may not ignore failures');
+  assert.doesNotMatch(job, /^\s+continue-on-error:\s*(?:true|\$\{\{)/m,
+    entry.check + ': required job or step may not mask failures with literals or expressions');
+  assert.doesNotMatch(job, /^\s{8}if:\s*\S/m,
+    entry.check + ': required check steps must not silently skip their test commands');
+  assert.doesNotMatch(job, /^\s{8}continue-on-error:/m,
+    entry.check + ': required steps must not tolerate test failures');
   assert.match(job, /^    runs-on:\s*ubuntu-(?:latest|24\.04)\s*$/m,
     entry.check + ': required job must run on hosted Ubuntu');
   assert.match(job, /^        uses: actions\/checkout@[a-f0-9]{40}\b/m,
@@ -141,6 +145,23 @@ mutation('default branch checkout', original.replace(
 mutation('missing exact SHA assertion', original.replace(
   'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', 'echo no-verification'));
 
+// Job status can be success even when checkout or the actual validation step
+// is conditional/allowed to fail. Probe a real workflow's step YAML in memory,
+// including GitHub expressions that evaluate to a truthy skip/mask setting.
+for (const [label, target, replacement] of [
+  ['conditional checkout step', '      - name: Checkout',
+    '      - name: Checkout\n        if: false'],
+  ['conditional test step', '      - name: Validate repository CI policy',
+    '      - name: Validate repository CI policy\n        if: ${{ false }}'],
+  ['failure-masked test step', '      - name: Validate repository CI policy',
+    '      - name: Validate repository CI policy\n        continue-on-error: true'],
+  ['expression-masked test step', '      - name: Validate repository CI policy',
+    '      - name: Validate repository CI policy\n        continue-on-error: ${{ true }}']
+]) {
+  assert.ok(original.includes(target), label + ': required workflow mutation anchor missing');
+  mutation(label, original.replace(target, replacement));
+}
+
 // Event mutation controls are separate from job controls: a perfect job
 // still gives false assurance when triggered only for closed PRs or when
 // merged main does not run the same checks.
@@ -160,4 +181,4 @@ eventMutation('filtered main push',
   original.replace('      - main\n',
     '      - main\n    paths:\n      - docs/**\n'));
 
-console.log(`Required-check catalog contract passed for ${catalog.checks.length} always-on exact-head PR checks plus 8 mutation proofs`);
+console.log(`Required-check catalog contract passed for ${catalog.checks.length} always-on exact-head PR checks plus 12 mutation proofs`);
