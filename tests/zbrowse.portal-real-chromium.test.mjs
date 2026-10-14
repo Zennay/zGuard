@@ -864,6 +864,7 @@ try {
   // Take the cleanup baseline after all unsafe viewer cases. A new
   // rejected fixture must not invalidate unrelated page-exit/lease checks.
   const deletesAfterUnsafeViewerCases = deletions;
+  const startsAfterUnsafeViewerCases = starts;
 
   // Reproduce a pagehide event *while* the real browser's session POST is
   // waiting on the local gateway. This keeps the QA tab alive so the late
@@ -1004,7 +1005,7 @@ try {
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 9, 'valid retry after BFCache teardown');
+  await until(() => starts === startsAfterUnsafeViewerCases + 1, 'valid retry after BFCache teardown');
   assert.equal(deletions, deletesAfterUnsafeViewerCases + 5, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
@@ -1020,7 +1021,7 @@ try {
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
   assert.equal(deletions, deletesAfterUnsafeViewerCases + 6, 'browser pagehide must release the final browser exactly once');
-  assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 1, 'only explicitly requested browser attempts should be sent');
 
   // Drive a *native Chromium history Back*, not a synthetic pageshow event.
   // Chrome may BFCache the previous document or reload it; either way a
@@ -1048,13 +1049,13 @@ try {
     'document.getElementById("browserFrame").getAttribute("src")'
   ), '/s/' + syntheticToken + '/',
   'history restoration may not resurrect the revoked viewer iframe');
-  assert.equal(starts, 9, 'history return must not silently allocate a new browser');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 1, 'history return must not silently allocate a new browser');
   const afterHistoryDeletions = deletions;
   assert.ok(afterHistoryDeletions >= 10 && afterHistoryDeletions <= 11,
     'history return may retry the abandoned DELETE only if page is restored from BFCache');
 
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 10, 'fresh browser start after native history Back');
+  await until(() => starts === startsAfterUnsafeViewerCases + 2, 'fresh browser start after native history Back');
   assert.ok(releaseStart, 'real history return should use the shipped POST path');
   releaseStart();
   releaseStart = null;
@@ -1064,7 +1065,7 @@ try {
   await evaluate('document.getElementById("endButton").click(); true');
   await until(() => deletions === afterHistoryDeletions + 1,
     'new post-history browser must be releasable through the actual End button');
-  assert.equal(starts, 10, 'no duplicate starts across browser history recovery');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 2, 'no duplicate starts across browser history recovery');
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'prior history-recovery End must complete before starting a separate race fixture');
