@@ -485,7 +485,9 @@ function showBrowser() {
     }
   }, { once: true });
   state.viewerLoadTimeout = window.setTimeout(() => {
-    if (state.session?.token !== session.token) return;
+    // Object identity prevents a stale callback affecting a later session
+    // even if a gateway reuses the same bearer for its original owner.
+    if (state.session !== session) return;
     endSession().then(() => {
       // A release failure has its own stronger warning and retains admission
       // lock. Never overwrite that or a subsequent successful viewer.
