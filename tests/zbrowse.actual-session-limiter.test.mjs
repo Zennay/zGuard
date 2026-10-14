@@ -77,6 +77,23 @@ assert.deepEqual(complete.map(x => x.status), [
 assert.equal(complete[0].identity.sessionIdentity, '198.51.100.20');
 assert.equal(complete[0].identity.limiterIdentity, '198.51.100.20');
 
+// False positives matter too: one overloaded TV client must not exhaust
+// a separate legitimate client's quota just because both share the same
+// last trusted reverse-proxy hop. Independently scoped *validated* right-side
+// client addresses should retain their own request budgets.
+const independent = await scenario(i =>
+  '203.0.113.' + (10 + i) + ', 198.51.100.' + (20 + i) + ', 10.0.0.2');
+assert.deepEqual(independent.map(x => x.status), Array(limit + 1).fill(200),
+  'distinct validated client identities must not share a rate-limit bucket');
+for (let i = 0; i <= limit; i += 1) {
+  const expected = '198.51.100.' + (20 + i);
+  assert.equal(independent[i].identity.sessionIdentity, expected,
+    'session identity must track each independently verified client');
+  assert.equal(independent[i].identity.limiterIdentity, expected,
+    'native rate limit identity must match verified client for valid chains');
+}
+
+
 // Incomplete chains fall back to the TCP peer for session ownership. The
 // native Express limiter must not let left-side forged client IPs mint quota.
 const incomplete = await scenario(i => '203.0.113.' + (i + 10));
@@ -156,7 +173,8 @@ if (strict) {
   console.log('Source-tethered production session limiter identity parity PASS');
 } else {
   console.log('Source-tethered gateway session limiter validated for complete chains: ' +
-    'limit=' + limit + ', incomplete-chain identityParity=' + matched +
+    'limit=' + limit + ', independentClients=' + independent.length + '/' +
+    independent.length + ' admitted' + ', incomplete-chain identityParity=' + matched +
     ', quotaEnforced=' + enforced +
     ', malformed-chain identityParity=' + malformedMatched +
     ', malformed-chain quotaEnforced=' + malformedEnforced +
