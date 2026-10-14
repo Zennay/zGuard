@@ -80,6 +80,12 @@ try {
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   git('add', '--', 'tests/repository-secret-hygiene.test.mjs', 'zbrowse/.env.example');
   accept('benign NUL-containing tracked binary');
+  // Real repositories normally have HEAD. Commit a clean baseline so the
+  // staged mismatch fixtures exercise an actual diff against a prior tree,
+  // rather than relying only on the unborn-branch index case.
+  git('-c', 'user.name=QA Fixture', '-c', 'user.email=qa@invalid.example',
+    'commit', '-q', '-m', 'safe synthetic baseline');
+  accept('clean committed baseline');
 
   const first = 'sk' + '-' + 'A'.repeat(32);
   reject('NUL-padded API secret', 'OpenAI-style secret',
@@ -194,6 +200,21 @@ try {
     'literal terminal escape must never be emitted into CI logs');
   assert.equal((unsafeResult.stdout + unsafeResult.stderr).includes(first), false,
     'diagnostics must not print the matched synthetic secret');
+  // A hostile path can also contain a staged-only secret with clean on-disk
+  // content. Require Git's index-blob lookup to preserve literal filenames
+  // while the published diagnostic remains JSON escaped.
+  const safeTracked = Buffer.from([0, 255, 128, 10, 0, 40]);
+  fs.writeFileSync(path.join(tmp, unsafeRelative), safeTracked);
+  const indexOnlyUnsafe = runScanner();
+  assert.equal(indexOnlyUnsafe.status, 1,
+    'staged-only credential in a path containing newline/ESC must be rejected');
+  assert.ok(indexOnlyUnsafe.stderr.includes(
+    JSON.stringify(unsafeRelative + ' (staged index)')),
+    'staged-only warning must escape untrusted Git path bytes');
+  assert.ok(!(indexOnlyUnsafe.stdout + indexOnlyUnsafe.stderr).includes(first),
+    'staged-only warning must not disclose synthetic credential');
+  assert.equal(indexOnlyUnsafe.stderr.includes(unsafeRelative), false,
+    'raw hostile Git filename must never reach scanner log output');
   // The fixture was staged but never committed: force its removal from the
   // disposable Git index and disk without emitting the unsafe pathname.
   git('rm', '-f', '-q', '--', unsafeRelative);
@@ -229,7 +250,7 @@ try {
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
-    'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, divergent staged/worktree credential checks, benign public headers, and recovery');
+    'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, committed-baseline staged/worktree and hostile-index-path checks, benign public headers, and recovery');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
