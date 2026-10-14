@@ -68,7 +68,8 @@ await new Promise((resolve, reject) => {
   server.listen(0, ip, resolve);
 });
 const port = server.address().port;
-const open = async (requestPathValue, extraHeaders = '') => new Promise((resolve, reject) => {
+const open = async (requestPathValue, extraHeaders = '', hostHeader = '127.0.0.1:' + port) =>
+  new Promise((resolve, reject) => {
   const socket = net.createConnection({ host: ip, port });
   let received = '';
   let settled = false;
@@ -82,7 +83,7 @@ const open = async (requestPathValue, extraHeaders = '') => new Promise((resolve
   socket.setTimeout(4000, () => complete(new Error('local WebSocket fixture timed out')));
   socket.once('connect', () => {
     socket.write('GET ' + requestPathValue + ' HTTP/1.1\r\n' +
-      'Host: 127.0.0.1:' + port + '\r\n' +
+      'Host: ' + hostHeader + '\r\n' +
       'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
       'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' +
       'Sec-WebSocket-Version: 13\r\n' + extraHeaders + '\r\n');
@@ -171,6 +172,23 @@ try {
   assert.equal(seen.length, 3,
     'reviewed Origin must forward exactly one authenticated browser upgrade');
   const beforeForeign = seen.length;
+  // Host authority and Origin are independent trust boundaries. Ingress
+  // must not allow an unknown Host to proxy a bearer stream just because
+  // the request claims the reviewed TV Origin (or omits browser metadata).
+  // All calls use real loopback TCP; no public ingress is queried.
+  const foreignHost = 'unreviewed.invalid';
+  const unsafeHostCases = [
+    ['unreviewed Host + reviewed TV Origin',
+      'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\nSec-Fetch-Site: same-origin\r\n'],
+    ['unreviewed Host + spoofed matching Origin',
+      'Origin: http://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n'],
+    ['unreviewed Host + no browser metadata', '']
+  ];
+  const unsafeHostUpgrades = [];
+  for (const [name, headers] of unsafeHostCases) {
+    const response = await open(target, headers, foreignHost);
+    unsafeHostUpgrades.push([name, /^HTTP\/1\.1 101/m.test(response)]);
+  }
   const foreign = await open(target,
     'Origin: https://attacker.invalid\r\nSec-Fetch-Site: cross-site\r\n');
   const sandboxed = await open(target,
@@ -215,6 +233,8 @@ try {
       'cross-site WebSocket upgrades must be rejected before reaching browser proxy (issue #342)');
     assert.deepEqual(disguised.filter(([, accepted]) => accepted), [],
       'lookalike/downgraded or metadata-spoofed Origins must not bypass strict WebSocket isolation');
+    assert.deepEqual(unsafeHostUpgrades.filter(([, accepted]) => accepted), [],
+      'unreviewed Host must not reach authenticated browser WebSocket proxy under any Origin metadata');
     console.log('Shipped real TCP WebSocket cross-site Origin isolation passed');
   } else {
     console.log('Shipped real TCP WebSocket owner/isolation controls passed; ' +
@@ -224,6 +244,8 @@ try {
       ', untrusted browser proxy forwards=' + newUpgrades +
       ', lookalike Origins upgraded=' + disguised.filter(([, accepted]) => accepted).length +
       '/' + disguised.length +
+      ', unreviewed Host upgrades=' + unsafeHostUpgrades.filter(([, accepted]) => accepted).length +
+      '/' + unsafeHostUpgrades.length +
       ' (strict --require-websocket-origin is not a runtime fix)');
   }
 } finally {
