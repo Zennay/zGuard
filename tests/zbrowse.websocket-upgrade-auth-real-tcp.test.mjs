@@ -191,6 +191,16 @@ try {
     ['unreviewed Host + spoofed matching Origin',
       'Origin: http://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n', foreignHost],
     ['unreviewed Host + no browser metadata', '', foreignHost],
+    ['unreviewed Host with forwarded canonical host + TV Origin',
+      reviewedTvHeaders + 'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Proto: https\r\n', foreignHost],
+    ['unreviewed Host with forwarded canonical host + matching forged Origin',
+      'Origin: https://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n' +
+        'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Proto: https\r\n', foreignHost],
+    ['unreviewed Host with conflicting forwarded hosts',
+      reviewedTvHeaders + 'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Host: unreviewed.invalid\r\n', foreignHost],
     // Raw TCP intentionally preserves duplicate Host fields. A reverse
     // proxy and Node can disagree about which authority a request names.
     ['canonical then foreign Host', reviewedTvHeaders,
