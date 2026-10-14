@@ -239,6 +239,42 @@ function testWorkflow(name, gates, yaml) {
 const [sample, sampleGates] = matrix.find(([name]) =>
   name === 'zbrowse-json-origin-isolation.yml');
 const fixture = fs.readFileSync(path.join(workflowDir, sample), 'utf8');
+
+// Issue #342 has been remediated in the shipped gateway: prevent regression
+// by requiring the browser-simple non-JSON admission test UNCONDITIONALLY on
+// every PR and main push, not hidden behind workflow_dispatch inputs.
+// Only exact executable shell lines before the opt-in block qualify as proof.
+const mandatorySimplePost = 'node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only';
+function assertMandatorySimplePost(yaml) {
+  const optIn = yaml.indexOf('if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then');
+  assert.ok(optIn > 0, 'origin workflow must retain its separate manual opt-in');
+  const runStep = yaml.indexOf('      - name: Exercise shipped JSON origin boundary');
+  assert.ok(runStep >= 0 && runStep < optIn,
+    'mandatory admission proof must live in the actual executed origin job');
+  const unconditional = yaml.slice(runStep, optIn).split(/\r?\n/);
+  assert.ok(unconditional.some(line => line.trim() === mandatorySimplePost),
+    'real HTTP browser-simple POST JSON-only acceptance must always run before optional dispatch');
+  assert.equal((yaml.match(/node tests\/zbrowse\.cross-origin-simple-post-real-http\.test\.mjs --require-json-only/g) || []).length, 1,
+    'do not duplicate the gate in an optional path or comment for false green evidence');
+}
+assertMandatorySimplePost(fixture);
+for (const mutated of [
+  fixture.replace(mandatorySimplePost,
+    'node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs'),
+  fixture.replace(mandatorySimplePost,
+    'echo node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only'),
+  fixture.replace(mandatorySimplePost,
+    '# node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only'),
+  fixture.replace(
+    mandatorySimplePost + '\n          if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then',
+    'if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then\n          ' + mandatorySimplePost)
+]) {
+  assert.notEqual(mutated, fixture,
+    'mutation fixture must alter the always-on JSON-only gate');
+  assert.throws(() => assertMandatorySimplePost(mutated),
+    /must always run|do not duplicate|real HTTP browser-simple/,
+    'removing or masking mandatory simple POST proof must fail the source contract');
+}
 const tamper = (original, replacement, reason) => {
   assert.notEqual(original, replacement, reason + ': mutation must change fixture');
   assert.throws(() => testWorkflow(sample, sampleGates, replacement),
