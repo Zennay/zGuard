@@ -78,7 +78,7 @@ try {
   const forgedHost = 'attacker.invalid';
   const forgedOrigin = 'http://' + forgedHost;
   async function submit({ host, origin, fetchSite = 'same-origin', reuse = false,
-    forwardedProto }) {
+    forwardedProto, forwardedHost }) {
     if (!reuse) {
       sessions.clear();
       sessionsByIp.clear();
@@ -94,6 +94,7 @@ try {
     if (origin !== undefined) headers.Origin = origin;
     if (fetchSite !== null) headers['Sec-Fetch-Site'] = fetchSite;
     if (forwardedProto) headers['X-Forwarded-Proto'] = forwardedProto;
+    if (forwardedHost) headers['X-Forwarded-Host'] = forwardedHost;
     // http.request's flat header-array form preserves duplicate Host lines
     // on the actual TCP request. Test both field orders, not a JS mock.
     const wireHeaders = Array.isArray(host)
@@ -209,6 +210,20 @@ try {
     origin: undefined, fetchSite: null, forwardedProto: 'https' });
   const proxyMetadataFreeReuse = await submit({ host: forgedHost,
     origin: undefined, fetchSite: null, forwardedProto: 'https', reuse: true });
+  // A reverse proxy may forward its own canonical authority separately
+  // from the client-controlled HTTP Host. X-Forwarded-Host must never
+  // retroactively bless an unreviewed Host or expose the existing bearer.
+  const forwardedHostForeign = await submit({ host: forgedHost,
+    origin: publicTv, forwardedProto: 'https', forwardedHost: legitimateHost });
+  const forwardedHostForeignReuse = await submit({ host: forgedHost,
+    origin: publicTv, forwardedProto: 'https', forwardedHost: legitimateHost,
+    reuse: true });
+  const forwardedHostSpoofedOrigin = await submit({ host: forgedHost,
+    origin: 'https://' + forgedHost, forwardedProto: 'https',
+    forwardedHost: legitimateHost });
+  const forwardedHostSpoofedReuse = await submit({ host: forgedHost,
+    origin: 'https://' + forgedHost, forwardedProto: 'https',
+    forwardedHost: legitimateHost, reuse: true });
   const proxyApproved = await submit({ host: legitimateHost,
     origin: 'https://' + legitimateHost, forwardedProto: 'https' });
   assert.ok(admitted(proxyApproved, 201),
@@ -240,7 +255,11 @@ try {
       ['proxy reviewed TV start', proxyTvForeign],
       ['proxy reviewed TV reuse', proxyTvForeignReuse],
       ['proxy metadata-free start', proxyMetadataFree],
-      ['proxy metadata-free reuse', proxyMetadataFreeReuse]
+      ['proxy metadata-free reuse', proxyMetadataFreeReuse],
+      ['forwarded canonical Host + reviewed TV start', forwardedHostForeign],
+      ['forwarded canonical Host + reviewed TV reuse', forwardedHostForeignReuse],
+      ['forwarded canonical Host + spoofed Origin start', forwardedHostSpoofedOrigin],
+      ['forwarded canonical Host + spoofed Origin reuse', forwardedHostSpoofedReuse]
     ]) {
       assert.ok(denied(outcome),
         'unreviewed Host must fail under configured HTTPS proxy: ' + name);
@@ -268,6 +287,14 @@ try {
       '; proxy-HTTPS reviewed TV reuse denied=' + denied(proxyTvForeignReuse) +
       '; proxy-HTTPS metadata-free Host denied=' + denied(proxyMetadataFree) +
       '; proxy-HTTPS metadata-free reuse denied=' + denied(proxyMetadataFreeReuse) +
+      '; forwarded canonical Host with unreviewed wire Host TV start denied=' +
+      denied(forwardedHostForeign) +
+      '; forwarded canonical Host with unreviewed wire Host TV reuse denied=' +
+      denied(forwardedHostForeignReuse) +
+      '; forwarded canonical Host with spoofed Origin denied=' +
+      denied(forwardedHostSpoofedOrigin) +
+      '; forwarded canonical Host with spoofed Origin reuse denied=' +
+      denied(forwardedHostSpoofedReuse) +
       '. No public reverse-proxy or deployed DNS exposure tested.');
   }
 } finally {
