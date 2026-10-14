@@ -57,6 +57,17 @@ async function getJson(origin, route, fetcher) {
     /^application\/json(?:\s*;|$)/i,
     route + ': API must return JSON, not a static-site HTML fallback'
   );
+  if (route === '/api/health') {
+    // Request cache: no-store is only a client preference, not proof of
+    // server/reverse-proxy policy. This is a live-capacity status endpoint:
+    // stale cached "ok" must never certify production browser readiness.
+    const directives = (response.headers.get('cache-control') || '')
+      .split(',').map(directive => directive.trim().toLowerCase());
+    assert.ok(directives.includes('no-store'),
+      '/api/health: server must declare Cache-Control: no-store');
+    assert.equal(directives.includes('public'), false,
+      '/api/health: must not allow public response caching');
+  }
   let data;
   try {
     data = await response.json();
@@ -123,10 +134,14 @@ const sampleSites = {
   maxSessionMinutes: 15
 };
 
-function response(value, status = 200, contentType = 'application/json; charset=utf-8') {
+function response(value, status = 200, contentType = 'application/json; charset=utf-8',
+  cacheControl = 'no-store') {
   return new Response(contentType.startsWith('application/json') ? JSON.stringify(value) : '<html>Offline</html>', {
     status,
-    headers: { 'content-type': contentType }
+    headers: {
+      'content-type': contentType,
+      ...(cacheControl === null ? {} : { 'cache-control': cacheControl })
+    }
   });
 }
 
@@ -159,6 +174,34 @@ async function selfTest() {
       : response(sampleSites));
   assert.equal(busy.connected, true, 'busy is not offline');
   assert.equal(busy.available, false, 'full capacity must be reported as busy');
+
+  // The production probe must independently verify server cache policy,
+  // even though the read-only HTTP client sets cache: "no-store" itself.
+  // Fail before checking sites if a purported healthy gateway could be stale.
+  for (const [label, cacheControl, expected] of [
+    ['missing header', null, /must declare Cache-Control: no-store/],
+    ['no-cache is not no-store', 'private, no-cache', /must declare Cache-Control: no-store/],
+    ['directives must not match by substring', 'no-store=false',
+      /must declare Cache-Control: no-store/],
+    ['public and no-store conflict', 'public, no-store',
+      /must not allow public response caching/]
+  ]) {
+    let inspectedSites = false;
+    await assert.rejects(checkPublicReadiness(async url => {
+      if (url.endsWith('/api/health')) {
+        return response(sampleHealth, 200, 'application/json; charset=utf-8', cacheControl);
+      }
+      inspectedSites = true;
+      return response(sampleSites);
+    }), expected, label + ': unsafe cache policy must fail public release check');
+    assert.equal(inspectedSites, false,
+      label + ': a failed health cache policy must stop before site catalogue');
+  }
+  assert.equal((await checkPublicReadiness(async url =>
+    url.endsWith('/api/health')
+      ? response(sampleHealth, 200, 'application/json; charset=utf-8', 'private, No-Store')
+      : response(sampleSites))).connected, true,
+  'case-insensitive no-store with private directive must remain acceptable');
 
   await assert.rejects(checkPublicReadiness(async () => response({}, 503)), /HTTP 503/);
   for (const code of [201, 202, 206]) {
