@@ -513,6 +513,46 @@ async function selfTest() {
   await assert.rejects(checkPublicReadiness(async () => rejectsCancel),
     /advertised JSON body exceeds 4096 bytes/);
 
+  // A broken server/stream implementation may NEVER resolve cancellation.
+  // The rejection and safe public-readiness verdict must not wait forever on
+  // cleanup for either route, including both preflight and streamed rejects.
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const phase of ['preflight', 'stream']) {
+      let attemptedCancels = 0;
+      let reads = 0;
+      const budget = route === '/api/health' ? 4096 : 65536;
+      const unresolved = new Response(new ReadableStream({
+        pull(controller) {
+          reads++;
+          controller.enqueue(new Uint8Array(budget + 1).fill(32));
+        },
+        cancel() {
+          attemptedCancels++;
+          return new Promise(() => {}); // Intentional never-settling upstream.
+        }
+      }, { highWaterMark: 0 }), {
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+          ...(phase === 'preflight' ? { 'content-length': String(budget + 1) } : {})
+        }
+      });
+      const began = Date.now();
+      const fetcher = async url =>
+        url.endsWith(route) ? unresolved :
+          response(url.endsWith('/api/health') ? sampleHealth : sampleSites);
+      await assert.rejects(checkPublicReadiness(fetcher),
+        phase === 'preflight' ? /advertised JSON body exceeds/ : /JSON body exceeds/,
+        route + ' ' + phase + ': cleanup cannot override the invalid-body rejection');
+      assert.ok(Date.now() - began < 1500,
+        route + ' ' + phase + ': a hung stream.cancel() must be bounded');
+      assert.equal(attemptedCancels, 1,
+        route + ' ' + phase + ': transport cancellation must be attempted');
+      assert.equal(reads, phase === 'preflight' ? 0 : 1,
+        route + ' ' + phase + ': avoid unnecessary body reads after refusal');
+    }
+  }
+
   const streamedOversize = async url => url.endsWith('/api/health')
     ? response(sampleHealth)
     : new Response(new ReadableStream({
