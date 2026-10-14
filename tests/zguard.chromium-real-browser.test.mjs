@@ -474,26 +474,56 @@ async function runBrowser(extensionPath, profilePath, url) {
             document.body.append(map, img);
             const state = {
               reachedArea: false, eventTrusted: false, seenAreaAtCapture: false,
-              cancelledByFixture: false
+              cancelledByFixture: false,
+              keyboard: {
+                focused: false, enterTrusted: false, seenAreaAtCapture: false,
+                reachedArea: false, eventTrusted: false, detail: null,
+                cancelledByFixture: false
+              }
             };
             window.__zguardImageMapState = state;
+            window.__zguardImageMapArea = area;
             function safety(event) {
               if (!event.composedPath().includes(area)) return;
-              state.seenAreaAtCapture = event.target === area;
+              if (event.detail === 0) {
+                state.keyboard.seenAreaAtCapture = event.target === area;
+              } else {
+                state.seenAreaAtCapture = event.target === area;
+              }
               event.preventDefault();
-              state.cancelledByFixture = event.defaultPrevented;
+              if (event.detail === 0) {
+                state.keyboard.cancelledByFixture = event.defaultPrevented;
+              } else {
+                state.cancelledByFixture = event.defaultPrevented;
+              }
             }
             function target(event) {
-              state.reachedArea = true;
-              state.eventTrusted = event.isTrusted;
+              if (event.detail === 0) {
+                state.keyboard.reachedArea = true;
+                state.keyboard.eventTrusted = event.isTrusted;
+                state.keyboard.detail = event.detail;
+              } else {
+                state.reachedArea = true;
+                state.eventTrusted = event.isTrusted;
+              }
               event.preventDefault();
-              state.cancelledByFixture = event.defaultPrevented;
+              if (event.detail === 0) {
+                state.keyboard.cancelledByFixture = event.defaultPrevented;
+              } else {
+                state.cancelledByFixture = event.defaultPrevented;
+              }
+            }
+            function keydown(event) {
+              if (event.key === 'Enter') state.keyboard.enterTrusted = event.isTrusted;
             }
             document.addEventListener('click', safety, true);
-            area.addEventListener('click', target, { once: true });
+            area.addEventListener('click', target);
+            area.addEventListener('keydown', keydown);
             window.__zguardImageMapCleanup = () => {
               document.removeEventListener('click', safety, true);
               area.removeEventListener('click', target);
+              area.removeEventListener('keydown', keydown);
+              delete window.__zguardImageMapArea;
               img.remove();
               map.remove();
             };
@@ -517,6 +547,27 @@ async function runBrowser(extensionPath, profilePath, url) {
         ]) {
           await cdp('Input.dispatchMouseEvent', { ...position, ...params });
         }
+        // Press trusted Enter on the focused HTMLAreaElement, rather than
+        // dispatching a synthetic click. Keyboard activation synthesizes a
+        // click with detail=0; the same fixture safety listener cancels it
+        // before any target=_blank navigation can leave localhost.
+        const focused = await cdp('Runtime.evaluate', {
+          expression: '(() => { const area = window.__zguardImageMapArea; ' +
+            'area.focus(); const result = document.activeElement === area; ' +
+            'window.__zguardImageMapState.keyboard.focused = result; return result; })()',
+          returnByValue: true
+        });
+        assert.equal(focused.exceptionDetails, undefined,
+          'Image-map keyboard focus setup must run');
+        assert.equal(focused.result?.value, true,
+          'Image-map hotspot must be natively focusable for keyboard acceptance');
+        for (const type of ['keyDown', 'keyUp']) {
+          await cdp('Input.dispatchKeyEvent', {
+            type, key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+          });
+        }
+        await sleep(80);
         const checked = await cdp('Runtime.evaluate', {
           expression: '(() => { const observed = window.__zguardImageMapState; ' +
             'window.__zguardImageMapCleanup(); return observed; })()',
@@ -801,6 +852,28 @@ try {
           variant + ': ordinary external image-map navigation must be cancelled safely');
         assert.equal(observed.imageMap?.hostile?.reachedArea, false,
           variant + ': hostile image-map area click escaped popup guard');
+        for (const kind of ['ordinary', 'hostile']) {
+          const keyboard = observed.imageMap[kind].keyboard;
+          assert.equal(keyboard.focused, true,
+            variant + ': ' + kind + ' image-map area must receive keyboard focus');
+          assert.equal(keyboard.enterTrusted, true,
+            variant + ': ' + kind + ' image-map Enter must use trusted browser input');
+        }
+        assert.equal(observed.imageMap.ordinary.keyboard.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary external image-map keyboard navigation');
+        // When the extension blocks a hostile click before the fixture's
+        // document listener, cancelledByFixture is correctly false: the
+        // extension itself owns cancellation. Never demand fixture mediation.
+        assert.equal(observed.imageMap.ordinary.keyboard.seenAreaAtCapture, true,
+          variant + ': harmless image-map Enter must reach document capture');
+        assert.equal(observed.imageMap.ordinary.keyboard.reachedArea, true,
+          variant + ': ordinary image-map keyboard activation must remain available');
+        assert.equal(observed.imageMap.ordinary.keyboard.eventTrusted, true,
+          variant + ': harmless image-map Enter click must be browser-trusted');
+        assert.equal(observed.imageMap.ordinary.keyboard.detail, 0,
+          variant + ': keyboard image-map Enter click must carry detail=0');
+        assert.equal(observed.imageMap.hostile.keyboard.reachedArea, false,
+          variant + ': hostile image-map keyboard activation escaped popup guard');
       }
       if (requireFormSubmit) {
         assert.equal(observed.formSubmit?.ordinary?.seenOnDocument, true,
