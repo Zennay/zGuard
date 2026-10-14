@@ -15,7 +15,7 @@ assert.ok(start >= 0 && end > start && source.slice(start, end).includes('async 
   'shipped container stop and browser startup source must remain extractable');
 const code = source.slice(start, end) + '\ncreateSession';
 
-async function scenario({ stopFails, removeFails }) {
+async function scenario({ stopFails, removeFails, startFails = false }) {
   const sessions = new Map();
   const sessionsByIp = new Map();
   const admission = createSessionAdmission(1);
@@ -28,6 +28,9 @@ async function scenario({ stopFails, removeFails }) {
     async createContainer(options) {
       created++;
       const n = created;
+      // A failed Docker start still leaves a *created* container that
+      // consumes daemon resources until forced removal succeeds.
+      live.add(n);
       assert.equal(options.HostConfig.AutoRemove, true,
         'real browser containers must preserve auto-removal');
       assert.equal(options.HostConfig.NetworkMode, 'fixture-network');
@@ -35,7 +38,10 @@ async function scenario({ stopFails, removeFails }) {
         ['no-new-privileges:true']);
       if (n === 1) failedContainerName = options.name;
       return {
-        async start() { live.add(n); },
+        async start() {
+          if (n === 1 && startFails)
+            throw new Error('synthetic Docker container.start failure');
+        },
         async stop(options) {
           stops++;
           assert.equal(options.t, 3, 'browser graceful stop must remain bounded');
@@ -114,17 +120,44 @@ assert.deepEqual({
 }, 'successful force-remove must free the browser slot for legitimate reuse');
 
 const unremoved = await scenario({ stopFails: true, removeFails: true });
-const failClosed = !unremoved.firstOrphan ||
-  (!unremoved.secondAdmitted && unremoved.firstErrorIncludesCleanup);
+
+// A throw from Docker container.start() is a separate failure boundary from
+// waitForBrowser() readiness timing out. Even when the container never
+// entered running state, Docker already allocated an object to reconcile.
+const rejectedStartRecovered = await scenario({
+  startFails: true, stopFails: true, removeFails: false
+});
+assert.deepEqual({
+  firstOrphan: rejectedStartRecovered.firstOrphan,
+  secondAdmitted: rejectedStartRecovered.secondAdmitted,
+  physicalBrowsers: rejectedStartRecovered.physicalBrowsers,
+  registeredBrowsers: rejectedStartRecovered.registeredBrowsers
+}, {
+  firstOrphan: false, secondAdmitted: true,
+  physicalBrowsers: 1, registeredBrowsers: 1
+}, 'failed Docker start must force-remove a created container before legitimate retry');
+
+const rejectedStartOrphan = await scenario({
+  startFails: true, stopFails: true, removeFails: true
+});
+assert.equal(rejectedStartOrphan.firstOrphan, true,
+  'failed container.start plus failed force-removal must retain the orphan fixture');
+assert.equal(rejectedStartOrphan.trackedAfterFailure, 0,
+  'an unpublished failed start must never fabricate a tracked active session');
+
+function failClosedScenario(result) {
+  return !result.firstOrphan ||
+    (!result.secondAdmitted && result.firstErrorIncludesCleanup);
+}
+const failClosed = [unremoved, rejectedStartOrphan].every(failClosedScenario);
 if (strict) {
   assert.equal(failClosed, true,
-    'failed readiness plus failed stop/remove must not silently admit a second browser (issue #7)');
+    'failed readiness or Docker start plus failed stop/remove must not silently admit a second browser (issue #7)');
   console.log('Shipped gateway startup failure cleanup preserves capacity and surfaces errors');
 } else {
-  console.log('Shipped failed browser startup teardown: orphan=' + unremoved.firstOrphan +
-    ', replacementAdmitted=' + unremoved.secondAdmitted +
-    ', physicalBrowsers=' + unremoved.physicalBrowsers +
-    ', registeredBrowsers=' + unremoved.registeredBrowsers +
-    ', cleanupFailureSurfaced=' + unremoved.firstErrorIncludesCleanup +
+  console.log('Shipped failed startup teardown, both readiness timeout and Docker start throw: ' +
+    'orphanAdmitted=' + unremoved.secondAdmitted +
+    ', failedStartOrphanAdmitted=' + rejectedStartOrphan.secondAdmitted +
+    ', strictOrphanFailuresProtected=' + failClosed +
     ' (strict --require-failed-start-fail-closed remains outstanding; issue #7)');
 }
