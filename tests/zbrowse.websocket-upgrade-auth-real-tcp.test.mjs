@@ -156,6 +156,21 @@ try {
     'Origin: null\r\nSec-Fetch-Site: cross-site\r\n');
   const metadataOnly = await open(target,
     'Sec-Fetch-Site: cross-site\r\n');
+  // An exact-origin fix must compare the URL's *authority*, not an
+  // attacker-controlled substring or an unverifiable Fetch Metadata hint.
+  const disguisedOrigins = [
+    ['host-suffix', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site.attacker.invalid\r\n'],
+    ['userinfo-lookalike', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site@attacker.invalid\r\n'],
+    ['scheme-downgrade', 'Origin: http://zbrowse-tv.lizellay.chatgpt.site\r\n'],
+    ['alternate-port', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site:8443\r\n'],
+    ['dns-root-dot', 'Origin: https://zbrowse-tv.lizellay.chatgpt.site.\r\n'],
+    ['forged-metadata', 'Origin: https://attacker.invalid\r\nSec-Fetch-Site: same-origin\r\n']
+  ];
+  const disguised = [];
+  for (const [name, headers] of disguisedOrigins) {
+    const handshake = await open(target, headers);
+    disguised.push([name, /^HTTP\/1\.1 101/m.test(handshake)]);
+  }
   const newUpgrades = seen.length - beforeForeign;
   const foreignAccepted = /^HTTP\/1\.1 101/m.test(foreign);
   const sandboxedAccepted = /^HTTP\/1\.1 101/m.test(sandboxed);
@@ -165,6 +180,8 @@ try {
       { foreignAccepted: false, sandboxedAccepted: false,
         metadataAccepted: false, newUpgrades: 0 },
       'cross-site WebSocket upgrades must be rejected before reaching browser proxy (issue #342)');
+    assert.deepEqual(disguised.filter(([, accepted]) => accepted), [],
+      'lookalike/downgraded or metadata-spoofed Origins must not bypass strict WebSocket isolation');
     console.log('Shipped real TCP WebSocket cross-site Origin isolation passed');
   } else {
     console.log('Shipped real TCP WebSocket owner/isolation controls passed; ' +
@@ -172,6 +189,8 @@ try {
       ', Origin:null upgraded=' + sandboxedAccepted +
       ', cross-site metadata upgraded=' + metadataAccepted +
       ', untrusted browser proxy forwards=' + newUpgrades +
+      ', lookalike Origins upgraded=' + disguised.filter(([, accepted]) => accepted).length +
+      '/' + disguised.length +
       ' (strict --require-websocket-origin is not a runtime fix)');
   }
 } finally {
