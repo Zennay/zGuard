@@ -25,12 +25,24 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<rect width="110" height="80" fill="red"/></a>'
   +'<a id="svgOrdinary" href="/safe" target="_blank">'
   +'<rect x="125" width="110" height="80" fill="green"/></a></svg>'
+  +'<img id="imageMap" width="200" height="100" alt="Hotspot fixture" '
+  +'src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22100%22%3E%3Crect width=%22200%22 height=%22100%22 fill=%22%23aaa%22/%3E%3C/svg%3E" '
+  +'usemap="#qaHotspots"/>'
+  +'<map name="qaHotspots">'
+  +'<area id="imageMapHostile" shape="rect" coords="0,0,90,100" '
+  +'href="https://ads.al5sm.com/map" target="_blank" alt="Hostile hotspot"/>'
+  +'<area id="imageMapOrdinary" shape="rect" coords="110,0,200,100" '
+  +'href="/safe" target="_blank" alt="Ordinary hotspot"/></map>'
   +'<div id="shadowHost"></div>'
   +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0,'
-  +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0};'
-  +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary"]){'
+  +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0,'
+  +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0};'
+  +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary","imageMapHostile","imageMapOrdinary"]){'
   +'document.getElementById(id).addEventListener("click",e=>{'
   +'window.qa[id+"Clicks"]++;e.preventDefault();});}'
+  +'for(const id of ["hostile","ordinary"]){'
+  +'document.getElementById(id).addEventListener("auxclick",e=>{'
+  +'if(e.button===1){window.qa[id+"MiddleClicks"]++;e.preventDefault();}});}'
   +'const root=document.getElementById("shadowHost").attachShadow({mode:"open"});'
   +'for(const kind of ["Hostile","Ordinary"]){'
   +'const a=document.createElement("a");a.id="shadow"+kind;'
@@ -69,6 +81,18 @@ async function clickElement(e){
 async function click(selector){
   const e=await wd('POST','/session/'+session+'/element',{using:'css selector',value:selector});
   await clickElement(e);
+}
+async function nativePointer(selector,{button=0,x=0,y=0}={}){
+  const e=await wd('POST','/session/'+session+'/element',{using:'css selector',value:selector});
+  assert.ok(e?.['element-6066-11e4-a52e-4f735466cecf'],
+    'Native pointer origin must reference a real browser element');
+  await wd('POST','/session/'+session+'/actions',{actions:[{
+    type:'pointer',id:'qaPointer',parameters:{pointerType:'mouse'},actions:[
+      {type:'pointerMove',duration:100,origin:e,x,y},
+      {type:'pointerDown',button},{type:'pointerUp',button}
+    ]
+  }]});
+  await wd('DELETE','/session/'+session+'/actions');
 }
 async function until(fn,description,tries=45){
   for(let i=0;i<tries;i++){if(await fn())return;await sleep(200);}
@@ -120,6 +144,12 @@ try{
   await click('#submitHostile');
   await click('#svgHostile rect');
   await click('#svgOrdinary rect');
+  await nativePointer('#hostile',{button:1});
+  await nativePointer('#ordinary',{button:1});
+  // Click the actual painted image-map regions with W3C pointer actions.
+  // A synthetic .click() on <area> is not evidence of a native hotspot.
+  await nativePointer('#imageMap',{x:-55});
+  await nativePointer('#imageMap',{x:55});
   await clickElement(await evaluate(
     'return document.getElementById("shadowHost").shadowRoot.querySelector("#shadowHostile")'));
   await clickElement(await evaluate(
@@ -133,7 +163,9 @@ try{
     'Native hostile target=_blank Firefox form must be stopped');
   for(const [blocked,allowed,label] of [
     ['svgHostileClicks','svgOrdinaryClicks','SVG link'],
-    ['shadowHostileClicks','shadowOrdinaryClicks','open Shadow DOM link']
+    ['shadowHostileClicks','shadowOrdinaryClicks','open Shadow DOM link'],
+    ['hostileMiddleClicks','ordinaryMiddleClicks','middle-button auxclick'],
+    ['imageMapHostileClicks','imageMapOrdinaryClicks','native image-map hotspot']
   ]){
     assert.equal(after[blocked],before[blocked],
       'Native Firefox hostile '+label+' must be stopped in capture phase');
@@ -143,7 +175,7 @@ try{
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
   const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
-  console.log('Native Firefox MV2 PASS: hostile HTML/SVG/Shadow DOM link and form blocked, ordinary controls allowed, one tab.');
+  console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick and image-map hotspot blocked; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
