@@ -31,6 +31,7 @@ let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
 let failNextDelete = false;
+let droppedDeleteAttemptsRemaining = 0;
 let holdNextDelete = false;
 let releaseHeldDelete = null;
 let notifyHeldDelete = null;
@@ -124,6 +125,14 @@ const server = http.createServer(async (req, res) => {
           releaseHeldDelete = resolve;
           notifyHeldDelete?.();
         });
+      }
+      if (droppedDeleteAttemptsRemaining > 0) {
+        // Chrome may retry an idempotent DELETE after a connection reset.
+        // Drop each transport retry within this *bounded fixture window*.
+        // No HTTP status or response body reaches the browser.
+        droppedDeleteAttemptsRemaining--;
+        res.socket.destroy();
+        return;
       }
       if (failNextDelete) {
         failNextDelete = false;
@@ -820,11 +829,70 @@ try {
   await until(() => deletions === failedDeleteBefore + 3,
     'recovered browser End must still release its session');
 
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'previous successful teardown must finish before transport-drop fixture');
+
+  // The browser should also fail closed if the connection is cut *without*
+  // any HTTP error response at all. This exercises a genuine broken TCP
+  // connection during DELETE, not an HTTP 503 or a synthetic rejected Promise.
+  const droppedStartBefore = starts;
+  const droppedDeleteBefore = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === droppedStartBefore + 1,
+    'socket-drop browser starts through real HTTP POST');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'socket-drop fixture must mount real Chromium iframe');
+
+  droppedDeleteAttemptsRemaining = 4;
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions >= droppedDeleteBefore + 1,
+    'deliberately dropped DELETE must reach the loopback TCP server');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'connection reset must be treated as unconfirmed teardown');
+  const failedNetworkDeletes = deletions - droppedDeleteBefore;
+  assert.ok(failedNetworkDeletes >= 1 && failedNetworkDeletes <= 4,
+    'Chrome may replay idempotent DELETE but all automatic attempts must remain within fixture budget');
+  droppedDeleteAttemptsRemaining = 0; // allow the explicit health-poll retry
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'browser must not reuse a possibly live bearer after transport drop');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(100);
+  assert.equal(starts, droppedStartBefore + 1,
+    'form submit may not start a browser while lost DELETE is unreconciled');
+
+  await evaluate('refreshHealth(); true');
+  await until(() => deletions === droppedDeleteBefore + failedNetworkDeletes + 1,
+    'real Chromium must retry dropped DELETE via health poll');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'completed recovery must restore browser start');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'),
+    '', 'successful retry must clear failure warning');
+
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === droppedStartBefore + 2,
+    'new Chrome browser start works after dropped-DELETE reconciliation');
+  assert.ok(releaseStart);
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'post-reconciliation viewer must still be mountable');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === droppedDeleteBefore + failedNetworkDeletes + 2,
+    'new browser after socket drop must still end normally');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, heartbeat 410/DELETE 404 recovery, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
