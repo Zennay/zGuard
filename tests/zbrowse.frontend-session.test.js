@@ -35,7 +35,7 @@ async function settle() {
 
 // Execute the real browser script with deterministic DOM, HTTP and timer fakes.
 // No network requests, browser installation or gateway containers are required.
-async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest, siteRequest } = {}) {
+async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest, siteRequest, heartbeatRequest } = {}) {
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
@@ -45,7 +45,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const timeoutControls = [];
   const AbortSignal = {
     timeout(ms) {
-      assert.equal(ms, 7000, 'readiness GET must use bounded timeout');
+      assert.ok(ms === 7000 || ms === 10000,
+        'readiness/DELETE must use 7s, heartbeat must use 10s deadline');
       const controller = new AbortController();
       timeoutControls.push(controller);
       return controller.signal;
@@ -114,6 +115,11 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     if (url === '/api/health') {
       if (healthRequest) return healthRequest(options);
       return response(health || { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 });
+    }
+    if (/^\\/api\\/session\\/[A-Za-z0-9_-]{32}\\/heartbeat$/.test(url) &&
+        options.method === 'POST') {
+      if (!heartbeatRequest) throw new Error('unexpected heartbeat request');
+      return heartbeatRequest(options);
     }
     if (url.startsWith('/api/session/') &&
         /^[A-Za-z0-9_-]{32}$/.test(url.slice('/api/session/'.length)) &&
@@ -1046,6 +1052,78 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       url === '/api/session/' + validToken && options.method === 'DELETE').length,
     2, 'subsequent pagehide must not release a discarded BFCache session again'
   );
+
+  // An unanswered heartbeat can otherwise keep an invalid browser viewer
+  // mounted indefinitely, and repeated 30s polls can accumulate hanging
+  // network requests. Bound the *lease renewal* without abandoning an
+  // in-flight browser creation; on timeout the ordinary idempotent DELETE
+  // remains responsible for reconciliation and admission locking.
+  const validHeartbeat = await bootPortal({
+    sessionRequest: async () => response(validSession),
+    heartbeatRequest: async () => response({ ok: true, expiresAt: validSession.expiresAt })
+  });
+  validHeartbeat.submit();
+  await settle();
+  const healthyBeat = [...validHeartbeat.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 30000);
+  assert.ok(healthyBeat, 'active browser must schedule a heartbeat');
+  healthyBeat.callback();
+  await settle();
+  assert.equal(validHeartbeat.element('browserView').hidden, false,
+    'successful bounded heartbeat must preserve the healthy viewer');
+  assert.equal(validHeartbeat.requests.filter(({ url, options }) =>
+    url.endsWith('/heartbeat') && options.method === 'POST').length, 1,
+    'one heartbeat tick must issue one reviewed lease refresh');
+  const positiveHeartbeatRequest = validHeartbeat.requests.find(({ url }) =>
+    url.endsWith('/heartbeat'));
+  assert.ok(positiveHeartbeatRequest.options.signal,
+    'all heartbeat requests must have a bounded deadline');
+  assert.equal(validHeartbeat.requests.filter(({ url, options }) =>
+    options.method === 'DELETE').length, 0,
+    'successful heartbeat must not destroy the browser');
+
+  let hangingHeartbeats = 0;
+  let hangingStarts = 0;
+  const stalledHeartbeat = await bootPortal({
+    sessionRequest: async () => {
+      hangingStarts++;
+      return response(validSession);
+    },
+    heartbeatRequest(options) {
+      hangingHeartbeats++;
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () =>
+          reject(new DOMException('heartbeat stalled', 'TimeoutError')), { once: true });
+      });
+    }
+  });
+  stalledHeartbeat.submit();
+  await settle();
+  const stuckHeartbeatTick = [...stalledHeartbeat.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 30000);
+  assert.ok(stuckHeartbeatTick, 'hung-heartbeat fixture needs real interval callback');
+  stuckHeartbeatTick.callback();
+  await settle();
+  assert.equal(hangingHeartbeats, 1);
+  assert.equal(stalledHeartbeat.element('browserView').hidden, false,
+    'viewer must not close before a heartbeat is confirmed failed or times out');
+  const heartbeatSignal = stalledHeartbeat.requests.find(({ url }) =>
+    url.endsWith('/heartbeat'))?.options.signal;
+  assert.ok(heartbeatSignal, 'the actual heartbeat HTTP request must contain a signal');
+  stalledHeartbeat.timeoutControls.at(-1).abort();
+  await settle();
+  assert.equal(stalledHeartbeat.element('browserFrame').src, 'about:blank',
+    'heartbeat timeout must drop the authenticated iframe');
+  assert.equal(stalledHeartbeat.element('browserView').hidden, true,
+    'timed-out session must return to the home view');
+  assert.deepEqual(
+    [...stalledHeartbeat.intervals.values()].map(({ milliseconds }) => milliseconds),
+    [20000], 'timeout must clear heartbeat and countdown, retain health retry');
+  assert.equal(stalledHeartbeat.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+    'timeout should release the uncertain gateway browser exactly once');
+  assert.equal(hangingStarts, 1,
+    'timed-out heartbeat must never create another session automatically');
 
   // A lost heartbeat must invalidate the portal session. The viewer cannot
   // continue displaying an orphaned session when the gateway rejects renewal.
