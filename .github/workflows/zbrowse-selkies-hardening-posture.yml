@@ -1,0 +1,49 @@
+name: zBrowse Selkies kiosk hardening posture
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_selkies_hardening:
+        description: "Require complete kiosk isolation settings (issue #10; fails until runtime is fixed)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-selkies-hardening-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-posture:
+    name: Selkies kiosk source isolation gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_HARDENING: ${{ inputs.require_selkies_hardening || 'false' }}
+    steps:
+      - name: Checkout exact PR-head source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate hardening source and negative mutation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.selkies-hardening-posture.test.mjs
+          if [ "$REQUIRE_HARDENING" = "true" ]; then
+            node tests/zbrowse.selkies-hardening-posture.test.mjs --require-selkies-hardening
+          fi

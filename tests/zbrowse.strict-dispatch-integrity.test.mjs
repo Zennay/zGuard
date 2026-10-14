@@ -21,6 +21,10 @@ const matrix = [
     ['require_browser_sandbox', 'REQUIRE_BROWSER_SANDBOX',
       [['zbrowse.chromium-sandbox-posture.test.mjs', '--require-browser-sandbox']]]
   ]],
+  ['zbrowse-selkies-hardening-posture.yml', [
+    ['require_selkies_hardening', 'REQUIRE_HARDENING',
+      [['zbrowse.selkies-hardening-posture.test.mjs', '--require-selkies-hardening']]]
+  ]],
   ['zbrowse-trusted-host-origin-qa.yml', [
     ['require_canonical_host', 'REQUIRE_CANONICAL_HOST',
       [['zbrowse.host-origin-isolation-real-http.test.mjs', '--require-canonical-host']]]
