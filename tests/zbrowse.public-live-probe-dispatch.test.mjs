@@ -68,8 +68,41 @@ function verifyDispatchGuard(source) {
       cli.includes('readOnlyMode(process.argv.slice(2))'),
     relative + ': CLI must reject implicit or malformed public-probe modes');
   }
+  // A green fixture check must not be used as evidence of a manually
+  // requested public release check if the --live entrypoint is later rewired
+  // to a stub, a fixture, or a skipped branch. The same exported functions
+  // exercised by --self-test must execute in the live branch. These are
+  // source-binding assertions only; NO public network probe is performed.
+  for (const [filename, binding, callable] of [
+    ['zbrowse.public-origin-readiness.test.mjs', 'health', 'checkPublicReadiness'],
+    ['zbrowse.public-tv-static-release.test.mjs', 'assets', 'verifyPublicStaticRelease']
+  ]) {
+    const source = fs.readFileSync(new URL('./' + filename, import.meta.url), 'utf8');
+    verifyLiveEntrypoint(source, binding, callable, filename);
+  }
   return liveCommands.length;
 }
+
+// Keep the actual CLI tail anchored to the reviewed mode switch. In
+// particular, merely mentioning the real probe in an unused comment or
+// helper must not certify a successful --live invocation.
+function verifyLiveEntrypoint(source, binding, callable, name) {
+  const marker = 'const mode = readOnlyMode(process.argv.slice(2));';
+  const start = source.lastIndexOf(marker);
+  assert.ok(start >= 0, name + ': explicit CLI mode selector is required');
+  const tail = source.slice(start);
+  const expected = marker + "\n" +
+    "if (mode === '--self-test') {\n" +
+    "  await selfTest();\n" +
+    "} else {\n" +
+    "  const " + binding + " = await " + callable + "();\n";
+  assert.ok(tail.startsWith(expected),
+    name + ': --live must directly execute the reviewed function, not a fixture or stub');
+  assert.match(tail, /\n}\s*$/,
+    name + ': entrypoint must end with its reviewed live branch');
+}
+
+
 
 assert.equal(verifyDispatchGuard(workflow), 2);
 const tamper = (name, mutated) => {
@@ -94,4 +127,22 @@ tamper('duplicated live identity probe', workflow.replace(
   '            node tests/zbrowse.public-tv-static-release.test.mjs --live\n' +
   '            node tests/zbrowse.public-tv-static-release.test.mjs --live'));
 
-console.log('Public TV release dispatch guard passed: 2 manual GET-only probes, 6 mutation checks');
+// Exercise source entrypoint wiring with deliberate in-memory tampering.
+for (const [filename, binding, callable] of [
+  ['zbrowse.public-origin-readiness.test.mjs', 'health', 'checkPublicReadiness'],
+  ['zbrowse.public-tv-static-release.test.mjs', 'assets', 'verifyPublicStaticRelease']
+]) {
+  const source = fs.readFileSync(new URL('./' + filename, import.meta.url), 'utf8');
+  verifyLiveEntrypoint(source, binding, callable, filename);
+  const real = 'const ' + binding + ' = await ' + callable + '();';
+  const changed = source.replace(real, 'const ' + binding + ' = await selfTest();');
+  assert.notEqual(changed, source, filename + ': mutation must replace live call');
+  assert.throws(() => verifyLiveEntrypoint(changed, binding, callable, filename),
+    undefined, filename + ': a fixture must not masquerade as a live release probe');
+  const skipped = source.replace("if (mode === '--self-test') {", 'if (true) {');
+  assert.notEqual(skipped, source, filename + ': mutation must replace mode selector');
+  assert.throws(() => verifyLiveEntrypoint(skipped, binding, callable, filename),
+    undefined, filename + ': unconditionally skipping live execution must fail');
+}
+
+console.log('Public TV release dispatch guard passed: 2 manual GET-only probes, 6 dispatch + 4 live-binding mutation checks');
