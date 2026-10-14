@@ -99,6 +99,22 @@ await new Promise((resolve, reject) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Chrome may create DevToolsActivePort before finishing its first write.
+// A visible file alone is not evidence that the CDP listener is ready.
+function parseDevToolsPort(source) {
+  const firstLine = source.split(/\r?\n/, 1)[0];
+  if (!/^[1-9][0-9]{0,4}$/.test(firstLine)) return null;
+  const port = Number(firstLine);
+  return port <= 65535 ? port : null;
+}
+for (const [sample, expected] of [
+  ['', null], ['0\n', null], ['\n/devtools/browser', null],
+  ['38921\n/devtools/browser/example', 38921],
+  ['65536\n', null], ['123garbage\n', null]
+]) {
+  assert.equal(parseDevToolsPort(sample), expected, 'CDP port parser self-test');
+}
+
 // The real renderer must have time to load MV3 content scripts and complete
 // asynchronous chrome.storage IPC before the page-side interception probe.
 async function runBrowser(extensionPath, profilePath, url) {
@@ -123,13 +139,22 @@ async function runBrowser(extensionPath, profilePath, url) {
   let socket;
   try {
     const portFile = path.join(profilePath, 'DevToolsActivePort');
-    for (let attempt = 0; attempt < 80 && !fs.existsSync(portFile); attempt += 1) {
-      if (child.exitCode !== null) break;
+    let port = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (fs.existsSync(portFile)) {
+        try {
+          port = parseDevToolsPort(fs.readFileSync(portFile, 'utf8'));
+        } catch (error) {
+          // The profile may be rewritten between existsSync and readFileSync.
+          if (error.code !== 'ENOENT') throw error;
+        }
+      }
+      if (port !== null || child.exitCode !== null) break;
       await sleep(100);
     }
-    assert.ok(fs.existsSync(portFile), 'Chromium DevTools did not start (exit=' + child.exitCode + '): ' + stderr.slice(-3000));
-    const port = Number(fs.readFileSync(portFile, 'utf8').split('\n')[0]);
-    assert.ok(Number.isSafeInteger(port) && port > 0, 'Invalid local CDP port');
+    assert.ok(port !== null,
+      'Chromium did not publish a valid CDP port (exit=' + child.exitCode + '): ' +
+        stderr.slice(-3000));
     // DevToolsActivePort can appear before Chrome has published the matching
     // page target. Wait for discovery, not for protection: the earliest page
     // gesture observed after CDP attaches is still assessed below.
