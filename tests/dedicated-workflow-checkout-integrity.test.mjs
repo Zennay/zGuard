@@ -24,7 +24,13 @@ const additionalSourceBoundWorkflows = [
   '.github/workflows/gateway-node-runtime-compatibility.yml',
   '.github/workflows/gateway-package-policy-validation.yml',
   '.github/workflows/workflow-pr-runner-boundary.yml',
-  '.github/workflows/workflow-runner-availability.yml'
+  '.github/workflows/workflow-runner-availability.yml',
+  '.github/workflows/repository-doc-command-targets.yml',
+  '.github/workflows/repository-dockerfile-structure.yml',
+  '.github/workflows/repository-large-file-integrity.yml',
+  '.github/workflows/repository-markdown-heading-integrity.yml',
+  '.github/workflows/repository-markdown-link-integrity.yml',
+  '.github/workflows/repository-markdown-shell-syntax.yml'
 ];
 const prHeadContractWorkflows = new Set([
   ...requiredChecks, ...additionalSourceBoundWorkflows
