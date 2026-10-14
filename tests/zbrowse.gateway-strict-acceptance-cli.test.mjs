@@ -178,15 +178,9 @@ for (const { filename, flag, workflow, input, env } of cases) {
   assert.ok(yaml.includes(env + ': ' + '$' + '{{ inputs.' + input + " || 'false' }}"),
     filename + ': missing matching dispatch environment');
   // One operator switch may gate multiple independent strict proofs.
-  // Require the *exact executable command* as its own line INSIDE the
-  // corresponding if/fi body; a comment, echo or unguarded command does not
-  // establish a checked release gate.
-  const guard = '          if [ "
-  assert.ok(executable.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
-    filename + ': routine hosted CI must run the negative CLI regression');
-}
-console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
- + env + '" = "true" ]; then';
+  // Require the exact executable command as its own line INSIDE the
+  // corresponding if/fi body; comment, echo or unguarded execution is no proof.
+  const guard = '          if [ "$' + env + '" = "true" ]; then';
   const guardIndex = executable.indexOf(guard);
   assert.ok(guardIndex >= 0, filename + ': strict conditional missing');
   assert.equal(executable.indexOf(guard, guardIndex + guard.length), -1,
