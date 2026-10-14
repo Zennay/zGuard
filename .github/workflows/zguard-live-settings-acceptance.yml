@@ -45,6 +45,9 @@ jobs:
           set -euo pipefail
           node tests/zguard.live-settings-cli.test.mjs
           node tests/zguard.content-live-settings.test.mjs
+          # Live setting changes are now a mandatory release regression,
+          # never an observational-only success path on PR or main.
+          node tests/zguard.content-live-settings.test.mjs --require-live-settings
           if [ "$REQUIRE_LIVE_SETTINGS" = "true" ]; then
             node tests/zguard.content-live-settings.test.mjs --require-live-settings
           fi
