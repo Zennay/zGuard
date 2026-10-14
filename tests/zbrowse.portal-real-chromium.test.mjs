@@ -1078,15 +1078,70 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("browserView").hidden'
   ), 'fresh valid browser mounts after release of unsafe minted token');
-  await evaluate('document.getElementById("endButton").click(); true');
+
+  // Real TV exit while fullscreen: pressing Space on the fullscreen toolbar
+  // control must enter browser fullscreen, native Tab must reach End session,
+  // and Space must release the minted viewer before leaving fullscreen.
+  const beforeFullscreenEndStarts = starts;
+  assert.equal(await evaluate(`(() => {
+    const button = document.getElementById('fullscreenButton');
+    button.focus();
+    return document.activeElement === button;
+  })()`), true, 'fullscreen button must accept keyboard focus before native Space');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
+    });
+  }
+  await until(async () => await evaluate(
+    'document.fullscreenElement?.id === "browserView"'
+  ), 'native Space must fullscreen the TV browser with its End control');
+  assert.equal(await evaluate(`(() => {
+    const end = document.getElementById('endButton');
+    const box = end.getBoundingClientRect();
+    return document.fullscreenElement.contains(end) &&
+      document.elementFromPoint(box.left + box.width / 2,
+        box.top + box.height / 2) === end;
+  })()`), true, 'real fullscreen must preserve a visually hit-testable End control');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: 'Tab', code: 'Tab',
+      windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9
+    });
+  }
+  assert.equal(await evaluate('document.activeElement?.id'), 'endButton',
+    'native TV Tab must focus End session inside fullscreen');
+  let trustedFullscreenEnd = false;
+  await evaluate(`(() => {
+    const end = document.getElementById('endButton');
+    end.addEventListener('click', event => {
+      window.__qaNativeFullscreenEnd = event.isTrusted;
+    }, { once: true });
+  })(); true`);
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
+    });
+  }
   await until(() => deletions === invalidDeleteBefore + 3,
-    'fresh valid browser still ends cleanly');
+    'native fullscreen End must release browser through real localhost DELETE');
+  assert.equal(await evaluate('window.__qaNativeFullscreenEnd'), true,
+    'fullscreen exit must be triggered by a real trusted keyboard click');
+  await until(async () => await evaluate(
+    'document.fullscreenElement === null && document.getElementById("browserView").hidden'
+  ), 'native fullscreen End must exit fullscreen and discard the viewer');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'native fullscreen End must remove the bearer iframe');
+  assert.equal(starts, beforeFullscreenEndStarts,
+    'fullscreen teardown must not allocate another browser session');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
     ' completed load, native keyboard start/Escape/End, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, failed late-start cleanup and BFCache reconciliation, invalid viewer failed-DELETE reconciliation, no duplicate release');
+    ' pending-unload cleanup, BFCache restore, native Back recovery, failed DELETE retry, transport-drop recovery, heartbeat 410/DELETE 404 recovery, failed late-start cleanup and BFCache reconciliation, invalid viewer failed-DELETE reconciliation, native fullscreen Tab/Space End, no duplicate release');
 } finally {
   releaseStart?.();
   socket?.close();
