@@ -763,6 +763,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
         : response(null, 204);
     }
   });
+  rejectedViewer.element('browserView').hidden = true;
   rejectedViewer.submit();
   await settle();
   assert.equal(rejectedDeletes, 1, 'invalid response must release minted bearer immediately');
