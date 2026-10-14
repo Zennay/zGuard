@@ -45,7 +45,7 @@ app.use((req, res, next) => {
   next();
 });
 const sandbox = {
-  app, requestIp, trustProxyHops: 0, config, allowedOrigins,
+  app, URL, requestIp, trustProxyHops: 0, config, allowedOrigins,
   sessions, sessionsByIp, sessionAdmission,
   isSessionExpired() { return false; },
   sessionLimiter(_req, _res, next) { next(); }, // rate limit is not the tested boundary
