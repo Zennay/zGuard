@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -119,6 +120,17 @@ const server = http.createServer(async (req, res) => {
         // Node sends chunked HTTP without Content-Length; Chrome must stop
         // after 64KiB even when the JSON contains a plausible curated list.
         sendJson(res, 200, { sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000) });
+      } else if (sitesMode === 'compressed-bomb') {
+        const decoded = JSON.stringify({
+          sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000)
+        });
+        const wire = brotliCompressSync(Buffer.from(decoded));
+        assert.ok(wire.byteLength < 65536,
+          'Brotli fixture must advertise fewer wire bytes than catalogue limit');
+        res.writeHead(200, {
+          'content-type': 'application/json', 'content-encoding': 'br',
+          'content-length': String(wire.byteLength), 'cache-control': 'no-store'
+        }).end(wire);
       } else if (sitesMode === 'offline') {
         sendJson(res, 503, { error: 'Synthetic catalogue unavailable' });
       } else if (sitesMode === 'userinfo') {
@@ -213,6 +225,20 @@ const server = http.createServer(async (req, res) => {
           status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1,
           padding: 'x'.repeat(5000)
         });
+        return;
+      }
+      if (health === 'compressed-bomb') {
+        const decoded = JSON.stringify({
+          status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1,
+          padding: 'x'.repeat(5000)
+        });
+        const wire = gzipSync(Buffer.from(decoded));
+        assert.ok(wire.byteLength < 4096,
+          'gzip fixture must advertise fewer wire bytes than health limit');
+        res.writeHead(200, {
+          'content-type': 'application/json', 'content-encoding': 'gzip',
+          'content-length': String(wire.byteLength), 'cache-control': 'no-store'
+        }).end(wire);
         return;
       }
       if (health === 'offline') {
@@ -540,6 +566,38 @@ try {
     'canonical bounded catalogue must restore browser admission');
   assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
     sites.length, 'reviewed site suggestions return only after bounded JSON read');
+
+  // CDNs can return tiny compressed transfers that inflate far beyond
+  // reviewed 4KiB/64KiB JSON budgets. This must be proven in actual Chrome,
+  // not just against Node's independent release-readiness endpoint.
+  health = 'compressed-bomb';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline',
+    'real Chrome must reject decoded gzip health beyond 4KiB');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'gzip expansion must never advertise healthy browser capacity');
+  assert.equal(starts, 0,
+    'gzip expansion must not start a browser');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'uncompressed valid health must recover after gzip expansion rejection');
+
+  sitesMode = 'compressed-bomb';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'real Chrome must reject decoded Brotli catalogue beyond 64KiB');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+    'Brotli expansion must never show unreviewed site choices');
+  assert.equal(starts, 0,
+    'Brotli expansion must not start a viewer');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'reviewed site catalogue must recover after Brotli expansion rejection');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'reviewed choices must recover after Brotli expansion');
 
   // Untrusted large HTTP error bodies should fail closed without being
   // parsed by the TV. Test actual browser fetch and origin HTTP, then prove
