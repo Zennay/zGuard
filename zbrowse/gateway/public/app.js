@@ -335,6 +335,9 @@ $("fullscreenButton").addEventListener("click", async () => {
   } else if (document.fullscreenElement === browserView) {
     await document.exitFullscreen().catch(() => {});
   }
+  // Some browsers update the fullscreen element before dispatching the
+  // fullscreenchange event; reflect the completed action immediately too.
+  syncFullscreenButton();
 });
 
 window.addEventListener("pagehide", () => {

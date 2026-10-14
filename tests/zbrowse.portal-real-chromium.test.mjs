@@ -487,10 +487,12 @@ try {
   await until(async () => await evaluate(
     'document.fullscreenElement === null'
   ), 'real Chrome fullscreen exit through its visible toolbar');
+  await until(async () => await evaluate(
+    'document.getElementById("fullscreenButton").textContent === "Fullscreen" && ' +
+    'document.getElementById("fullscreenButton").getAttribute("aria-pressed") === "false"'
+  ), 'fullscreen exit updates its accessible toolbar state');
   assert.equal(await evaluate('document.getElementById("fullscreenButton").textContent'),
     'Fullscreen', 'fullscreen exit restores control label');
-  assert.equal(await evaluate('document.getElementById("fullscreenButton").getAttribute("aria-pressed")'),
-    'false', 'fullscreen exit restores the accessible toggle state');
   assert.equal(starts, 1, 'fullscreen toggles must not create a second browser session');
 
   // TV viewers must be able to leave the stream controls with real Escape
