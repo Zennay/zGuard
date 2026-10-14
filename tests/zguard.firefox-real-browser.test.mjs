@@ -41,7 +41,9 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<area id="imageMapHostile" shape="rect" coords="0,0,90,100" '
   +'href="https://ads.al5sm.com/map" target="_blank" alt="Hostile hotspot"/>'
   +'<area id="imageMapOrdinary" shape="rect" coords="110,0,200,100" '
-  +'href="/safe" target="_blank" alt="Ordinary hotspot"/></map>'
+  +'href="/safe" target="_blank" alt="Ordinary hotspot"/>'
+  +'<area id="nativeTabMapArea" shape="rect" coords="91,0,109,100" '
+  +'href="__QA_FRAME_URL__" target="_blank" alt="Native new-tab hotspot"/></map>'
   +'<form id="programmaticForm" target="_blank" method="get"></form>'
   +'<button id="programmaticSameForm" type="button">Allowed programmatic form</button>'
   +'<button id="programmaticCrossForm" type="button">Cross-origin programmatic form</button>'
@@ -58,7 +60,10 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false,'
   +'overrideHostileSubmits:0,overrideOrdinarySubmits:0,'
   +'programmaticSame:0,programmaticCross:0,programmaticSubmitEvents:0,'
-  +'middleForeignDown:0,middleForeignUp:0,middleForeignAux:0,middleForeignTrusted:false};'
+  +'middleForeignDown:0,middleForeignUp:0,middleForeignAux:0,middleForeignTrusted:false,'
+  +'nativeMapClicks:0,nativeMapTrusted:false};'
+  +'document.getElementById("nativeTabMapArea").addEventListener("click",e=>{'
+  +'window.qa.nativeMapClicks++;window.qa.nativeMapTrusted=e.isTrusted;});'
   +'for(const kind of ["mousedown","mouseup","auxclick"]){'
   +'document.getElementById("nativeMiddleForeign").addEventListener(kind,e=>{'
   +'if(e.button!==1)return;const key=kind==="mousedown"?"middleForeignDown":'
@@ -369,6 +374,16 @@ try{
     'Strict middle-button auxclick must be intercepted before target handler');
   assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
     'Strict native cross-origin middle-click must not leave an extra popup tab');
+  // Genuine image-map hit testing: the centre 18px hotspot has no fixture
+  // preventDefault listener, unlike safety-guarded hostile baseline areas.
+  // Strict mode must stop native target=_blank navigation before <area> click.
+  const strictMapBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#imageMap',{x:0,y:0});
+  const strictMapAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(strictMapAfter.nativeMapClicks,strictMapBefore.nativeMapClicks,
+    'Strict Firefox popup policy must capture the native area before its target click');
+  assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
+    'Strict real image-map middle-region new-tab hotspot must not leave a tab');
   // Browser-level fallback: invoke a page-authored window.open from an actual
   // trusted WebDriver button click. The different loopback port is a separate
   // origin, and no external website or production browser is contacted.
@@ -545,6 +560,31 @@ try{
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
   assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
     new Set(balancedHandles),'Allowed middle-click tab cleanup must restore original tabs');
+  // In balanced mode the exact same harmless image-map hotspot must open an
+  // actual tab. Without this positive control, a fixture cancelling all clicks
+  // would yield a misleading PASS for the strict branch above.
+  const balancedMapBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#imageMap',{x:0,y:0});
+  await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'balanced native Firefox image-map hotspot must open a real tab',60);
+  const balancedMapAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedMapAfter.nativeMapClicks,balancedMapBefore.nativeMapClicks+1,
+    'Balanced ordinary image-map area click must reach real target');
+  assert.equal(balancedMapAfter.nativeMapTrusted,true,
+    'Ordinary image-map link must receive trusted native pointer click');
+  const withMapTab=await wd('GET','/session/'+session+'/window/handles');
+  const mapTabHandle=withMapTab.find(h=>!balancedHandles.includes(h));
+  assert.ok(mapTabHandle,'Balanced image-map link must create an independent tab');
+  await wd('POST','/session/'+session+'/window',{handle:mapTabHandle});
+  await until(async()=> new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'actual image-map-created browser tab must navigate to local second origin',50);
+  assert.equal(new URL(await wd('GET','/session/'+session+'/url')).origin,
+    'http://127.0.0.1:'+frameServer.address().port,
+    'Image-map link positive control must load the separate loopback origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),'Image-map popup cleanup must preserve original tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -560,6 +600,7 @@ try{
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   console.log('Firefox native middle-button real-tab PASS: strict cross-origin cancelled; balanced trusted auxclick opens and loads ordinary second-origin tab.');
+  console.log('Firefox real image-map tab PASS: strict centre hotspot suppressed; balanced trusted hotspot opens loaded second-origin tab.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
