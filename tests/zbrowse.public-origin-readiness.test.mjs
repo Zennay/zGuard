@@ -68,9 +68,39 @@ async function getJson(origin, route, fetcher) {
     assert.equal(directives.includes('public'), false,
       '/api/health: must not allow public response caching');
   }
+  // A misrouted public endpoint can stream arbitrarily large JSON or stall
+  // while drip-feeding bytes. Bound the decoded response, not just headers.
+  // AbortSignal.timeout above also applies while consuming the actual body.
+  const maximumBytes = route === '/api/health' ? 4096 : 65536;
+  const length = response.headers.get('content-length');
+  if (length !== null) {
+    assert.match(length, /^\\d+$/, route + ': invalid Content-Length header');
+    assert.ok(BigInt(length) <= BigInt(maximumBytes),
+      route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
+  }
+  assert.ok(response.body, route + ': gateway JSON response body is missing');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let decoded = '';
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maximumBytes) {
+        await reader.cancel();
+        throw new Error(route + ': JSON body exceeds ' + maximumBytes + ' bytes');
+      }
+      decoded += decoder.decode(value, { stream: true });
+    }
+    decoded += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
   let data;
   try {
-    data = await response.json();
+    data = JSON.parse(decoded);
   } catch {
     throw new Error(route + ': gateway sent invalid JSON');
   }
@@ -174,6 +204,45 @@ async function selfTest() {
       : response(sampleSites));
   assert.equal(busy.connected, true, 'busy is not offline');
   assert.equal(busy.available, false, 'full capacity must be reported as busy');
+
+  const httpJson = (text, headers = {}) => new Response(text, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      ...headers
+    }
+  });
+  // Prove size limits on both endpoints and on the actual streamed bytes.
+  // The probes must never need to allocate a browser or issue a token.
+  await assert.rejects(checkPublicReadiness(async () =>
+    httpJson(JSON.stringify(sampleHealth), { 'content-length': '9999999999999999999999' })),
+  /advertised JSON body exceeds 4096 bytes/);
+  await assert.rejects(checkPublicReadiness(async () =>
+    httpJson(JSON.stringify(sampleHealth), { 'content-length': 'invalid' })),
+  /invalid Content-Length header/);
+  await assert.rejects(checkPublicReadiness(async () =>
+    httpJson(' '.repeat(4097) + JSON.stringify(sampleHealth))),
+  /JSON body exceeds 4096 bytes/);
+  await assert.rejects(checkPublicReadiness(async url =>
+    url.endsWith('/api/health') ? response(sampleHealth)
+      : httpJson(JSON.stringify({ ...sampleSites, filler: 'X'.repeat(66000) }))),
+  /JSON body exceeds 65536 bytes/);
+
+  const streamedOversize = async url => url.endsWith('/api/health')
+    ? response(sampleHealth)
+    : new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(' '.repeat(35000)));
+        controller.enqueue(new TextEncoder().encode(' '.repeat(35000)));
+        controller.close();
+      }
+    }), { headers: { 'content-type': 'application/json' } });
+  await assert.rejects(checkPublicReadiness(streamedOversize),
+    /JSON body exceeds 65536 bytes/, 'unknown-length streamed JSON must be bounded');
+  await assert.rejects(checkPublicReadiness(async () =>
+    httpJson('{ definitely not json }')), /gateway sent invalid JSON/);
+
 
   // The production probe must independently verify server cache policy,
   // even though the read-only HTTP client sets cache: "no-store" itself.
