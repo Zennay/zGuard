@@ -861,6 +861,10 @@ try {
       mode + ': invalid viewer must only clean up its own minted token');
   }
 
+  // Take the cleanup baseline after all unsafe viewer cases. A new
+  // rejected fixture must not invalidate unrelated page-exit/lease checks.
+  const deletesAfterUnsafeViewerCases = deletions;
+
   // Reproduce a pagehide event *while* the real browser's session POST is
   // waiting on the local gateway. This keeps the QA tab alive so the late
   // response can resolve; it does not claim navigation-away guarantees for
@@ -873,10 +877,10 @@ try {
     'in-flight browser start at pagehide');
   assert.ok(releaseStart, 'synthetic gateway must still be allocating a browser');
   await evaluate('window.dispatchEvent(new Event("pagehide")); true');
-  assert.equal(deletions, 4, 'pagehide must not delete an as-yet unknown token');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases, 'pagehide must not delete an as-yet unknown token');
   releaseStart();
   releaseStart = null;
-  await until(() => deletions === 5,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 1,
     'late gateway response must release its newly issued token');
   assert.equal(viewerRequests, viewerGetsBeforeAbandon,
     'abandoned in-flight start must never initiate viewer GET');
@@ -887,7 +891,7 @@ try {
   ), true, 'abandoned start must never arm session-owned timers');
   await evaluate('window.dispatchEvent(new Event("pagehide")); true');
   await sleep(120);
-  assert.equal(deletions, 5,
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 1,
     'repeated pagehide after late release must not duplicate teardown');
 
   // A response can be structurally valid yet already expired by the time
@@ -902,7 +906,7 @@ try {
   assert.ok(releaseStart, 'synthetic expiry must be returned through real HTTP');
   releaseStart();
   releaseStart = null;
-  await until(() => deletions === 6,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 2,
     'expired response must immediately release the issued browser token');
   await sleep(200);
   assert.equal(viewerRequests, viewersBeforeExpiry,
@@ -939,12 +943,12 @@ try {
   await until(() => heartbeats === 1, 'successful real HTTP heartbeat');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     false, 'successful heartbeat must not close a working browser');
-  assert.equal(deletions, 6, 'successful lease renewal must not release a session');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 2, 'successful lease renewal must not release a session');
 
   rejectHeartbeat = true;
   await evaluate('window.__qaHeartbeat(); true');
   await until(() => heartbeats === 2, 'rejected real HTTP heartbeat');
-  await until(() => deletions === 7, 'rejected lease must trigger capacity release');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 3, 'rejected lease must trigger capacity release');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     true, 'rejected lease must immediately return user to home');
   assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
@@ -954,7 +958,7 @@ try {
   ), true, 'rejected lease must clear session and all lease timers');
   rejectHeartbeat = false;
   await sleep(150);
-  assert.equal(deletions, 7, 'rejected heartbeat must not double-delete');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 3, 'rejected heartbeat must not double-delete');
   assert.equal(deleteAlreadyGone, false,
     '410 heartbeat should be followed by exactly one already-gone DELETE');
   await until(async () => await evaluate(
@@ -981,9 +985,9 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'BFCache synthetic viewer loaded');
   await evaluate('window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })); true');
-  await until(() => deletions === 8, 'BFCache pagehide keepalive release');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 4, 'BFCache pagehide keepalive release');
   await evaluate('window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); true');
-  await until(() => deletions === 9, 'BFCache pageshow cleanup retry');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 5, 'BFCache pageshow cleanup retry');
   assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
     'about:blank', 'BFCache resume must clear revoked bearer viewer');
   assert.equal(await evaluate(
@@ -1001,7 +1005,7 @@ try {
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
   await until(() => starts === 9, 'valid retry after BFCache teardown');
-  assert.equal(deletions, 9, 'a pending fresh browser must not double-delete released sessions');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 5, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -1012,10 +1016,10 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 10,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 6,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 10, 'browser pagehide must release the final browser exactly once');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 6, 'browser pagehide must release the final browser exactly once');
   assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
 
   // Drive a *native Chromium history Back*, not a synthetic pageshow event.
