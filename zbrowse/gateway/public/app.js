@@ -247,6 +247,11 @@ async function endSession() {
   sessionEnding = true;
   pendingReleaseToken = state.session.token;
   syncStartButton();
+  // A previously green health poll is not a teardown acknowledgment.
+  // Show a neutral, explicit in-progress state immediately (not just after
+  // the next 20-second poll), including for a stalled DELETE.
+  $("capacityText").parentElement.className = "status";
+  $("capacityText").textContent = "Finishing previous browser session";
   state.session = null;
 
   window.clearInterval(state.heartbeat);
