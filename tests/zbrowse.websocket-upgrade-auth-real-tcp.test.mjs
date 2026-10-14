@@ -183,17 +183,30 @@ try {
   // the request claims the reviewed TV Origin (or omits browser metadata).
   // All calls use real loopback TCP; no public ingress is queried.
   const foreignHost = 'unreviewed.invalid';
+  const canonicalHost = ip + ':' + port;
+  const reviewedTvHeaders =
+    'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\nSec-Fetch-Site: same-origin\r\n';
   const unsafeHostCases = [
-    ['unreviewed Host + reviewed TV Origin',
-      'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\nSec-Fetch-Site: same-origin\r\n'],
+    ['unreviewed Host + reviewed TV Origin', reviewedTvHeaders, foreignHost],
     ['unreviewed Host + spoofed matching Origin',
-      'Origin: http://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n'],
-    ['unreviewed Host + no browser metadata', '']
+      'Origin: http://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n', foreignHost],
+    ['unreviewed Host + no browser metadata', '', foreignHost],
+    // Raw TCP intentionally preserves duplicate Host fields. A reverse
+    // proxy and Node can disagree about which authority a request names.
+    ['canonical then foreign Host', reviewedTvHeaders,
+      canonicalHost + '\r\nHost: ' + foreignHost],
+    ['foreign then canonical Host', reviewedTvHeaders,
+      foreignHost + '\r\nHost: ' + canonicalHost],
+    ['duplicate canonical Host', reviewedTvHeaders,
+      canonicalHost + '\r\nHost: ' + canonicalHost],
+    ['alternate port Host', reviewedTvHeaders,
+      ip + ':' + (port === 65535 ? 1 : port + 1)],
+    ['empty Host', reviewedTvHeaders, '']
   ];
   const unsafeHostUpgrades = [];
   const forwardedBeforeHost = seen.length;
-  for (const [name, headers] of unsafeHostCases) {
-    const response = await open(target, headers, foreignHost);
+  for (const [name, headers, hostValue] of unsafeHostCases) {
+    const response = await open(target, headers, hostValue);
     unsafeHostUpgrades.push([name, /^HTTP\/1\.1 101/m.test(response)]);
   }
   const unreviewedHostForwards = seen.length - forwardedBeforeHost;
@@ -236,7 +249,7 @@ try {
   const metadataAccepted = /^HTTP\/1\.1 101/m.test(metadataOnly);
   if (strictHost) {
     assert.deepEqual(unsafeHostUpgrades.filter(([, accepted]) => accepted), [],
-      'unreviewed Host must never upgrade a bearer stream via trusted or missing Origin');
+      'ambiguous, unreviewed or alternate-port Host must not upgrade a bearer stream');
     assert.equal(unreviewedHostForwards, 0,
       'unreviewed Host must be rejected before any browser upstream proxy');
     console.log('Shipped real TCP WebSocket Host authority isolation PASS');
