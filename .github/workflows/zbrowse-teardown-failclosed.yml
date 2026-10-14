@@ -58,6 +58,8 @@ jobs:
           # No orphaned active browser may vanish from in-memory capacity.
           node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
           node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
+          # Failed browser starts must never release a live Docker orphan slot.
+          node tests/zbrowse.failed-start-cleanup.test.mjs --require-failed-start-fail-closed
           if [ "$REQUIRE_FAIL_CLOSED" = "true" ]; then
             node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
             node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
