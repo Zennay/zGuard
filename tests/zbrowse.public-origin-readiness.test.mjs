@@ -46,6 +46,20 @@ function reportsCacheHit(value) {
   });
 }
 
+// A broken upstream can stall cancellation after the response already failed.
+// Attempt teardown, but never allow cleanup to outlive the release verdict.
+async function cancelQuietly(cancel) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, 250); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getJson(origin, route, fetcher) {
   const url = new URL(route, origin);
   assert.equal(url.origin, origin.origin, 'readiness must never leave the public origin');
@@ -104,7 +118,7 @@ async function getJson(origin, route, fetcher) {
         '/api/health: intermediary X-Cache reports a cache hit');
     }
   } catch (error) {
-    try { await response.body?.cancel(); } catch { /* Keep the primary policy failure. */ }
+    await cancelQuietly(() => response.body?.cancel());
     throw error;
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
@@ -121,7 +135,7 @@ async function getJson(origin, route, fetcher) {
   } catch (error) {
     // Reject on advertised size before reading a single byte. Cancel the
     // source as well so a misrouted public gateway cannot keep downloading.
-    try { await response.body?.cancel(); } catch { /* Preserve the original failure. */ }
+    await cancelQuietly(() => response.body?.cancel());
     throw error;
   }
   assert.ok(response.body, route + ': gateway JSON response body is missing');
@@ -143,7 +157,7 @@ async function getJson(origin, route, fetcher) {
   } catch (error) {
     // Oversized chunks, invalid UTF-8 and stream failures must stop the
     // transfer before releasing the lock. Cancellation may itself reject.
-    try { await reader.cancel(); } catch { /* Preserve the original failure. */ }
+    await cancelQuietly(() => reader.cancel());
     throw error;
   } finally {
     reader.releaseLock();
