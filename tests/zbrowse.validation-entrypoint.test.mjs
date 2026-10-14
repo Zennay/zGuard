@@ -37,7 +37,7 @@ const offlineReleaseProbes = [
   'zbrowse.public-tv-static-release.test.mjs'
 ];
 function assertOfflineProbeModes(script) {
-  const lines = script.split(/\\r?\\n/);
+  const lines = script.split(/\r?\n/);
   for (const probe of offlineReleaseProbes) {
     const command = `node ../tests/${probe} --self-test`;
     const invocations = lines.map(line => line.trim()).filter(line =>
@@ -55,7 +55,7 @@ for (const probe of offlineReleaseProbes) {
   assert.throws(() => assertOfflineProbeModes(validate.replace(safe, '')),
     /only in --self-test mode/, `${probe}: missing gate mutation must fail`);
   assert.throws(() => assertOfflineProbeModes(validate.replace(safe,
-    safe + '\\n' + safe)),
+    safe + '\n' + safe)),
   /only in --self-test mode/, `${probe}: duplicate gate mutation must fail`);
 }
 
