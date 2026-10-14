@@ -71,9 +71,11 @@ const server = await new Promise((resolve, reject) => {
   listening.once('error', reject);
 });
 try {
-  async function submit(contentType, body, origin) {
-    sessions.clear();
-    sessionsByIp.clear();
+  async function submit(contentType, body, origin, preserveSession = false) {
+    if (!preserveSession) {
+      sessions.clear();
+      sessionsByIp.clear();
+    }
     const oldCreated = created;
     const oldReserved = reserved;
     const headers = { 'content-type': contentType };
@@ -99,16 +101,30 @@ try {
     status: accepted.status, launched: accepted.newContainers
   }, { status: 201, launched: 1 }, 'approved JSON request must still launch one browser');
 
-  // Both text/plain and form-urlencoded are "simple" cross-origin POST media
-  // types. Browsers can issue these without CORS preflight; denying response
-  // access alone does not prevent session-creation side effects.
+  // All three browser form encodings (text/plain, urlencoded, multipart)
+  // can be sent across origins without CORS preflight. Denying response access
+  // alone does not prevent the server-side session side effect. A malicious
+  // form may also send a charset parameter or a sandboxed Origin: null.
   const simpleMedia = [
-    ['text/plain', 'launch=anything'],
-    ['application/x-www-form-urlencoded', 'url=https%3A%2F%2Fattacker.invalid%2F']
+    ['text/plain', 'launch=anything', 'https://attacker.invalid'],
+    ['text/plain; charset=UTF-8', 'ignored=true', 'https://attacker.invalid'],
+    ['application/x-www-form-urlencoded', 'url=https%3A%2F%2Fattacker.invalid%2F', 'https://attacker.invalid'],
+    ['multipart/form-data; boundary=zguard-form',
+      '--zguard-form\r\nContent-Disposition: form-data; name="url"\r\n\r\nhttps://attacker.invalid/\r\n--zguard-form--\r\n',
+      'https://attacker.invalid'],
+    ['text/plain', 'launch=anything', 'null']
   ];
   const acceptedSimple = [];
-  for (const [mediaType, body] of simpleMedia) {
-    const result = await submit(mediaType, body, 'https://attacker.invalid');
+  // A second cross-origin simple POST for the same client must also fail
+  // before the existing-session fast path can return a bearer-bearing 200.
+  const reused = await submit('application/x-www-form-urlencoded',
+    'url=ignored', 'https://attacker.invalid', true);
+  const reusedUnprotected = reused.status < 400 ||
+    reused.newContainers !== 0 || reused.newReservations !== 0 ||
+    /"token"\s*:|"viewerUrl"\s*:/.test(reused.responseBody);
+
+  for (const [mediaType, body, origin] of simpleMedia) {
+    const result = await submit(mediaType, body, origin);
     if (result.newContainers !== 0 || result.newReservations !== 0 ||
         result.status < 400) {
       acceptedSimple.push(mediaType + ':HTTP_' + result.status);
@@ -117,12 +133,15 @@ try {
   assert.equal(reserved, released,
     'all admissions, including unsafe request types, must release reservations');
   if (strict) {
+    assert.equal(reusedUnprotected, false,
+      'cross-origin form POST must not reuse or expose a live session');
     assert.deepEqual(acceptedSimple, [],
       'cross-site simple POST media types must never allocate a browser (CSRF admission risk)');
     console.log('Session admission rejects browser-simple cross-origin non-JSON POST bodies');
   } else {
     console.log('Actual gateway simple cross-origin POST source-bound probe: ' +
       'unexpectedly admitted media types=' + acceptedSimple.join(', ') +
+      '; existing-session form reuse unprotected=' + reusedUnprotected +
       '. Strict remediation proof: --require-json-only');
   }
 } finally {
