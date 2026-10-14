@@ -1390,6 +1390,53 @@ try {
   assert.equal(starts, beforeStalledReadStarts,
     'aborting either read endpoint must not send a remote browser start');
 
+  // Native Chromium proof for the bounded foreground DELETE: an actual
+  // localhost HTTP request can hang forever while the UI must still reclaim
+  // its retry state without accepting a second browser session.
+  const beforeDeleteTimeoutStarts = starts;
+  const beforeDeleteTimeoutCount = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === beforeDeleteTimeoutStarts + 1,
+    'real browser start for hanging-DELETE acceptance');
+  assert.ok(releaseStart, 'local browser start must wait for fixture release');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'real Chrome must mount viewer before DELETE timeout scenario');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'local viewer must fully load before attempting teardown');
+  holdNextDelete = true;
+  const heldDeleteArrived = new Promise(resolve => { notifyHeldDelete = resolve; });
+  await evaluate('document.getElementById("endButton").click(); true');
+  await Promise.race([heldDeleteArrived,
+    sleep(4000).then(() => { throw new Error('timed-out DELETE never reached fixture'); })]);
+  assert.equal(deletions, beforeDeleteTimeoutCount + 1,
+    'native End must send one intentionally hanging DELETE');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'a stuck DELETE must keep browser admission locked');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'real Chrome must time out dangling DELETE and show retry feedback', 240);
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'DELETE abort must never claim confirmed browser removal');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(130);
+  assert.equal(starts, beforeDeleteTimeoutStarts + 1,
+    'timed-out foreground release must not allow another browser POST');
+  releaseHeldDelete?.();
+  releaseHeldDelete = null;
+  notifyHeldDelete = null;
+  await evaluate('refreshHealth()');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'confirmed retry of original DELETE must unlock new session admission');
+  assert.equal(deletions, beforeDeleteTimeoutCount + 2,
+    'after the timeout, exactly one health-tick retry must release the same token');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+    'confirmed real HTTP teardown must clear retry feedback');
+
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked native Enter/pointer while unavailable, recovery, guarded starts, authenticated local iframe,' +
