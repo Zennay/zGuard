@@ -295,7 +295,9 @@ async function releasePendingSession() {
   const token = pendingReleaseToken;
   releaseAttemptInFlight = true;
   try {
-    await request("/api/session/" + token, { method: "DELETE", keepalive: true });
+    await request("/api/session/" + token, {
+      method: "DELETE", keepalive: true, signal: AbortSignal.timeout(7000)
+    });
     pendingReleaseToken = null;
     sessionEnding = false;
     setMessage();

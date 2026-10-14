@@ -118,7 +118,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     if (url.startsWith('/api/session/') &&
         /^[A-Za-z0-9_-]{32}$/.test(url.slice('/api/session/'.length)) &&
         options.method === 'DELETE') {
-      return deleteRequest ? deleteRequest() : response(null, 204);
+      return deleteRequest ? deleteRequest(options) : response(null, 204);
     }
     if (url === '/api/session' && options.method === 'POST') {
       if (!sessionRequest) throw new Error('unexpected session start request');
@@ -903,6 +903,69 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await settle();
   assert.equal(transportStarts, 2,
     'successful retry after transport error must restore browser admission');
+
+  // A lost gateway DELETE can hang forever without returning a 503 or a
+  // socket error. The foreground End/retry path must bound this wait, keep
+  // the old token locked, and use the next health tick to reconcile cleanup.
+  // Only idempotent DELETE is aborted; browser-creating POST is not.
+  let stuckDeletes = 0;
+  let stuckStarts = 0;
+  const stuckRelease = await bootPortal({
+    sessionRequest: async () => {
+      stuckStarts++;
+      return response(validSession);
+    },
+    deleteRequest(options) {
+      stuckDeletes++;
+      if (stuckDeletes === 1) {
+        return new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new DOMException('delete timed out', 'TimeoutError')), { once: true });
+        });
+      }
+      return response(null, 204);
+    }
+  });
+  stuckRelease.submit();
+  await settle();
+  const pendingTimeoutEnd = stuckRelease.element('endButton').listeners.click();
+  await settle();
+  assert.equal(stuckDeletes, 1, 'End must issue one real session DELETE');
+  const deleteSignals = stuckRelease.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE');
+  assert.equal(deleteSignals.length, 1);
+  assert.equal(deleteSignals[0].options.keepalive, true,
+    'foreground DELETE must remain eligible to complete during unload');
+  assert.ok(deleteSignals[0].options.signal,
+    'foreground DELETE must have a deadline independent of gateway response');
+  assert.equal(stuckRelease.element('startButton').disabled, true,
+    'pending deletion must block new browser allocation');
+  const stalledDeleteSignal = stuckRelease.timeoutControls.at(-1);
+  stalledDeleteSignal.abort();
+  await pendingTimeoutEnd;
+  await settle();
+  assert.equal(stuckRelease.element('startButton').disabled, true,
+    'timed-out deletion may not falsely confirm the browser was removed');
+  assert.equal(stuckRelease.element('capacityText').textContent,
+    'Finishing previous browser session');
+  assert.match(stuckRelease.element('formMessage').textContent, /Retrying automatically/,
+    'timeout must leave actionable cleanup retry feedback');
+  stuckRelease.submit();
+  await settle();
+  assert.equal(stuckStarts, 1,
+    'an uncertain timed-out DELETE must not permit session reuse by scripted form');
+  const timedOutDeleteHealth = [...stuckRelease.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 20000);
+  timedOutDeleteHealth.callback();
+  await settle();
+  assert.equal(stuckDeletes, 2,
+    'periodic health poll must retry an aborted foreground DELETE exactly once');
+  assert.equal(stuckRelease.element('startButton').disabled, false,
+    'a confirmed retry must finally unlock TV session admission');
+  assert.equal(stuckRelease.element('formMessage').textContent, '');
+  stuckRelease.submit();
+  await settle();
+  assert.equal(stuckStarts, 2, 'confirmed deletion must restore normal browsing');
 
   // The gateway may already have removed the token, making a subsequent
   // release idempotently return HTTP 404; that is safe to reconcile.
