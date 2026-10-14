@@ -9,6 +9,11 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const settings = { enabled, mode, blockedCount, lastBlocked };
   const removed = [];
+  let fakeNow = Date.now();
+  class ClockDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fakeNow])); }
+    static now() { return fakeNow; }
+  }
   let remainingReadFailures = failReads;
   let remainingWriteFailures = failWrites;
   let onCreated;
@@ -87,7 +92,7 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
     }
   };
 
-  const context = { URL, console };
+  const context = { URL, console, Date: ClockDate };
   if (relativePath.startsWith('firefox/')) context.browser = api;
   else context.chrome = api;
 
@@ -98,6 +103,7 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
     created: (tab) => onCreated(tab),
     updated: (id, changeInfo) => onUpdated(id, changeInfo, {}),
     closed: (id) => onRemoved(id),
+    advanceTime: (milliseconds) => { fakeNow += milliseconds; },
     installed: async () => {
       await Promise.resolve(onInstalled());
       await new Promise((resolve) => setImmediate(resolve));
@@ -314,6 +320,22 @@ async function verifyBrowser(relativePath) {
   await deferredStrict.updated(405, { url: 'https://origin.test/safe' });
   assert.deepEqual(deferredStrict.removed, [404],
     relativePath + ': deferred strict mode blocks external but allows same-origin');
+  const expired = await loadBackground(relativePath, 'balanced');
+  await expired.created({ id: 407, openerTabId: 1, url: 'about:blank' });
+  expired.advanceTime(10001);
+  await expired.updated(407, { url: 'https://ads.al5sm.com/expired' });
+  assert.deepEqual(expired.removed, [],
+    relativePath + ': expired deferred tabs must not block ordinary later browsing');
+  const bounded = await loadBackground(relativePath, 'balanced');
+  for (let id = 1000; id < 1130; id++) {
+    await bounded.created({ id, openerTabId: 1, url: 'about:blank' });
+  }
+  await bounded.updated(1000, { url: 'https://ads.al5sm.com/stale' });
+  await bounded.updated(1129, { url: 'https://ads.al5sm.com/recent' });
+  assert.deepEqual(bounded.removed, [1129],
+    relativePath + ': 128-record cap must evict oldest pending popup');
+  assert.equal(bounded.settings.lastBlocked.detail.url, 'https://ads.al5sm.com',
+    relativePath + ': bounded fallback retains redacted telemetry');
   const deferredDisabled = await loadBackground(relativePath, 'strict', { enabled: false });
   await deferredDisabled.created({ id: 406, openerTabId: 1, url: 'about:blank' });
   await deferredDisabled.updated(406, { url: 'https://ads.al5sm.com/popup' });
