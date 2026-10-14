@@ -93,15 +93,35 @@ assert.equal(malformed[0].status, 200,
 assert.equal(malformed[0].identity.sessionIdentity, '127.0.0.1',
   'invalid XFF client address must not become the gateway session owner');
 
+// Reverse proxies can append a source port in XFF. Those values are not
+// canonical client IPs; changing only a port must never allocate fresh quota
+// for the same TCP peer while session ownership falls back to that peer.
+const portTagged = await scenario(i => '198.51.100.20:' + (4100 + i) + ', 10.0.0.2');
+assert.equal(portTagged[0].status, 200);
+assert.equal(portTagged[0].identity.sessionIdentity, '127.0.0.1',
+  'XFF client with an attached port is not a canonical session owner');
+const bracketedIPv6 = await scenario(i => '[2001:db8::20]:' + (5100 + i) + ', 10.0.0.2');
+assert.equal(bracketedIPv6[0].status, 200);
+assert.equal(bracketedIPv6[0].identity.sessionIdentity, '127.0.0.1',
+  'bracketed IPv6 with source port must fall back to reviewed peer identity');
+
 const matched = incomplete[0].identity.limiterIdentity ===
   incomplete[0].identity.sessionIdentity;
 const enforced = incomplete.at(-1).status === 429;
 const malformedMatched = malformed[0].identity.limiterIdentity ===
   malformed[0].identity.sessionIdentity;
 const malformedEnforced = malformed.at(-1).status === 429;
+const portMatched = portTagged[0].identity.limiterIdentity ===
+  portTagged[0].identity.sessionIdentity;
+const portEnforced = portTagged.at(-1).status === 429;
+const ipv6PortMatched = bracketedIPv6[0].identity.limiterIdentity ===
+  bracketedIPv6[0].identity.sessionIdentity;
+const ipv6PortEnforced = bracketedIPv6.at(-1).status === 429;
 if (strict) {
-  assert.deepEqual({ matched, enforced, malformedMatched, malformedEnforced },
-    { matched: true, enforced: true, malformedMatched: true, malformedEnforced: true },
+  assert.deepEqual({ matched, enforced, malformedMatched, malformedEnforced,
+    portMatched, portEnforced, ipv6PortMatched, ipv6PortEnforced },
+    { matched: true, enforced: true, malformedMatched: true, malformedEnforced: true,
+      portMatched: true, portEnforced: true, ipv6PortMatched: true, ipv6PortEnforced: true },
     'source-tethered gateway limiter and session ownership must share a fail-closed key for incomplete or invalid XFF (issue #21)');
   console.log('Source-tethered production session limiter identity parity PASS');
 } else {
@@ -110,5 +130,9 @@ if (strict) {
     ', quotaEnforced=' + enforced +
     ', malformed-chain identityParity=' + malformedMatched +
     ', malformed-chain quotaEnforced=' + malformedEnforced +
+    ', XFF IPv4-port identityParity=' + portMatched +
+    ', IPv4-port quotaEnforced=' + portEnforced +
+    ', XFF IPv6-port identityParity=' + ipv6PortMatched +
+    ', IPv6-port quotaEnforced=' + ipv6PortEnforced +
     '; require --require-source-parity for the unresolved issue #21');
 }
