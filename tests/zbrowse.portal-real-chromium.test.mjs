@@ -47,6 +47,8 @@ let health = 'ready';
 let sitesMode = 'ready';
 let stalledSiteGets = 0;
 let stalledHealthGets = 0;
+let stalledSiteBodies = 0;
+let stalledHealthBodies = 0;
 let healthCacheControl = 'no-store';
 let nextHealthStatus = null;
 let nextSitesStatus = null;
@@ -97,6 +99,18 @@ const server = http.createServer(async (req, res) => {
         // No public gateway, production token or Docker connection is made.
         sitesMode = 'ready';
         stalledSiteGets++;
+        return;
+      }
+      if (sitesMode === 'hang-body-once') {
+        // HTTP 200 and JSON headers arrive, but the first chunk never ends.
+        // Browser must timeout after headers, not only while awaiting fetch.
+        sitesMode = 'ready';
+        stalledSiteBodies++;
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        });
+        res.write(' ');
         return;
       }
       if (sitesMode === 'oversized-error') {
@@ -178,6 +192,16 @@ const server = http.createServer(async (req, res) => {
       if (health === 'hang-once') {
         health = 'ready';
         stalledHealthGets++;
+        return;
+      }
+      if (health === 'hang-body-once') {
+        health = 'ready';
+        stalledHealthBodies++;
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        });
+        res.write(' ');
         return;
       }
       if (health === 'oversized-error') {
@@ -1717,6 +1741,38 @@ try {
   assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart);
   assert.equal(starts, beforeStalledReadStarts,
     'aborting either read endpoint must not send a remote browser start');
+
+  // Unlike the earlier pre-header hang, a proxy can supply perfectly valid
+  // HTTP 200/JSON headers and ONE body chunk, then stop forever. Exercise the
+  // actual Chrome ReadableStream path protected by the shared 7s abort signal.
+  const beforeStalledBodyStarts = starts;
+  health = 'hang-body-once';
+  await evaluate('refreshHealth(); true');
+  await until(async () => await evaluate(
+    'document.getElementById("capacityText").textContent === "Browser engine offline"'
+  ), 'real Chrome must abort stalled health body after HTTP 200', 230);
+  assert.equal(stalledHealthBodies, 1,
+    'real browser must consume an actual partially streamed health response');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'stalled health body cannot keep old capacity as available');
+  assert.equal(starts, beforeStalledBodyStarts,
+    'post-header stalled health must not allocate viewer sessions');
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'real Chrome must recover after stalled health body');
+
+  sitesMode = 'hang-body-once';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=postheader-stalled-json' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chrome must recover from stalled streamed catalogue after 200', 240);
+  assert.equal(stalledSiteBodies, 1,
+    'real browser must consume an actual partially streamed catalogue response');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid re-fetched site catalogue must restore Open after body timeout');
+  assert.equal(starts, beforeStalledBodyStarts,
+    'post-header stalled catalogue cannot allocate viewer sessions');
 
   // Native Chromium proof for the bounded foreground DELETE: an actual
   // localhost HTTP request can hang forever while the UI must still reclaim
