@@ -6,6 +6,16 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, '.github', 'workflows');
 const allowedEvents = new Set(['pull_request', 'push', 'workflow_dispatch']);
+const requiredAutomaticEvents = ['pull_request', 'push'];
+
+// A manually dispatched validation is not a substitute for PR and main-push
+// checks: removing an automatic trigger must never make CI silently disappear.
+function requireAutomaticValidation(events) {
+  for (const required of requiredAutomaticEvents) {
+    assert.ok(events.includes(required),
+      'workflow must retain automatic ' + required + ' validation');
+  }
+}
 
 function workflowEvents(source) {
   const lines = source.split(/\r?\n/);
@@ -63,6 +73,17 @@ for (const event of ['pull_request_target', 'workflow_run', 'issue_comment', 're
   }
 }
 
+for (const [name, events] of [
+  ['manual-only', ['workflow_dispatch']],
+  ['PR-only', ['pull_request']],
+  ['push-only', ['push']]
+]) {
+  assert.throws(() => requireAutomaticValidation(events),
+    /workflow must retain automatic/, name + ' trigger downgrade must fail');
+}
+requireAutomaticValidation(['pull_request', 'push']);
+requireAutomaticValidation(['workflow_dispatch', 'push', 'pull_request']);
+
 const workflows = fs.readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/i.test(name))
   .sort();
@@ -73,6 +94,7 @@ for (const name of workflows) {
   const relative = path.posix.join('.github', 'workflows', name);
   const source = fs.readFileSync(path.join(workflowDir, name), 'utf8');
   const events = workflowEvents(source);
+  requireAutomaticValidation(events);
   const disallowed = [...new Set(events.filter((event) => !allowedEvents.has(event)))]
     .sort();
 
