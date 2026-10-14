@@ -129,7 +129,8 @@ for (const [label, original, weakened] of [
   const changed = source.replace(original, weakened);
   assert.notEqual(changed, source, label + ': fixture must actually be weakened');
   await assert.rejects(probe(changed),
-    error => error?.code === 'ERR_ASSERTION' && /JSON success:/.test(error.message),
+    error => error?.code === 'ERR_ASSERTION' &&
+      /(?:JSON success|oversized JSON body):/.test(error.message),
     label + ': changed middleware must fail the actual HTTP header assertion, not syntax parsing');
   mutations++;
 }
