@@ -35,9 +35,13 @@ function verifyHeaders(headers, label) {
     label + ': HSTS default must remain active');
   assert.equal(get('cross-origin-embedder-policy'), null,
     label + ': intentional remote browser stream COEP exception must remain');
+  assert.equal(get('access-control-allow-origin'), null,
+    label + ': untrusted Origin must not receive CORS read permission');
+  assert.equal(get('access-control-allow-credentials'), null,
+    label + ': gateway must not grant cross-origin credential access');
   const csp = get('content-security-policy') || '';
   // Express finalhandler intentionally overrides the app CSP on generated
-  // 400/404 HTML errors with a stricter default-src 'none' policy. Treat
+  // 400/404/413 HTML errors with a stricter default-src 'none' policy. Treat
   // that behavior as acceptable only on those explicit error paths.
   if (label !== 'JSON success') {
     assert.equal(csp.trim(), "default-src 'none'",
@@ -71,12 +75,20 @@ async function probe(shipped) {
     const base = 'http://127.0.0.1:' + server.address().port;
     for (const [label, url, options, expected] of [
       ['JSON success', '/api/health', { method: 'GET' }, 200],
+      ['JSON success', '/api/health', {
+        method: 'GET', headers: { origin: 'https://untrusted.example.invalid' }
+      }, 200],
       ['unmatched path', '/not-found', { method: 'GET' }, 404],
       ['invalid JSON body', '/api/health', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{not valid JSON'
-      }, 400]
+      }, 400],
+      ['oversized JSON body', '/api/health', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ padding: 'Q'.repeat(9 * 1024) })
+      }, 413]
     ]) {
       const response = await fetch(base + url, {
         ...options, redirect: 'error', cache: 'no-store',
@@ -105,7 +117,13 @@ for (const [label, original, weakened] of [
   ['CSP foreign frames', 'frameSrc: ["\'self\'"]',
     'frameSrc: ["*"]'],
   ['COEP streaming compatibility', 'crossOriginEmbedderPolicy: false',
-    'crossOriginEmbedderPolicy: true']
+    'crossOriginEmbedderPolicy: true'],
+  ['JSON size cap bypass', 'express.json({ limit: "8kb" })',
+    'express.json({ limit: "80kb" })'],
+  ['foreign CORS origin', 'app.use(express.json(',
+    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Origin", "*"); next(); });\napp.use(express.json('],
+  ['CORS credentials', 'app.use(express.json(',
+    'app.use((_req, res, next) => { res.set("Access-Control-Allow-Credentials", "true"); next(); });\napp.use(express.json(']
 ]) {
   assert.ok(source.includes(original), label + ': mutation target missing');
   const changed = source.replace(original, weakened);
@@ -115,5 +133,5 @@ for (const [label, original, weakened] of [
     label + ': changed middleware must fail the actual HTTP header assertion, not syntax parsing');
   mutations++;
 }
-console.log('Shipped gateway Helmet real HTTP: 3 response classes and ' +
+console.log('Shipped gateway Helmet real HTTP: 200/400/404/413, foreign-Origin and ' +
   mutations + ' failing policy mutations PASS; live public HTTPS unverified');
