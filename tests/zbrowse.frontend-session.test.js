@@ -261,6 +261,26 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(invalidUtfStream.reads, 1,
     'decoding failure must stop before the next (potentially huge) stream chunk');
 
+  // A failed GET does not need upstream diagnostics. An ingress can serve a
+  // huge HTML/JSON error; fail closed on status without ever invoking .json().
+  for (const status of [429, 502, 503]) {
+    const failedHealth = response({ error: 'proxy diagnostic ' + 'x'.repeat(100000) },
+      status, 'text/html');
+    failedHealth.parsed = false;
+    failedHealth.json = async () => { failedHealth.parsed = true; return {}; };
+    const offline = await bootPortal({ healthRequest: async () => failedHealth });
+    assert.equal(offline.element('capacityText').textContent, 'Browser engine offline',
+      status + ': untrusted gateway errors cannot advertise readiness');
+    assert.equal(offline.element('startButton').disabled, true,
+      status + ': failed health must block Open');
+    assert.equal(failedHealth.cancelled, true,
+      status + ': failed health response body must be cancelled');
+    assert.equal(failedHealth.reads, 0,
+      status + ': failed health response bytes must not be consumed');
+    assert.equal(failedHealth.parsed, false,
+      status + ': failed health body must never be JSON-parsed');
+  }
+
   const validSites = { sites: [{ name: 'Approved', url: 'https://approved.test/' }] };
   for (const [label, malicious] of [
     ['declared oversized', response(validSites, 200, 'application/json',
@@ -282,6 +302,34 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     assert.equal(portal.requests.filter(({ url }) => url === '/api/session').length, 0,
       label + ': do not allocate a browser on oversized/unreadable catalogue');
   }
+  for (const status of [404, 502, 503]) {
+    const errorResponses = [];
+    const unusable = await bootPortal({ siteRequest: async () => {
+      const responseBody = response({ error: 'proxy diagnostic ' + 'x'.repeat(100000) },
+        status, 'text/html');
+      responseBody.parsed = false;
+      responseBody.json = async () => { responseBody.parsed = true; return {}; };
+      errorResponses.push(responseBody);
+      return responseBody;
+    } });
+    assert.equal(unusable.element('capacityText').textContent, 'Site catalogue unavailable',
+      status + ': error response is never reviewed catalogue data');
+    assert.equal(unusable.element('siteSuggestions').children.length, 0);
+    assert.equal(unusable.element('startButton').disabled, true);
+    assert.ok(errorResponses.length >= 2, 'site bootstrap may retry unsuccessful GET');
+    for (const failedSite of errorResponses) {
+      assert.equal(failedSite.cancelled, true,
+        status + ': every failed site body must be aborted');
+      assert.equal(failedSite.reads, 0,
+        status + ': failed site body cannot be consumed');
+      assert.equal(failedSite.parsed, false,
+        status + ': failed site diagnostics must never be parsed');
+    }
+    unusable.submit();
+    assert.equal(unusable.requests.filter(({ url }) => url === '/api/session').length,
+      0, 'failed catalogue must never create a browser');
+  }
+
   const oversizedCatalogue = response({ ...validSites, padding: 'x'.repeat(68000) });
   await bootPortal({ siteRequest: async () => oversizedCatalogue });
   assert.equal(oversizedCatalogue.cancelled, true,
