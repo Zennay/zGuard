@@ -74,20 +74,75 @@ api.runtime.onMessage.addListener((message, sender) => {
   return false;
 });
 
-api.tabs.onCreated.addListener(async (tab) => {
+// Chromium may create a popup as about:blank and publish its first web URL
+// only in tabs.onUpdated. A one-shot, short-lived pending record ensures
+// programmatic form.submit()/window.open cannot bypass onCreated validation.
+// Never monitor ordinary later navigations of a legitimate existing tab.
+const pendingFirstNavigation = new Map();
+const FIRST_NAVIGATION_MS = 10000;
+const MAX_PENDING = 128;
+function isWebDestination(url) {
+  try { return ['http:', 'https:'].includes(new URL(url).protocol); }
+  catch (_) { return false; }
+}
+function prunePending(now) {
+  for (const [id, state] of pendingFirstNavigation) {
+    if (now > state.expiresAt) pendingFirstNavigation.delete(id);
+  }
+}
+function trackOpaquePopup(tabId, openerTabId) {
+  const now = Date.now();
+  prunePending(now);
+  // Bound memory even if a browser never sends a URL or tab removal event.
+  if (pendingFirstNavigation.size >= MAX_PENDING) {
+    pendingFirstNavigation.delete(pendingFirstNavigation.keys().next().value);
+  }
+  pendingFirstNavigation.set(tabId, { openerTabId, expiresAt: now + FIRST_NAVIGATION_MS });
+}
+async function inspectPopup(tabId, openerTabId, targetUrl) {
   let settings;
   try { settings = await storageQueue.then(getSettings); } catch (_) { return; }
-  const targetUrl = tab.url || tab.pendingUrl;
-  if (!settings.enabled || !targetUrl || !tab.openerTabId) return;
-  // Browser-internal/opaque targets are not web popup destinations.
-  // In particular, do not interpret about:blank as foreign in Strict mode.
+  if (!settings.enabled || !isWebDestination(targetUrl)) return;
+  let opener;
+  try { opener = await api.tabs.get(openerTabId); } catch (_) { return; }
+  if (!(hostile(targetUrl) ||
+        (settings.mode === 'strict' && external(targetUrl, opener.url || '')))) return;
   try {
-    if (!['https:', 'http:'].includes(new URL(targetUrl).protocol)) return;
-  } catch (_) { return; }
-  let opener; try { opener = await api.tabs.get(tab.openerTabId); } catch (_) { return; }
-  if (!(hostile(targetUrl) || (settings.mode === 'strict' && external(targetUrl, opener.url || '')))) return;
-  try {
-    await api.tabs.remove(tab.id);
-    await mutateSettings((current) => ({ ...current, blockedCount: current.blockedCount + 1, lastBlocked: { event: 'new-tab', detail: safeBlockedDetail({ url: targetUrl }), at: new Date().toISOString() } }));
-  } catch (_) {}
+    await api.tabs.remove(tabId);
+    await mutateSettings((current) => ({
+      ...current,
+      blockedCount: current.blockedCount + 1,
+      lastBlocked: {
+        event: 'new-tab',
+        detail: safeBlockedDetail({ url: targetUrl }),
+        at: new Date().toISOString()
+      }
+    }));
+  } catch (_) {
+    // A racing user/browser close is not an extension control failure.
+  }
+}
+api.tabs.onCreated.addListener(async (tab) => {
+  if (!tab || !Number.isInteger(tab.id) ||
+      !Number.isInteger(tab.openerTabId) || tab.openerTabId < 0) return;
+  // If the browser exposes an already committed/pending web target, inspect
+  // it immediately; otherwise retain only the first delayed web destination.
+  const initialUrl = isWebDestination(tab.url) ? tab.url :
+    isWebDestination(tab.pendingUrl) ? tab.pendingUrl : null;
+  if (initialUrl) return inspectPopup(tab.id, tab.openerTabId, initialUrl);
+  trackOpaquePopup(tab.id, tab.openerTabId);
 });
+api.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  const pending = pendingFirstNavigation.get(tabId);
+  if (!pending) return;
+  if (Date.now() > pending.expiresAt) {
+    pendingFirstNavigation.delete(tabId);
+    return;
+  }
+  // Ignore unrelated updates (title, status), and opaque intermediate URLs.
+  // A later unrelated navigation must never inherit popup classification.
+  if (!isWebDestination(changeInfo?.url)) return;
+  pendingFirstNavigation.delete(tabId);
+  await inspectPopup(tabId, pending.openerTabId, changeInfo.url);
+});
+api.tabs.onRemoved.addListener((tabId) => pendingFirstNavigation.delete(tabId));
