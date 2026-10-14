@@ -263,7 +263,7 @@ try {
     ['comment-only default', 'PORT=8090\nSERVICE_MODE=# unset\n'],
     ['spaced comment-only default', 'PORT=8090\nSERVICE_MODE= # unset\n'],
     ['empty double-quoted default', 'PORT=8090\nSERVICE_MODE=""\n'],
-    ['empty single-quoted default', "PORT=8090\\nSERVICE_MODE=''\\n".replaceAll('\\n', '\n')],
+    ['empty single-quoted default', "PORT=8090\nSERVICE_MODE=''\n"],
     ['whitespace quoted default', 'PORT=8090\nSERVICE_MODE="   "\n'],
     ['unterminated quoted default', 'PORT=8090\nSERVICE_MODE="pending\n'],
     ['garbage after quoted default', 'PORT=8090\nSERVICE_MODE="ok"junk\n'],
