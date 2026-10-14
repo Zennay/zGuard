@@ -28,6 +28,7 @@ const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
 let starts = 0;
+let viewerResponseMode = 'valid';
 let deletions = 0;
 let releaseStart = null;
 let startRequestSeen = false;
@@ -89,8 +90,13 @@ const server = http.createServer(async (req, res) => {
       starts++;
       startRequestSeen = true;
       await new Promise(resolve => { releaseStart = resolve; });
+      const viewerUrl = viewerResponseMode === 'external' ?
+        'https://untrusted.invalid/viewer' :
+        viewerResponseMode === 'javascript' ? 'javascript:alert(1)' :
+        viewerResponseMode === 'mismatched-token' ? '/s/' + 'U'.repeat(32) + '/' :
+        '/s/' + syntheticToken + '/';
       sendJson(res, 201, {
-        token: syntheticToken, viewerUrl: '/s/' + syntheticToken + '/',
+        token: syntheticToken, viewerUrl,
         maxMinutes: 15, expiresAt: Date.now() + 900_000
       });
       return;
@@ -264,11 +270,41 @@ try {
   assert.equal(deletions, 1, 'repeated end must not double release');
   assert.equal(starts, 1, 'real TV UI must not accidentally allocate additional browsers');
 
+  // A compromised/misconfigured session API must never cause browser
+  // navigation to a malicious viewer, javascript: URL or another token.
+  // These use the actual shipped DOM and iframe in real Chromium, rather
+  // than calling checkedSessionPayload() in a VM with no browser.
+  const unsafeViewerModes = ['external', 'javascript', 'mismatched-token'];
+  for (const mode of unsafeViewerModes) {
+    viewerResponseMode = mode;
+    const before = starts;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === before + 1, mode + ' synthetic start attempt');
+    assert.ok(releaseStart, mode + ': synthetic gateway response must be pending');
+    releaseStart();
+    releaseStart = null;
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === "Invalid browser session response."'
+    ), mode + ': real browser must surface generic rejection');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'),
+      true, mode + ': rejected payload must never mount browser view');
+    assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+      'about:blank', mode + ': rejected payload must not navigate viewer iframe');
+    assert.equal(await evaluate(
+      'state.session === null && state.heartbeat === null && state.countdown === null'
+    ), true, mode + ': rejected payload must not retain session or timers');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, mode + ': retry must be available');
+    assert.equal(deletions, 1,
+      mode + ': rejected payload must not delete someone else\'s session');
+  }
+
   // Browser-native page navigation must trigger the shipped pagehide
   // keepalive DELETE rather than leaving a session alive until TTL. This
   // validates genuine Chromium unload networking, not a VM-simulated event.
+  viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 2, 'second local browser session allocation');
+  await until(() => starts === 5, 'valid browser retry after unsafe viewer rejections');
   assert.equal(deletions, 1, 'a pending fresh browser must not double-delete the old one');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
@@ -284,12 +320,12 @@ try {
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
   assert.equal(deletions, 2, 'browser pagehide must release the second browser exactly once');
-  assert.equal(starts, 2, 'one request per intentionally started browser');
+  assert.equal(starts, 5, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, recovery, reviewed sites, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' no duplicate allocation/release');
+    ' unsafe-viewer rejection/retry, no duplicate allocation/release');
 } finally {
   releaseStart?.();
   socket?.close();
