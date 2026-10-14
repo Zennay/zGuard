@@ -262,6 +262,9 @@ try{
   const popupUrl=await popupOriginForInstalledAddon(addon,profileDir);
   const created=await wd('POST','/session/'+session+'/window/new',{type:'tab'});
   assert.ok(created.handle,'Real Firefox must create a separate popup settings tab');
+  // WebDriver New Window returns a handle but does not switch the current
+  // browsing context. Explicitly preserve the fixture on its original tab.
+  await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('POST','/session/'+session+'/url',{url:popupUrl});
   await until(()=>evaluate(
     'return document.querySelector("#status")?.textContent==="Actief" &&'
