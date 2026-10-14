@@ -76,13 +76,13 @@ async function getJson(origin, route, fetcher) {
         '/api/health: cached Age must be zero for live browser capacity');
     }
     const cacheStatus = response.headers.get('cache-status') || '';
-    assert.doesNotMatch(cacheStatus, /(?:^|[;,])\\s*hit(?:\\s*[;,]|$)/i,
+    assert.doesNotMatch(cacheStatus, /(?:^|[;,])\s*hit(?:\s*[;,]|$)/i,
       '/api/health: intermediary Cache-Status reports a cache hit');
     const cloudflareStatus = response.headers.get('cf-cache-status') || '';
     assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
       '/api/health: intermediary CF-Cache-Status reports cached content');
     const xCache = response.headers.get('x-cache') || '';
-    assert.doesNotMatch(xCache, /(?:^|[\\s,])hit(?:$|[\\s,])/i,
+    assert.doesNotMatch(xCache, /(?:^|[\s,])hit(?:$|[\s,])/i,
       '/api/health: intermediary X-Cache reports a cache hit');
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
