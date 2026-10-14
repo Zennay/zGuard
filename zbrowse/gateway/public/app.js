@@ -26,6 +26,13 @@ async function request(url, options = {}) {
   if (options.method === "DELETE" && response.ok && response.status !== 204) {
     throw new Error("Unexpected session release status.");
   }
+  // These are read-only gateway routes with a 200 JSON contract. A proxy
+  // returning 202/203/205/206 must not advertise readiness or populate a
+  // trusted site catalogue from a status it cannot authoritatively confirm.
+  if ((url === "/api/health" || url === "/api/sites") &&
+      response.ok && response.status !== 200) {
+    throw new Error("Unexpected gateway read status.");
+  }
   if (response.status === 204) return null;
   // Successful lease renewal must be an actual gateway JSON response,
   // not an HTML/plain-text proxy response that happens to parse as JSON.
