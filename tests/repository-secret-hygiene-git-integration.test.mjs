@@ -163,7 +163,9 @@ try {
     'literal terminal escape must never be emitted into CI logs');
   assert.equal((unsafeResult.stdout + unsafeResult.stderr).includes(first), false,
     'diagnostics must not print the matched synthetic secret');
-  git('rm', '-q', '--', unsafeRelative);
+  // The fixture was staged but never committed: force its removal from the
+  // disposable Git index and disk without emitting the unsafe pathname.
+  git('rm', '-f', '-q', '--', unsafeRelative);
 
   writeAndTrack(Buffer.from([0, 255, 128, 10, 0, 40]));
   accept('safe binary after contaminated fixture is removed');
