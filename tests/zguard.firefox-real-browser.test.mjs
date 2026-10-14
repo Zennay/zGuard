@@ -35,12 +35,21 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'href="https://ads.al5sm.com/map" target="_blank" alt="Hostile hotspot"/>'
   +'<area id="imageMapOrdinary" shape="rect" coords="110,0,200,100" '
   +'href="/safe" target="_blank" alt="Ordinary hotspot"/></map>'
+  +'<button id="openSameOriginPopup" type="button">Allowed page popup</button>'
+  +'<button id="openCrossOriginPopup" type="button">Cross-origin page popup</button>'
   +'<iframe id="qaCrossOriginFrame" title="Cross-origin Firefox popup boundary" '
   +'src="__QA_FRAME_URL__"></iframe>'
   +'<div id="shadowHost"></div>'
   +'<script>window.qa={hostileClicks:0,ordinaryClicks:0,hostileSubmits:0,'
   +'svgHostileClicks:0,svgOrdinaryClicks:0,shadowHostileClicks:0,shadowOrdinaryClicks:0,'
-  +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0};'
+  +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0,'
+  +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false};'
+  +'document.getElementById("openSameOriginPopup").addEventListener("click",()=>{'
+  +'window.qa.pagePopupSame++;window.qa.pagePopupSameNative='
+  +'!!window.open(location.origin+"/qa-same-origin-popup","_blank");});'
+  +'document.getElementById("openCrossOriginPopup").addEventListener("click",()=>{'
+  +'window.qa.pagePopupCross++;window.qa.pagePopupCrossNative='
+  +'!!window.open("__QA_FRAME_URL__","_blank");});'
   +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary","imageMapHostile","imageMapOrdinary"]){'
   +'document.getElementById(id).addEventListener("click",e=>{'
   +'window.qa[id+"Clicks"]++;e.preventDefault();});}'
@@ -74,7 +83,7 @@ const server=http.createServer((_req,res)=>{
   res.writeHead(200,{'content-type':'text/html; charset=utf-8',
     'cache-control':'no-store','x-content-type-options':'nosniff'});
   const frameUrl='http://127.0.0.1:'+frameServer.address().port+'/child';
-  res.end(fixture.replace('__QA_FRAME_URL__',frameUrl)
+  res.end(fixture.replaceAll('__QA_FRAME_URL__',frameUrl)
     .replace('__QA_ORDINARY_EXTERNAL__',
       'http://127.0.0.1:'+frameServer.address().port+'/safe'));
 });
@@ -302,6 +311,41 @@ try{
   const strictAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(strictAfter.ordinaryClicks,strictBefore.ordinaryClicks,
     'Actual Firefox popup strict mode must stop trusted native ordinary external click');
+  // Browser-level fallback: invoke a page-authored window.open from an actual
+  // trusted WebDriver button click. The different loopback port is a separate
+  // origin, and no external website or production browser is contacted.
+  // A harmless same-origin popup must really open first, or a disabled Firefox
+  // popup blocker could make the hostile test pass vacuously.
+  const strictHandles=await wd('GET','/session/'+session+'/window/handles');
+  assert.equal(strictHandles.length,2,'Fixture and real extension popup must be the only tabs');
+  await click('#openSameOriginPopup');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'trusted same-origin JavaScript popup positive control',60);
+  const sameState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(sameState.pagePopupSame,1,'Actual page-world button must execute once');
+  assert.equal(sameState.pagePopupSameNative,true,
+    'Browser must permit a real page-created popup; no vacuous popup-blocker PASS');
+  const withSame=await wd('GET','/session/'+session+'/window/handles');
+  const samePopupHandle=withSame.find(h=>!strictHandles.includes(h));
+  assert.ok(samePopupHandle,'Same-origin positive control must create a distinct browser tab');
+  await wd('POST','/session/'+session+'/window',{handle:samePopupHandle});
+  await until(()=>evaluate('return location.pathname==="/qa-same-origin-popup"'),
+    'native same-origin popup navigated',50);
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  await click('#openCrossOriginPopup');
+  const crossState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(crossState.pagePopupCross,1,
+    'Real page JavaScript must request cross-origin window.open once');
+  if(!mainWorld)assert.equal(crossState.pagePopupCrossNative,true,
+    'Without MAIN-world interception, Firefox must actually open the target before background fallback');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===2,
+    'strict Firefox policy must remove page-created cross-origin popup',60);
+  const afterPopupFallback=await wd('GET','/session/'+session+'/window/handles');
+  assert.deepEqual(new Set(afterPopupFallback),new Set(strictHandles),
+    'Only original fixture and extension settings tab may survive browser-level fallback');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await click('[data-mode="balanced"]');
   await until(()=>evaluate(
@@ -327,6 +371,7 @@ try{
   console.log('Native Firefox MV2 PASS: HTML/SVG/Shadow DOM, middle auxclick, image-map, keyboard and cross-origin iframe protected; ordinary controls pass; one tab.');
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
+  console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
