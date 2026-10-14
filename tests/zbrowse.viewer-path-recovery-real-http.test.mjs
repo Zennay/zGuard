@@ -95,6 +95,28 @@ try {
   assert.equal(rejected.status, 403, 'unrecognized browser token must never proxy');
   assert.equal(forwarded.length, 2, 'invalid bearer must not reach container');
 
+  // Keep authenticated viewer HTTP asset handling aligned with WebSocket
+  // token extraction: malformed segments and encoded or case-shifted routes
+  // must fail *before* forwarding credentials to the browser container.
+  const invalidViewerPaths = [
+    ['token suffix', '/s/' + token + 'x/assets/player.js'],
+    ['token prefix', '/s/' + token.slice(1) + '/assets/player.js'],
+    ['token punctuation', '/s/' + token + './assets/player.js'],
+    ['split token', '/s/' + token.slice(0, 16) + '/' +
+      token.slice(16) + '/assets/player.js'],
+    ['encoded first byte', '/s/%50' + token.slice(1) + '/assets/player.js'],
+    ['duplicate session prefix', '/s/s/' + token + '/assets/player.js'],
+    ['empty session segment', '/s//assets/player.js'],
+    ['uppercase route', '/S/' + token + '/assets/player.js']
+  ];
+  for (const [name, url] of invalidViewerPaths) {
+    const denied = await get(url);
+    assert.ok(denied.status >= 400,
+      name + ': malformed URL must not produce a successful browser asset response');
+    assert.equal(forwarded.length, 2,
+      name + ': malformed bearer/route must never reach upstream with Basic auth');
+  }
+
   session.ip = '192.0.2.75';
   const forged = await get(assetPath, { 'X-Forwarded-For': '192.0.2.75' });
   assert.equal(forged.status, 403,
