@@ -1,0 +1,54 @@
+name: zBrowse health cache readiness contract
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_health_no_store:
+        description: "Require no-store for live browser capacity GET and HEAD responses (issue #293)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-health-cache-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    name: Health capacity cache boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_HEALTH_NO_STORE: ${{ inputs.require_health_no_store || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies without lifecycle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+      - name: Exercise actual HTTP readiness and cache policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.health-cache-real-http.test.mjs
+          if [ "$REQUIRE_HEALTH_NO_STORE" = "true" ]; then
+            node tests/zbrowse.health-cache-real-http.test.mjs --require-health-no-store
+          fi
