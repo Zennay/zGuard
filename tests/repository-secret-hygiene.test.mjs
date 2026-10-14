@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const signatures = [
   {
     name: "PEM private key",
-    pattern: new RegExp("-----BEGIN " + "(?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
+    pattern: new RegExp("-----BEGIN " + "(?:(?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
   },
   { name: "GitHub classic token", pattern: new RegExp("gh" + "[opusr]_[A-Za-z0-9]{20,}") },
   { name: "GitHub fine-grained token", pattern: new RegExp("github" + "_pat_[A-Za-z0-9_]{20,}") },
@@ -89,7 +89,10 @@ const examples = [
   ["GitHub fine-grained token", "github" + "_pat_" + "C".repeat(30)],
   ["AWS access key id", "AK" + "IA" + "D".repeat(16)],
   ["Slack bot token", "xox" + "b-" + "E".repeat(30)],
-  ["PEM private key", "-----BEGIN " + "PRIVATE KEY-----"]
+  ["PEM private key", "-----BEGIN " + "PRIVATE KEY-----"],
+  ["PEM private key", "-----BEGIN " + "DSA PRIVATE KEY-----"],
+  ["PEM private key", "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"],
+  ["PEM private key", "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----"]
 ];
 for (const [name, synthetic] of examples) {
   const binary = Buffer.concat([
@@ -139,6 +142,9 @@ assert.throws(() => {
 }, undefined, "a Latin-1-only regression must fail Unicode token acceptance");
 
 for (const harmless of [
+  Buffer.from("-----BEGIN " + "PUBLIC KEY-----", "ascii"),
+  Buffer.from("-----BEGIN " + "CERTIFICATE-----", "ascii"),
+  Buffer.from("-----BEGIN " + "PGP PUBLIC KEY BLOCK-----", "ascii"),
   Buffer.from([0, 255, 128, 0]),
   Buffer.from("kiosk-coldstart-launch-real-shell.test.mjs\0", "utf8"),
   Buffer.from("sk" + "-" + "A".repeat(19) + "\0", "utf8")
