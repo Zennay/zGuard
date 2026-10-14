@@ -60,6 +60,17 @@ const sandbox = {
         assert.equal(options.auth, 'viewer:' + password,
           'credentials must be gateway-generated, not user forwarded');
         const error = errors.shift();
+        if (req.url.includes('/partial/')) {
+          // Exercise the OTHER shipped browserProxyError() branch: once the
+          // upstream sends bytes, a 502 cannot replace the partial response.
+          assert.equal(error, undefined, 'streamed case runs after initial failures');
+          res.writeHead(200, { 'content-type': 'text/plain' });
+          res.write('public fixture data only');
+          assert.equal(res.headersSent, true,
+            'partial upstream response must already have started');
+          throw new Error('streamed proxy error /s/' + token +
+            ' Authorization: Bearer ' + token + '\r\nPassword=' + password);
+        }
         if (error) throw error;
         res.writeHead(200, { 'content-type': 'text/plain' }).end('recovered');
       }
@@ -113,6 +124,17 @@ try {
     'a connection failure must not disable later authorized browser use');
   assert.equal(forwards, 5);
 
+  // A streaming proxy can fail AFTER its first bytes have reached the HTTP
+  // client. The handler must close the already-committed response, not try
+  // to append a 502 or leak arbitrary upstream error text to its logs.
+  await assert.rejects(
+    get('/s/' + token + '/partial/stream'),
+    'a partially written, interrupted gateway stream must terminate abruptly'
+  );
+  assert.equal(forwards, 6, 'only the authorized streamed request reached proxy');
+  assert.equal(captured.length, 5,
+    'the partially sent response must also record a proxy failure diagnostic');
+
   // Deliberately inspect only in memory. Do not include any synthetic bearer
   // or credential text in CI diagnostics; the pass/fail count is sufficient.
   const sensitiveCanaries = [token, password, basicAuth,
@@ -124,7 +146,8 @@ try {
     assert.equal(leaking.length, 0,
       'viewer proxy diagnostics must redact bearer paths, credentials and injected log lines');
   }
-  console.log('Shipped viewer proxy error logging over localhost: ' +
+  console.log('Shipped viewer proxy error logging over localhost (including ' +
+    'one interrupted response after headers): ' +
     captured.length + ' synthetic upstream failures; privacy-safe logs=' +
     (captured.length - leaking.length) + '/' + captured.length +
     '; strict remediation proof: --require-redacted-proxy-errors');
