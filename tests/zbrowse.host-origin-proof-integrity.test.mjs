@@ -27,6 +27,18 @@ function verify(source, yaml) {
   assert.ok(source.includes('http.request({') &&
     source.includes("host.flatMap(value => ['Host', value])"),
     'negative Host proof must send raw HTTP with duplicate Host lines');
+  // Exercise conflict handling over raw TCP even before strict canonical-
+  // Host remediation is available. These checks must stay always-on.
+  for (const needle of [
+    'Array.isArray(origin)', 'Array.isArray(fetchSite)',
+    'conflictingOrigins.every(denied)',
+    'conflictingOriginReuses.every(denied)',
+    'conflictingFetchSites.every(denied)',
+    'conflictingFetchSiteReuses.every(denied)'
+  ]) {
+    assert.ok(source.includes(needle),
+      'duplicate browser metadata must deny start and reuse: ' + needle);
+  }
   const start = source.lastIndexOf('  if (strict) {');
   const end = source.indexOf('  } else {', start);
   assert.ok(start > 0 && end > start, 'strict Host proof must be an opt-in failing branch');
@@ -63,7 +75,17 @@ for (const [label, needle, replacement] of [
     'console.log(denied(outcome)'],
   ['duplicated wire Host silently removed',
     "host.flatMap(value => ['Host', value])",
-    "host.map(value => value)"]
+    "host.map(value => value)"],
+  ['Origin duplicate wire handling skipped', 'Array.isArray(origin)',
+    'false /* origin duplicate bypass */'],
+  ['Fetch Metadata duplicate wire handling skipped', 'Array.isArray(fetchSite)',
+    'false /* fetch-metadata duplicate bypass */'],
+  ['duplicate Origin reuse evidence removed',
+    'conflictingOriginReuses.every(denied)',
+    'conflictingOriginReuses.some(denied)'],
+  ['duplicate Fetch Metadata start evidence removed',
+    'conflictingFetchSites.every(denied)',
+    'conflictingFetchSites.some(denied)']
 ]) {
   assert.ok(testSource.includes(needle), label + ': mutation target missing');
   const changed = testSource.replace(needle, replacement);
