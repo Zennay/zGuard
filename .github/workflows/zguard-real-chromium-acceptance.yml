@@ -90,7 +90,11 @@ jobs:
           set -euo pipefail
           "$CHROMIUM_BIN" --version
           node tests/zguard.browser-flag-contract.test.mjs
+          node tests/zguard.page-mainworld-boundary.test.mjs
           node tests/zguard.chromium-real-browser.test.mjs
+          # MAIN-world interception is now a required real Chromium gate,
+          # not an opt-in assertion on workflow_dispatch only.
+          node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
           # Both previously missed non-HTML-anchor popup gestures are required gates.
           node tests/zguard.chromium-real-browser.test.mjs --require-image-map
           node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
