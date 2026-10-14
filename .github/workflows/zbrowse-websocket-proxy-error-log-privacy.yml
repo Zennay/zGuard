@@ -45,6 +45,8 @@ jobs:
           set -euo pipefail
           node --check tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs
           node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs
+          # Browser WebSocket credential log privacy must stay green on every PR and main push.
+          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors
           if [ "$REQUIRE_REDACTED_WS_PROXY_ERRORS" = "true" ]; then
             node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors
           fi
