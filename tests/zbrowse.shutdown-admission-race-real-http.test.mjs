@@ -23,6 +23,7 @@ const parser = source.match(/app\.use\(express\.json\(\{ limit: "8kb" \}\)\);/)?
 assert.ok(parser, 'gateway must retain a bounded JSON parser');
 const handler = [
   parser,
+  section('function publicSession(', 'function validStartUrl('),
   section('app.post("/api/session",', 'app.post("/api/session/:token/heartbeat"'),
   section('async function shutdown() {', 'process.on("SIGTERM"')
 ].join('\n') + '\nshutdown';
@@ -46,7 +47,7 @@ let resolveShutdownExit;
 const shutdownExit = new Promise(resolve => { resolveShutdownExit = resolve; });
 
 const context = {
-  app, express, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
+  app, express, Math, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
   config: { ttlMs: 900_000, idleMs: 600_000 },
   cleanupTimer: {},
   clearInterval() {},
@@ -133,7 +134,8 @@ await Promise.race([
 ]);
 assert.equal(reserves, releases, 'admission reservations must remain balanced');
 assert.ok(exitCodes.length >= 1, 'shutdown must complete its mocked process exit callback');
-const rejected = rejectedByClosedListener || (status !== null && status >= 400);
+const rejected = rejectedByClosedListener ||
+  (status !== null && status >= 400 && starts === 0);
 const orphan = sessions.has(newToken);
 if (strict) {
   assert.equal(rejected && starts === 0 && !orphan, true,
