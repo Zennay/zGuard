@@ -91,7 +91,8 @@ jobs:
           "$CHROMIUM_BIN" --version
           node tests/zguard.browser-flag-contract.test.mjs
           node tests/zguard.chromium-real-browser.test.mjs
-          # SVG popup interception is also a required real-browser security gate.
+          # Both previously missed non-HTML-anchor popup gestures are required gates.
+          node tests/zguard.chromium-real-browser.test.mjs --require-image-map
           node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld

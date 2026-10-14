@@ -59,10 +59,13 @@ async function loadContentScript(relativePath, mode, enabled = true) {
 
   return {
     open: (url) => context.window.open(url),
-    click(href, { target = '_blank', ctrlKey = false, metaKey = false, button = 0 } = {}) {
+    click(href, { target = '_blank', ctrlKey = false, metaKey = false, button = 0, elementTag = 'a' } = {}) {
       const actions = [];
       const event = {
-        target: { closest: (selector) => selector === 'a' ? { href, target } : null },
+        target: {
+          closest: (selector) => selector.split(',').includes(elementTag)
+            ? { href, target } : null
+        },
         ctrlKey, metaKey, button,
         preventDefault() { actions.push('preventDefault'); },
         stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
@@ -250,6 +253,38 @@ async function verifyBrowser(relativePath) {
     [], relativePath + ': empty SVG href must never throw'
   );
 
+  // Image-map hotspot events target HTMLAreaElement, not HTMLAnchorElement.
+  // Preserve existing href/target policy and modified-click safeguards.
+  assert.deepEqual(
+    balanced.click('https://ads.al5sm.com/popup', { elementTag: 'area' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile image-map area must be intercepted'
+  );
+  assert.deepEqual(
+    balanced.click('https://example.org/video', { elementTag: 'area' }),
+    [], relativePath + ': harmless image-map area must remain usable'
+  );
+  assert.deepEqual(
+    strict.click('https://example.org/video', { elementTag: 'area' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': strict mode rejects cross-origin image-map new tabs'
+  );
+  assert.deepEqual(
+    strict.click('/next', { elementTag: 'area' }),
+    [], relativePath + ': same-origin area must stay navigable'
+  );
+  assert.deepEqual(
+    balanced.click('https://ads.al5sm.com/popup',
+      { elementTag: 'area', target: '_self' }),
+    [], relativePath + ': same-tab area should not be treated as popup'
+  );
+  assert.deepEqual(
+    balanced.click('https://ads.al5sm.com/popup',
+      { elementTag: 'area', target: '_self', ctrlKey: true }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': modified area gesture must be intercepted'
+  );
+
   const disabled = await loadContentScript(relativePath, 'strict', false);
   assert.notEqual(
     disabled.open('https://ads.al5sm.com/popup'),
@@ -262,6 +297,9 @@ async function verifyBrowser(relativePath) {
     relativePath + ': disabled mode must not filter DNS-root-dot hosts'
   );
   assert.deepEqual(disabled.click('https://ads.al5sm.com/popup'), []);
+  assert.deepEqual(disabled.click('https://ads.al5sm.com/popup',
+    { elementTag: 'area' }), [],
+  relativePath + ': disabled mode must preserve native image-map hotspot behavior');
   assert.deepEqual(disabled.click({ baseVal: 'https://ads.al5sm.com/popup' },
     { target: { baseVal: '_blank' } }), [],
   relativePath + ': disabled guard must preserve SVG popup gestures');
