@@ -275,9 +275,35 @@ try {
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     false, 'successful recovery must immediately re-enable Open');
 
-  await evaluate('document.getElementById("browserForm").requestSubmit();' +
-    'document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => startRequestSeen, 'one actual session POST');
+  // Exercise genuine Chromium keyboard activation rather than relying only
+  // on synthetic form.requestSubmit(). A second scripted submit while the
+  // first request is pending must still be rejected by the shipped UI.
+  const focusedStart = await evaluate(`(() => {
+    const button = document.getElementById("startButton");
+    window.__qaPortalKeyboard = {
+      startKeyTrusted: false, submitTrusted: false, endKeyTrusted: false
+    };
+    button.addEventListener("keydown", event => {
+      if (event.key === "Enter") window.__qaPortalKeyboard.startKeyTrusted = event.isTrusted;
+    }, { once: true });
+    document.getElementById("browserForm").addEventListener("submit", event => {
+      window.__qaPortalKeyboard.submitTrusted = event.isTrusted;
+    }, { once: true });
+    button.focus();
+    return document.activeElement === button;
+  })()`);
+  assert.equal(focusedStart, true, 'start button must be focusable in real Chromium');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: 'Enter', code: 'Enter',
+      windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+    });
+  }
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => startRequestSeen, 'one native-keyboard session POST');
+  assert.equal(await evaluate(
+    'window.__qaPortalKeyboard.startKeyTrusted && window.__qaPortalKeyboard.submitTrusted'
+  ), true, 'native keyboard Enter must dispatch a trusted submit event');
   assert.equal(starts, 1, 'double submit must never allocate two browser sessions');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     true, 'start button should remain locked while a browser is starting');
@@ -295,8 +321,25 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
 
-  await evaluate('document.getElementById("endButton").click(); true');
-  await until(() => deletions === 1, 'one gateway capacity release');
+  // The TV remote/keyboard path must also end sessions without a mouse.
+  const focusedEnd = await evaluate(`(() => {
+    const button = document.getElementById("endButton");
+    button.addEventListener("keydown", event => {
+      if (event.key === "Enter") window.__qaPortalKeyboard.endKeyTrusted = event.isTrusted;
+    }, { once: true });
+    button.focus();
+    return document.activeElement === button;
+  })()`);
+  assert.equal(focusedEnd, true, 'End session must remain keyboard focusable');
+  for (const type of ['keyDown', 'keyUp']) {
+    await cdp('Input.dispatchKeyEvent', {
+      type, key: 'Enter', code: 'Enter',
+      windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+    });
+  }
+  await until(() => deletions === 1, 'one keyboard-triggered gateway capacity release');
+  assert.equal(await evaluate('window.__qaPortalKeyboard.endKeyTrusted'),
+    true, 'End session must receive a native trusted Enter key');
   await until(async () => await evaluate(
     'document.getElementById("browserView").hidden && !document.getElementById("homeView").hidden'
   ), 'home returns after ending the viewer');
@@ -488,7 +531,7 @@ try {
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, blocked offline starts, recovery, guarded starts, authenticated local iframe,' +
-    ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
+    ' completed load, native keyboard start/end, manual teardown, browser-native pagehide keepalive DELETE,' +
     ' pending-unload cleanup, BFCache restore, heartbeat recovery, no duplicate release');
 } finally {
   releaseStart?.();
