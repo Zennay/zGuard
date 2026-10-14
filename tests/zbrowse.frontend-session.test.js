@@ -1143,6 +1143,56 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     options.method === 'DELETE').length, 0,
     'successful heartbeat must not destroy the browser');
 
+  // A 2xx heartbeat without an explicit, live gateway lease is not a
+  // renewal. The previous implementation treated every resolved fetch as
+  // valid, allowing a proxy 204 or {ok:false} to keep an orphan iframe alive.
+  for (const [label, reply] of [
+    ['no-content 204', response(null, 204)],
+    ['negative lease', response({ ok: false, expiresAt: Date.now() + 60_000 })],
+    ['empty JSON', response({})],
+    ['missing expiry', response({ ok: true })],
+    ['string expiry', response({ ok: true, expiresAt: String(Date.now() + 60_000) })],
+    ['expired lease', response({ ok: true, expiresAt: Date.now() - 1000 })],
+    ['unsafe number', response({ ok: true, expiresAt: Number.MAX_SAFE_INTEGER + 1 })],
+    ['non-JSON success', {
+      status: 200, ok: true,
+      json: async () => { throw new SyntaxError('proxy served HTML'); }
+    }]
+  ]) {
+    let allocations = 0;
+    const invalidLease = await bootPortal({
+      sessionRequest: async () => {
+        allocations++;
+        return response(validSession);
+      },
+      heartbeatRequest: async () => reply
+    });
+    invalidLease.element('browserView').hidden = true;
+    invalidLease.submit();
+    await settle();
+    assert.equal(invalidLease.element('browserView').hidden, false,
+      label + ': real frontend should mount the original viewer');
+    const tickHeartbeat = [...invalidLease.intervals.values()]
+      .find(({ milliseconds }) => milliseconds === 30000);
+    assert.ok(tickHeartbeat, label + ': real heartbeat must be scheduled');
+    tickHeartbeat.callback();
+    await settle();
+    assert.equal(invalidLease.element('browserView').hidden, true,
+      label + ': unconfirmed lease must immediately unmount viewer');
+    assert.equal(invalidLease.element('browserFrame').src, 'about:blank',
+      label + ': invalid acknowledgement must discard bearer iframe');
+    assert.equal(invalidLease.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken + '/heartbeat' && options.method === 'POST').length,
+      1, label + ': use real lease endpoint');
+    assert.equal(invalidLease.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE').length,
+      1, label + ': invalid lease must trigger one real cleanup attempt');
+    assert.deepEqual(
+      [...invalidLease.intervals.values()].map(({ milliseconds }) => milliseconds),
+      [20000], label + ': cancel old lease timers after invalid acknowledgement');
+    assert.equal(allocations, 1, label + ': never automatically start another browser');
+  }
+
   let hangingHeartbeats = 0;
   let hangingStarts = 0;
   const stalledHeartbeat = await bootPortal({
