@@ -275,6 +275,12 @@ try {
     const stop = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 3000);
     child.once('exit', () => { clearTimeout(stop); resolve(); });
   });
-  fs.rmSync(profile, { recursive: true, force: true });
+  // Chrome's helper processes may flush profile files after its parent exits.
+  // A bounded ENOTEMPTY/EBUSY retry avoids false-negative CI after every UI
+  // assertion has already passed, without leaving a persistent test profile.
+  await sleep(200);
+  fs.rmSync(profile, {
+    recursive: true, force: true, maxRetries: 15, retryDelay: 150
+  });
   await new Promise(resolve => server.close(resolve));
 }
