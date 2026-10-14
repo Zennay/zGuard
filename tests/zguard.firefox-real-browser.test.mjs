@@ -45,6 +45,8 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'<form id="programmaticForm" target="_blank" method="get"></form>'
   +'<button id="programmaticSameForm" type="button">Allowed programmatic form</button>'
   +'<button id="programmaticCrossForm" type="button">Cross-origin programmatic form</button>'
+  +'<a id="nativeMiddleForeign" href="__QA_FRAME_URL__" target="_blank">'
+  +'Ordinary separate-origin middle-click link</a>'
   +'<button id="openSameOriginPopup" type="button">Allowed page popup</button>'
   +'<button id="openCrossOriginPopup" type="button">Cross-origin page popup</button>'
   +'<iframe id="qaCrossOriginFrame" title="Cross-origin Firefox popup boundary" '
@@ -55,7 +57,13 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'hostileMiddleClicks:0,ordinaryMiddleClicks:0,imageMapHostileClicks:0,imageMapOrdinaryClicks:0,'
   +'pagePopupSame:0,pagePopupCross:0,pagePopupSameNative:false,pagePopupCrossNative:false,'
   +'overrideHostileSubmits:0,overrideOrdinarySubmits:0,'
-  +'programmaticSame:0,programmaticCross:0,programmaticSubmitEvents:0};'
+  +'programmaticSame:0,programmaticCross:0,programmaticSubmitEvents:0,'
+  +'middleForeignDown:0,middleForeignUp:0,middleForeignAux:0,middleForeignTrusted:false};'
+  +'for(const kind of ["mousedown","mouseup","auxclick"]){'
+  +'document.getElementById("nativeMiddleForeign").addEventListener(kind,e=>{'
+  +'if(e.button!==1)return;const key=kind==="mousedown"?"middleForeignDown":'
+  +'kind==="mouseup"?"middleForeignUp":"middleForeignAux";'
+  +'window.qa[key]++;if(kind==="auxclick")window.qa.middleForeignTrusted=e.isTrusted;});}'
   +'document.getElementById("programmaticForm").addEventListener("submit",()=>{'
   +'window.qa.programmaticSubmitEvents++;});'
   +'document.getElementById("programmaticSameForm").addEventListener("click",()=>{'
@@ -347,6 +355,20 @@ try{
   const strictAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(strictAfter.ordinaryClicks,strictBefore.ordinaryClicks,
     'Actual Firefox popup strict mode must stop trusted native ordinary external click');
+  // No safety event listener cancels the native middle-click on this link.
+  // In strict mode the shipped extension itself must cancel before navigation.
+  // The separate localhost port is a real foreign origin but no external host.
+  const strictMiddleBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#nativeMiddleForeign',{button:1});
+  const strictMiddleAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(strictMiddleAfter.middleForeignDown,strictMiddleBefore.middleForeignDown+1,
+    'Native Firefox strict middle-button pointer-down must reach the link');
+  assert.equal(strictMiddleAfter.middleForeignUp,strictMiddleBefore.middleForeignUp+1,
+    'Native Firefox strict middle-button pointer-up must reach the link');
+  assert.equal(strictMiddleAfter.middleForeignAux,strictMiddleBefore.middleForeignAux,
+    'Strict middle-button auxclick must be intercepted before target handler');
+  assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
+    'Strict native cross-origin middle-click must not leave an extra popup tab');
   // Browser-level fallback: invoke a page-authored window.open from an actual
   // trusted WebDriver button click. The different loopback port is a separate
   // origin, and no external website or production browser is contacted.
@@ -492,6 +514,37 @@ try{
   assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
     new Set(balancedHandles),
     'Closing balanced programmatic form tab must restore original Firefox handles');
+  // An ordinary cross-origin middle click must *actually* open a browser tab
+  // after the real popup toggles strict -> balanced. There is no fixture
+  // preventDefault on this link; assert a trusted auxclick positive control.
+  const balancedMiddleBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await nativePointer('#nativeMiddleForeign',{button:1});
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'balanced Firefox native middle-click must open an ordinary external tab',60);
+  const balancedMiddleAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedMiddleAfter.middleForeignDown,balancedMiddleBefore.middleForeignDown+1,
+    'Balanced Firefox middle-button down must be real');
+  assert.equal(balancedMiddleAfter.middleForeignUp,balancedMiddleBefore.middleForeignUp+1,
+    'Balanced Firefox middle-button up must be real');
+  assert.equal(balancedMiddleAfter.middleForeignAux,balancedMiddleBefore.middleForeignAux+1,
+    'Balanced native middle-button auxclick must reach the actual anchor target');
+  assert.equal(balancedMiddleAfter.middleForeignTrusted,true,
+    'Browser-native auxclick must be trusted, not synthetic DOM dispatch');
+  const withMiddleTab=await wd('GET','/session/'+session+'/window/handles');
+  const middleTabHandle=withMiddleTab.find(h=>!balancedHandles.includes(h));
+  assert.ok(middleTabHandle,'Allowed middle-button open must yield a distinct tab');
+  await wd('POST','/session/'+session+'/window',{handle:middleTabHandle});
+  await until(async()=>
+    new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'allowed native middle-click must load distinct-origin localhost page',50);
+  assert.equal(new URL(await wd('GET','/session/'+session+'/url')).origin,
+    'http://127.0.0.1:'+frameServer.address().port,
+    'Middle-click positive control must load second localhost origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),'Allowed middle-click tab cleanup must restore original tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -506,6 +559,7 @@ try{
   console.log('Firefox balanced form.submit PASS: separate-origin eventless form opens and loads native tab, cleans up after strict-mode rejection.');
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
+  console.log('Firefox native middle-button real-tab PASS: strict cross-origin cancelled; balanced trusted auxclick opens and loads ordinary second-origin tab.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
