@@ -254,7 +254,7 @@ window.addEventListener("pageshow", (event) => {
   // pagehide, but pagehide already attempted to destroy that browser token.
   // Never resurrect a possibly revoked bearer iframe or its heartbeat timer.
   if (state.session) {
-    endSession(); // retry DELETE if unload's keepalive request was lost
+    endSession(); // retry DELETE if unload's keepalive send was lost
   } else {
     refreshHealth();
   }
