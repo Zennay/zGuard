@@ -104,6 +104,8 @@ async function scenario({ stopFails, removeFails }) {
       status: reply.status, stops, removals, starts, releases,
       oldTracked: sessions.has(expiredToken),
       ownerRetained: sessionsByIp.get(ip) === expiredToken,
+      newTracked: sessions.has(newToken),
+      newOwnerSet: sessionsByIp.get(ip) === newToken,
       capacityUsed: sessions.size
     };
   } finally {
@@ -112,16 +114,40 @@ async function scenario({ stopFails, removeFails }) {
   }
 }
 
+// Graceful cleanup must not invoke the force-removal fallback, must free
+// exactly the expired owner's slot and admit one replacement with no orphan.
+const graceful = await scenario({ stopFails: false, removeFails: false });
+assert.deepEqual({
+  status: graceful.status, stops: graceful.stops, removals: graceful.removals,
+  starts: graceful.starts, releases: graceful.releases,
+  oldTracked: graceful.oldTracked, ownerRetained: graceful.ownerRetained,
+  newTracked: graceful.newTracked, newOwnerSet: graceful.newOwnerSet,
+  capacityUsed: graceful.capacityUsed
+}, {
+  status: 201, stops: 1, removals: 0, starts: 1, releases: 1,
+  oldTracked: false, ownerRetained: false,
+  newTracked: true, newOwnerSet: true, capacityUsed: 1
+}, 'graceful expired browser removal must free only the original slot');
+
 const recovered = await scenario({ stopFails: true, removeFails: false });
 assert.equal(recovered.status, 201, 'successful forced cleanup must allow one replacement');
 assert.equal(recovered.stops, 1);
 assert.equal(recovered.removals, 1);
 assert.equal(recovered.starts, 1);
 assert.equal(recovered.oldTracked, false, 'successfully removed session frees capacity');
+assert.equal(recovered.newTracked, true, 'forced cleanup recovery must publish one new session');
+assert.equal(recovered.newOwnerSet, true,
+  'forced cleanup replacement must register correct new owner');
+assert.equal(recovered.releases, 1,
+  'forced cleanup must release its one successful replacement reservation');
 
 const orphan = await scenario({ stopFails: true, removeFails: true });
 assert.equal(orphan.stops, 1, 'failed teardown must attempt graceful stop');
 assert.equal(orphan.removals, 1, 'failed teardown must attempt forced removal');
+assert.equal(orphan.newTracked, !orphan.oldTracked,
+  'orphan scenario must never contain both the old and a new live browser');
+assert.equal(orphan.releases, orphan.starts,
+  'orphan scenario must keep reservation release accounting balanced');
 const protectedCapacity = orphan.oldTracked && orphan.ownerRetained &&
   orphan.capacityUsed >= 1 && orphan.starts === 0 && orphan.status >= 400;
 
@@ -131,6 +157,7 @@ if (strict) {
   console.log('Shipped HTTP session admission fails closed after container teardown failure');
 } else {
   console.log('Actual gateway HTTP teardown paths exercised: fallback cleanup recovered; ' +
-    'failed-stop-and-remove protectedCapacity=' + protectedCapacity +
+    'graceful-stop recovered=true, forced-stop recovered=' + recovered.newOwnerSet +
+    ', failed-stop-and-remove protectedCapacity=' + protectedCapacity +
     ' (strict proof requires --require-fail-closed; issue #7 remains open)');
 }
