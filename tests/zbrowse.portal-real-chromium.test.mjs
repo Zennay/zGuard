@@ -275,7 +275,7 @@ try {
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     false, 'successful recovery must immediately re-enable Open');
 
-  // Exercise genuine Chromium keyboard activation rather than relying only
+  // Exercise genuine Chromium Space keyboard activation rather than relying only
   // on synthetic form.requestSubmit(). A second scripted submit while the
   // first request is pending must still be rejected by the shipped UI.
   const focusedStart = await evaluate(`(() => {
@@ -284,7 +284,7 @@ try {
       startKeyTrusted: false, submitTrusted: false, endKeyTrusted: false
     };
     button.addEventListener("keydown", event => {
-      if (event.key === "Enter") window.__qaPortalKeyboard.startKeyTrusted = event.isTrusted;
+      if (event.key === " ") window.__qaPortalKeyboard.startKeyTrusted = event.isTrusted;
     }, { once: true });
     document.getElementById("browserForm").addEventListener("submit", event => {
       window.__qaPortalKeyboard.submitTrusted = event.isTrusted;
@@ -295,15 +295,17 @@ try {
   assert.equal(focusedStart, true, 'start button must be focusable in real Chromium');
   for (const type of ['keyDown', 'keyUp']) {
     await cdp('Input.dispatchKeyEvent', {
-      type, key: 'Enter', code: 'Enter',
-      windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
     });
   }
-  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => startRequestSeen, 'one native-keyboard session POST');
+  // Prove the native key activated the form BEFORE any programmatic retry.
+  // Otherwise the scripted requestSubmit below could create a false PASS.
+  await until(() => startRequestSeen, 'one native Space-triggered session POST');
   assert.equal(await evaluate(
     'window.__qaPortalKeyboard.startKeyTrusted && window.__qaPortalKeyboard.submitTrusted'
-  ), true, 'native keyboard Enter must dispatch a trusted submit event');
+  ), true, 'native Space activation must dispatch a trusted submit event');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
   assert.equal(starts, 1, 'double submit must never allocate two browser sessions');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     true, 'start button should remain locked while a browser is starting');
@@ -349,8 +351,9 @@ try {
     active: document.activeElement?.id === "endButton",
     viewerHidden: document.getElementById("browserView").hidden
   })`);
-  console.log('Native portal End keyboard diagnostic (booleans only): ' +
-    JSON.stringify(keyboardEnd));
+  assert.deepEqual(keyboardEnd, {
+    key: true, click: true, trustedClick: true, active: false, viewerHidden: true
+  }, 'native Space must trigger a real trusted button click and hide the viewer');
   await until(() => deletions === 1, 'one Space-triggered gateway capacity release');
   assert.equal(await evaluate('window.__qaPortalKeyboard.endKeyTrusted'),
     true, 'End session must receive a native trusted Space key');
