@@ -1,0 +1,51 @@
+name: zBrowse WebSocket proxy error log privacy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_redacted_ws_proxy_errors:
+        description: "Require safe WebSocket proxy diagnostics without credentials or forged lines"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-ws-proxy-error-privacy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  websocket-proxy-privacy:
+    name: Gateway real-TCP WebSocket failure privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_REDACTED_WS_PROXY_ERRORS: ${{ inputs.require_redacted_ws_proxy_errors || 'false' }}
+    steps:
+      - name: Checkout exact proposed source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Exercise shipped WebSocket proxy error boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs
+          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs
+          if [ "$REQUIRE_REDACTED_WS_PROXY_ERRORS" = "true" ]; then
+            node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors
+          fi
+          test -z "$(git status --porcelain)"
