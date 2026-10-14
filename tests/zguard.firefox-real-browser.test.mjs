@@ -56,7 +56,7 @@ const fixture='<!doctype html><html><head><meta charset="utf-8"></head><body>'
   +'window.qa.pagePopupSame++;window.qa.pagePopupSameNative='
   +'!!window.open(location.origin+"/qa-same-origin-popup","_blank");});'
   +'document.getElementById("openCrossOriginPopup").addEventListener("click",()=>{'
-  +'window.qa.pagePopupCross++;window.qa.pagePopupCrossNative=
+  +'window.qa.pagePopupCross++;window.qa.pagePopupCrossNative='
   +'!!window.open("__QA_FRAME_URL__","_blank");});'
   +'for(const id of ["hostile","ordinary","svgHostile","svgOrdinary","imageMapHostile","imageMapOrdinary"]){'
   +'document.getElementById(id).addEventListener("click",e=>{'
