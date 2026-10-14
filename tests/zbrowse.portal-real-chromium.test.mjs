@@ -59,6 +59,8 @@ let notifyHeldDelete = null;
 let viewerRequests = 0;
 let heartbeats = 0;
 let rejectHeartbeat = false;
+let hangNextHeartbeat = false;
+let hungHeartbeatCalls = 0;
 let deleteAlreadyGone = false;
 let releaseStart = null;
 let startRequestSeen = false;
@@ -194,6 +196,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' &&
         pathname === '/api/session/' + syntheticToken + '/heartbeat') {
       heartbeats++;
+      if (hangNextHeartbeat) {
+        hangNextHeartbeat = false;
+        hungHeartbeatCalls++;
+        // Hold the real loopback HTTP response until the browser's own
+        // 10-second lease deadline aborts it. No Docker or VPS involved.
+        return;
+      }
       if (rejectHeartbeat) {
         // Shipped gateway rejects DELETE with 404 after lease expiry.
         // A second DELETE cannot make an already expired token more dead.
@@ -1436,6 +1445,51 @@ try {
     'after the timeout, exactly one health-tick retry must release the same token');
   assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
     'confirmed real HTTP teardown must clear retry feedback');
+
+  // Keep a viewer mounted while a *real* localhost heartbeat POST never
+  // responds. The shipped app must use its own AbortSignal deadline to tear
+  // down the uncertain session, not leave a live frame or runaway timers.
+  await evaluate(`(() => {
+    const original = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay === 30000) window.__qaHeartbeat = callback;
+      return original(callback, delay, ...args);
+    };
+    return true;
+  })()`);
+  const startsBeforeHeartbeatTimeout = starts;
+  const deletionsBeforeHeartbeatTimeout = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeHeartbeatTimeout + 1,
+    'native heartbeat timeout fixture must start a synthetic browser');
+  assert.ok(releaseStart, 'native heartbeat fixture must control browser POST response');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'browser must mount before interrupted lease renewal');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'native heartbeat fixture viewer should load');
+  assert.equal(await evaluate('typeof window.__qaHeartbeat'), 'function',
+    'native TV must register a real heartbeat interval');
+  hangNextHeartbeat = true;
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => hungHeartbeatCalls === 1,
+    'real Chrome heartbeat must reach the intentionally stalled HTTP endpoint');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), false,
+    'hung but not-yet-timed-out heartbeat must not close viewer prematurely');
+  await until(async () => await evaluate(
+    'document.getElementById("browserView").hidden && ' +
+    'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+  ), '10-second real-browser heartbeat timeout must discard viewer', 270);
+  await until(() => deletions === deletionsBeforeHeartbeatTimeout + 1,
+    'heartbeat timeout must dispatch one idempotent session DELETE');
+  assert.equal(starts, startsBeforeHeartbeatTimeout + 1,
+    'heartbeat failure must not trigger a second gateway browser start');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'confirmed cleanup after timed-out heartbeat must restore normal start');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
