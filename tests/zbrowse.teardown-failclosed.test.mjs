@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
+
+const requireFailClosed = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-fail-closed');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'zbrowse/gateway/server.js'), 'utf8');
@@ -76,7 +79,7 @@ const orphan = await scenario({ stopFails: true, removeFails: true });
 assert.equal(orphan.stopCalls, 1, 'failed teardown must attempt graceful stop');
 assert.equal(orphan.removeCalls, 1, 'failed teardown must attempt forced removal');
 
-if (process.argv.includes('--require-fail-closed')) {
+if (requireFailClosed) {
   assert.deepEqual({
     failureSurfaced: orphan.reportedFailure,
     capacityReserved: orphan.sessionTracked && orphan.capacityUsed === 1,

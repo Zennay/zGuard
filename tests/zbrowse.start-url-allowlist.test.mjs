@@ -3,6 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
+
+const requireCredentialFree = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-credential-free');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const gateway = fs.readFileSync(path.join(root, "zbrowse/gateway/server.js"), "utf8");
@@ -95,7 +98,7 @@ for (const [kind, candidate] of [
 // Opt-in real gateway acceptance for issue #266. Execute the actual
 // validStartUrl function extracted above, without recreating its URL policy.
 // No embedded credential values are printed to CI logs.
-if (process.argv.includes("--require-credential-free")) {
+if (requireCredentialFree) {
   const failures = [];
   for (const { url: approvedUrl } of sites) {
     const authority = new URL(approvedUrl).host;
