@@ -46,7 +46,7 @@ let gatewayCanStart = false;
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
   // or draining gateway state must prevent an avoidable start POST.
-  startButton.disabled = sessionStarting || !gatewayCanStart;
+  startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart;
 }
 
 async function refreshHealth() {
@@ -114,12 +114,13 @@ function checkedSessionPayload(payload) {
 }
 
 let sessionStarting = false;
+let sessionEnding = false;
 let pageExitGeneration = 0;
 
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
-  if (sessionStarting || state.session || !gatewayCanStart) return;
+  if (sessionStarting || sessionEnding || state.session || !gatewayCanStart) return;
   const requestGeneration = pageExitGeneration;
   sessionStarting = true;
   setMessage();
@@ -197,7 +198,12 @@ function updateTimer() {
 }
 
 async function endSession() {
-  if (!state.session) return;
+  if (!state.session || sessionEnding) return;
+  // The gateway can reuse an existing same-IP token while DELETE is still
+  // in flight. Starting another browser before teardown finishes could mount
+  // a viewer that the previous DELETE subsequently revokes.
+  sessionEnding = true;
+  syncStartButton();
   const token = state.session.token;
   state.session = null;
 
@@ -210,9 +216,16 @@ async function endSession() {
   browserView.hidden = true;
   homeView.hidden = false;
 
-  await request("/api/session/" + token, { method: "DELETE" }).catch(() => {});
-  await refreshHealth();
-  urlInput.focus();
+  try {
+    await request("/api/session/" + token, {
+      method: "DELETE", keepalive: true
+    }).catch(() => {});
+    await refreshHealth();
+  } finally {
+    sessionEnding = false;
+    syncStartButton();
+    urlInput.focus();
+  }
 }
 
 form.addEventListener("submit", (event) => {

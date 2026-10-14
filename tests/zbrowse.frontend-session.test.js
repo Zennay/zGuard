@@ -35,7 +35,7 @@ async function settle() {
 
 // Execute the real browser script with deterministic DOM, HTTP and timer fakes.
 // No network requests, browser installation or gateway containers are required.
-async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
+async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest } = {}) {
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
@@ -96,7 +96,7 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     if (url.startsWith('/api/session/') &&
         /^[A-Za-z0-9_-]{32}$/.test(url.slice('/api/session/'.length)) &&
         options.method === 'DELETE') {
-      return response(null, 204);
+      return deleteRequest ? deleteRequest() : response(null, 204);
     }
     if (url === '/api/session' && options.method === 'POST') {
       if (!sessionRequest) throw new Error('unexpected session start request');
@@ -361,6 +361,44 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
       url === '/api/session/' + validToken && options.method === 'DELETE').length,
     1, 'repeated End and later pagehide must not double-release the same session'
   );
+
+  // When the user ends a viewer, a slow DELETE must hold start admission.
+  // Otherwise the same-IP gateway can reuse the about-to-be-revoked token.
+  const heldDelete = deferred();
+  let allocations = 0;
+  const overlapping = await bootPortal({
+    sessionRequest: async () => {
+      allocations++;
+      return response(validSession);
+    },
+    deleteRequest: () => heldDelete.promise
+  });
+  overlapping.submit();
+  await settle();
+  const endPending = overlapping.element('endButton').listeners.click();
+  assert.equal(overlapping.element('browserView').hidden, true,
+    'ending a browser should hide it immediately, without waiting for DELETE');
+  assert.equal(overlapping.element('startButton').disabled, true,
+    'start must stay disabled until the old gateway session has been released');
+  overlapping.submit(); // scripted submit bypasses native disabled buttons
+  await settle();
+  assert.equal(allocations, 1,
+    'pending DELETE must prevent same-IP reuse through form submit');
+  assert.equal(overlapping.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+  'ending a session must dispatch only one teardown request');
+  assert.equal(overlapping.requests.find(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE')
+    .options.keepalive, true, 'pending user-initiated teardown must survive page exit');
+  heldDelete.resolve(response(null, 204));
+  await endPending;
+  await settle();
+  assert.equal(overlapping.element('startButton').disabled, false,
+    'completed teardown must unlock subsequent browser admission');
+  overlapping.submit();
+  await settle();
+  assert.equal(allocations, 2,
+    'fresh POST after completed teardown must still work');
 
   // A BFCache back-navigation may restore a page after its pagehide
   // keepalive DELETE. A restored viewer must not continue using that token,
