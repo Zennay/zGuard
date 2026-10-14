@@ -89,6 +89,23 @@ function requireReviewedAutomaticFilters(source, relative) {
       assert.ok(!pattern.startsWith('!') && !pattern.includes('..'),
         relative + ': no negative/parent path filters');
     }
+    // A scoped workflow must also re-run when any test script named in its
+    // jobs changes. Identical PR/push filters can still omit a security test
+    // while keeping the workflow's own YAML in scope.
+    const jobSource = source.split(/^jobs:\\s*$/m)[1] || '';
+    const executedTests = [...new Set(
+      [...jobSource.matchAll(/\\btests\\/[A-Za-z0-9._/-]+\\.(?:mjs|cjs|js|rb|py|sh)\\b/g)]
+        .map(match => match[0])
+    )];
+    const covers = (file, filter) =>
+      filter === file ||
+      (filter.endsWith('/**') && file.startsWith(filter.slice(0, -2))) ||
+      (filter.endsWith('/*') && file.startsWith(filter.slice(0, -1)) &&
+        !file.slice(filter.length - 1).includes('/'));
+    for (const testPath of executedTests) {
+      assert.ok(prPaths.some(filter => covers(testPath, filter)),
+        relative + ': scoped PR/push events must track executed ' + testPath);
+    }
     const ownPath = '.github/workflows/' + relative;
     assert.ok(prPaths.includes(ownPath) ||
       prPaths.includes('.github/workflows/**'),
@@ -187,6 +204,17 @@ const filteredFixture = reviewedFilterFixture
   .replace('  pull_request:', '  pull_request:\n    paths:\n      - ".github/workflows/example.yml"\n      - "tests/**"')
   .replace('      - main', '      - main\n    paths:\n      - ".github/workflows/example.yml"\n      - "tests/**"');
 requireReviewedAutomaticFilters(filteredFixture, 'example.yml');
+// Positive: an explicit referenced test script is covered by both filters.
+const explicitTestFixture = filteredFixture.replaceAll('tests/**', 'tests/used.test.mjs') +
+  '\n  qa:\n    steps:\n      - run: node tests/used.test.mjs';
+requireReviewedAutomaticFilters(explicitTestFixture, 'example.yml');
+// Negative: a workflow that changes a real test must not silently skip
+// validation even when PR/push filters still agree and include its own YAML.
+const missingTestFixture = filteredFixture.replaceAll('tests/**', 'docs/**') +
+  '\n  qa:\n    steps:\n      - run: node tests/omitted.test.mjs';
+assert.throws(() => requireReviewedAutomaticFilters(missingTestFixture, 'example.yml'),
+  /must track executed tests\\/omitted/, 'omitted executed-test trigger must fail closed');
+
 for (const [label, mutated] of [
   ['PR closed-only', reviewedFilterFixture.replace('  pull_request:',
     '  pull_request:\n    types:\n      - closed')],
