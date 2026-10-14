@@ -151,6 +151,22 @@ try {
     accept(label + ' must not be treated as a credential');
   }
 
+  // AWS and Slack identifiers deserve the same standalone-vs-embedded
+  // boundary proof as GitHub keys; test the copied production scanner.
+  const aws = 'AK' + 'IA' + 'D'.repeat(16);
+  const slack = 'xox' + 'b-' + 'E'.repeat(30);
+  reject('standalone AWS access key', 'AWS access key id',
+    Buffer.from('AWS_ACCESS_KEY_ID=' + aws, 'ascii'), aws);
+  reject('standalone Slack bot bearer', 'Slack bot token',
+    Buffer.from('Bearer ' + slack, 'ascii'), slack);
+  for (const [label, value] of [
+    ['AWS-shaped substring in filename', 'prefix' + aws],
+    ['Slack-shaped suffix in identifier', 'filename_' + slack]
+  ]) {
+    writeAndTrack(Buffer.from(value, 'ascii'));
+    accept(label + ' must not be rejected as a leaked credential');
+  }
+
   // The policy must not mistake public keys or ordinary certificates for
   // private credentials even when they are tracked as binary fixtures.
   for (const marker of ['PUBLIC KEY', 'CERTIFICATE', 'PGP PUBLIC KEY BLOCK']) {
