@@ -316,9 +316,16 @@ assert.deepEqual(
 // worktree rewrite removes the field before this check runs.
 function validateEnvExample(content, source) {
   for (const line of content.split(/\r?\n/)) {
-    if (!line || line.startsWith("#")) continue;
-    const [key, ...rest] = line.split("=");
-    const value = rest.join("=");
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    // dotenv-style files may allow whitespace around '=' and an optional
+    // 'export ' prefix. Normalize before applying the banned secret-name
+    // suffix rule: SERVICE_PASSWORD =x must not bypass SERVICE_PASSWORD=x.
+    const assignment = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed);
+    assert.ok(assignment,
+      source + ": environment example entries must be valid KEY=value assignments");
+    const [, key, rawValue] = assignment;
+    const value = rawValue.trim();
     assert.ok(value.length > 0,
       source + ": " + JSON.stringify(key) +
       ": tracked example values must be explicit placeholders/defaults");
