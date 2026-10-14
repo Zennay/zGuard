@@ -59,10 +59,26 @@ const tracked = execFileSync("git", ["ls-files", "-z"], {
 
 assert.ok(tracked.length > 0, "at least one tracked file must be discovered");
 
-// Secret bytes may appear as ASCII even inside a binary blob, or as UTF-16
-// text with a NUL after each ASCII code unit (e.g. PowerShell/Windows exports).
-// Preserve raw bytes in Latin-1; inspect both UTF-16 orders/alignment only
-// when binary NULs are actually present. Never silently skip any tracked file.
+// UTF-32 text stores each ASCII token byte with three NULs. Only printable
+// ASCII codepoints are relevant to the high-confidence signatures below.
+// Replace every other codepoint with NUL so invalid quads cannot stitch a
+// false credential together across arbitrary binary padding.
+function utf32AsciiView(buffer, offset, bigEndian) {
+  const decoded = Buffer.alloc(Math.floor((buffer.length - offset) / 4));
+  for (let index = 0; index < decoded.length; index++) {
+    const base = offset + index * 4;
+    const ascii = buffer[base + (bigEndian ? 3 : 0)];
+    const padding = bigEndian
+      ? buffer[base] === 0 && buffer[base + 1] === 0 && buffer[base + 2] === 0
+      : buffer[base + 1] === 0 && buffer[base + 2] === 0 && buffer[base + 3] === 0;
+    if (padding && ascii >= 0x20 && ascii <= 0x7e) decoded[index] = ascii;
+  }
+  return decoded.toString("latin1");
+}
+
+// Preserve ASCII even in binary blobs. Also decode UTF-16 and UTF-32 bytes
+// in both orders and every byte alignment, including BOM-less encodings.
+// Never skip a tracked file merely because it contains NUL or invalid UTF-8.
 function scanBytes(buffer) {
   const views = [buffer.toString("latin1")];
   if (buffer.includes(0)) {
@@ -74,6 +90,10 @@ function scanBytes(buffer) {
       // Buffer.swap16() mutates: make a copy so a probe cannot rewrite
       // the caller's bytes (or alter a later file-integrity check).
       views.push(Buffer.from(even).swap16().toString("utf16le"));
+    }
+    for (const offset of [0, 1, 2, 3]) {
+      views.push(utf32AsciiView(buffer, offset, false));
+      views.push(utf32AsciiView(buffer, offset, true));
     }
   }
   return signatures.filter(signature =>
@@ -132,6 +152,63 @@ for (const [name, synthetic] of examples.slice(0, 2)) {
   assert.ok(scanBytes(Buffer.concat([Buffer.from([0xfe, 0xff]), be])).includes(name),
     "UTF-16BE BOM must not mask " + name);
 }
+// UTF-32LE/BE is also used in some exported text; scan all alignments rather
+// than trusting a BOM or assuming a particular binary payload boundary.
+function encodeUtf32Ascii(value, bigEndian) {
+  const bytes = Buffer.alloc(value.length * 4);
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    assert.ok(code >= 0x20 && code <= 0x7e,
+      "synthetic UTF-32 fixtures must use printable ASCII only");
+    bytes[index * 4 + (bigEndian ? 3 : 0)] = code;
+  }
+  return bytes;
+}
+for (const [name, synthetic] of examples) {
+  for (const [label, bigEndian] of [["LE", false], ["BE", true]]) {
+    const encoded = encodeUtf32Ascii(synthetic, bigEndian);
+    for (const offset of [0, 1, 2, 3]) {
+      const input = Buffer.concat([
+        Buffer.alloc(offset, 0xff), encoded, Buffer.from([0, 255])
+      ]);
+      assert.ok(scanBytes(input).includes(name),
+        name + ": BOM-less UTF-32" + label + " at offset " + offset +
+          " must not bypass secret hygiene");
+    }
+  }
+}
+for (const [label, bigEndian, bom] of [
+  ["LE", false, [0xff, 0xfe, 0x00, 0x00]],
+  ["BE", true, [0x00, 0x00, 0xfe, 0xff]]
+]) {
+  const input = Buffer.concat([
+    Buffer.from(bom), encodeUtf32Ascii(examples[0][1], bigEndian)
+  ]);
+  assert.ok(scanBytes(input).includes(examples[0][0]),
+    "UTF-32" + label + " BOM must not mask the synthetic API secret");
+}
+for (const label of ["PUBLIC KEY", "CERTIFICATE", "PGP PUBLIC KEY BLOCK"]) {
+  for (const bigEndian of [false, true]) {
+    const input = encodeUtf32Ascii("-----BEGIN " + label + "-----", bigEndian);
+    assert.deepEqual(scanBytes(input), [],
+      "UTF-32 public-key and certificate fixtures are not credentials");
+  }
+}
+// Mutation control: a UTF-16-and-ASCII-only scanner cannot decode UTF-32.
+const oldUtf16Only = Buffer.from(encodeUtf32Ascii(examples[0][1], false));
+const oldViews = [oldUtf16Only.toString("latin1")];
+for (const offset of [0, 1]) {
+  const aligned = oldUtf16Only.subarray(offset);
+  const even = aligned.subarray(0, aligned.length - aligned.length % 2);
+  oldViews.push(even.toString("utf16le"));
+  oldViews.push(Buffer.from(even).swap16().toString("utf16le"));
+}
+assert.ok(!oldViews.some(view =>
+  signatures.some(signature => signature.pattern.test(view))),
+  "UTF-32 fixture must fail without the new decoder");
+assert.ok(scanBytes(oldUtf16Only).includes(examples[0][0]),
+  "the production scanner must recover the UTF-32 synthetic secret");
+
 // Mutation control: a scanner restricted to raw byte-preserving Latin-1
 // would falsely accept a real UTF-16 encoded secret.
 assert.throws(() => {
