@@ -313,11 +313,32 @@ async function endSession() {
   urlInput.focus();
 }
 
+function isReviewedStartUrl(value) {
+  // Mirror the gateway's scheme, credential and reviewed-origin boundary.
+  // This is early UX validation, not a replacement for server authorization.
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password &&
+      state.sites.some((site) => new URL(site.url).origin === url.origin);
+  } catch {
+    return false;
+  }
+}
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!siteCatalogueReady) {
+    setMessage("Site catalogue unavailable. Reload to retry.");
+    return;
+  }
   const value = urlInput.value.trim();
   if (!value) {
     setMessage("Enter a website URL.");
+    urlInput.focus();
+    return;
+  }
+  if (!isReviewedStartUrl(value)) {
+    setMessage("Choose an approved HTTPS website without credentials.");
     urlInput.focus();
     return;
   }
