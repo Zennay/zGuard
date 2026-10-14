@@ -31,6 +31,8 @@ let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
 let viewerRequests = 0;
+let heartbeats = 0;
+let rejectHeartbeat = false;
 let releaseStart = null;
 let startRequestSeen = false;
 
@@ -116,7 +118,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' &&
         pathname === '/api/session/' + syntheticToken + '/heartbeat') {
-      sendJson(res, 200, { ok: true, expiresAt: Date.now() + 900_000 });
+      heartbeats++;
+      if (rejectHeartbeat) {
+        sendJson(res, 410, { error: 'Synthetic session expired.' });
+      } else {
+        sendJson(res, 200, { ok: true, expiresAt: Date.now() + 900_000 });
+      }
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain' }).end('Local fixture route not found');
@@ -217,6 +224,17 @@ try {
     approvedStart, 'real browser must choose first reviewed URL');
   assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
     sites.length, 'real UI must populate reviewed curated sites');
+
+  // Drive only the real 30s heartbeat callback deterministically rather
+  // than waiting wall-clock 30 seconds or duplicating the shipped handler.
+  // The tested app.js remains unchanged and actually sends loopback HTTP.
+  await evaluate(`(() => {
+    const originalSetInterval = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay === 30000) window.__qaHeartbeat = callback;
+      return originalSetInterval(callback, delay, ...args);
+    };
+  })(); true`);
 
   health = 'busy';
   await evaluate('refreshHealth()');
@@ -329,13 +347,52 @@ try {
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     false, 'expired session must allow retry');
 
+  // Exercise the actual browser session lease callback over HTTP.
+  // Successful renewal must retain the mounted viewer; a 410 from the
+  // gateway must immediately discard it and send one DELETE.
+  viewerResponseMode = 'valid';
+  const beforeLeaseStart = starts;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === beforeLeaseStart + 1, 'lease-tested session allocation');
+  assert.ok(releaseStart, 'synthetic lease fixture must be waiting');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'lease-tested real browser mounted');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'lease-tested viewer loaded');
+  assert.equal(await evaluate('typeof window.__qaHeartbeat'), 'function',
+    'real browser must register the shipped 30000ms heartbeat callback');
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => heartbeats === 1, 'successful real HTTP heartbeat');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'),
+    false, 'successful heartbeat must not close a working browser');
+  assert.equal(deletions, 2, 'successful lease renewal must not release a session');
+
+  rejectHeartbeat = true;
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => heartbeats === 2, 'rejected real HTTP heartbeat');
+  await until(() => deletions === 3, 'rejected lease must trigger capacity release');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'),
+    true, 'rejected lease must immediately return user to home');
+  assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+    'about:blank', 'rejected lease must discard bearer viewer');
+  assert.equal(await evaluate(
+    'state.session === null && state.heartbeat === null && state.countdown === null'
+  ), true, 'rejected lease must clear session and all lease timers');
+  rejectHeartbeat = false;
+  await sleep(150);
+  assert.equal(deletions, 3, 'rejected heartbeat must not double-delete');
+
   // Browser-native page navigation must trigger the shipped pagehide
   // keepalive DELETE rather than leaving a session alive until TTL. This
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 6, 'valid browser retry after unsafe and expired viewer responses');
-  assert.equal(deletions, 2, 'a pending fresh browser must not double-delete released sessions');
+  await until(() => starts === 7, 'valid retry after rejected gateway lease');
+  assert.equal(deletions, 3, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -346,16 +403,16 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 3,
+  await until(() => deletions === 4,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 3, 'browser pagehide must release the final browser exactly once');
-  assert.equal(starts, 6, 'only explicitly requested browser attempts should be sent');
+  assert.equal(deletions, 4, 'browser pagehide must release the final browser exactly once');
+  assert.equal(starts, 7, 'only explicitly requested browser attempts should be sent');
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
     'draining/malformed health, recovery, reviewed sites, guarded starts, authenticated local iframe,' +
     ' completed load, manual teardown, browser-native pagehide keepalive DELETE,' +
-    ' unsafe/expired-viewer rejection and retry, no duplicate allocation/release');
+    ' unsafe/expired-viewer rejection, heartbeat failure/retry, no duplicate allocation/release');
 } finally {
   releaseStart?.();
   socket?.close();
