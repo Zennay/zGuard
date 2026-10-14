@@ -43,6 +43,48 @@ const cases = [
     workflow: 'zbrowse-teardown-failclosed.yml',
     input: 'require_fail_closed',
     env: 'REQUIRE_FAIL_CLOSED'
+  },
+  {
+    filename: 'zbrowse.cross-origin-simple-post-real-http.test.mjs',
+    flag: '--require-json-only',
+    workflow: 'zbrowse-start-url-allowlist-validation.yml',
+    input: 'require_json_only',
+    env: 'REQUIRE_JSON_ONLY'
+  },
+  {
+    filename: 'zbrowse.session-start-log-privacy-real-http.test.mjs',
+    flag: '--require-redacted-start-errors',
+    workflow: 'zbrowse-session-start-log-privacy.yml',
+    input: 'require_redacted_start_errors',
+    env: 'REQUIRE_REDACTED_START_ERRORS'
+  },
+  {
+    filename: 'zbrowse.proxy-error-log-privacy-real-http.test.mjs',
+    flag: '--require-redacted-proxy-errors',
+    workflow: 'zbrowse-viewer-proxy-log-privacy.yml',
+    input: 'require_redacted_proxy_errors',
+    env: 'REQUIRE_REDACTED_PROXY_ERRORS'
+  },
+  {
+    filename: 'zbrowse.cleanup-error-log-privacy.test.mjs',
+    flag: '--require-redacted-cleanup-errors',
+    workflow: 'zbrowse-cleanup-error-log-privacy.yml',
+    input: 'require_redacted_cleanup_errors',
+    env: 'REQUIRE_REDACTED_CLEANUP_ERRORS'
+  },
+  {
+    filename: 'zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs',
+    flag: '--require-redacted-ws-proxy-errors',
+    workflow: 'zbrowse-websocket-proxy-error-log-privacy.yml',
+    input: 'require_redacted_ws_proxy_errors',
+    env: 'REQUIRE_REDACTED_WS_PROXY_ERRORS'
+  },
+  {
+    filename: 'zbrowse.rate-limit-identity-parity.test.mjs',
+    flag: '--require-key-parity',
+    workflow: 'zbrowse-rate-limit-identity.yml',
+    input: 'require_key_parity',
+    env: 'REQUIRE_KEY_PARITY'
   }
 ];
 assert.throws(() => parseStrictAcceptanceArgs('bad', '--require-fail-closed'), TypeError);
@@ -79,10 +121,27 @@ for (const { filename, flag, workflow, input, env } of cases) {
   // Ensure workflow_dispatch's strict boolean remains connected to the exact
   // command (not to the standard non-strict command or a typo).
   const yaml = fs.readFileSync(path.resolve(here, '../.github/workflows', workflow), 'utf8');
-  assert.ok(yaml.includes('      ' + input + ':'), filename + ': missing dispatch input');
+  const inputStart = yaml.indexOf('      ' + input + ':');
+  assert.ok(inputStart >= 0, filename + ': missing dispatch input');
+  const nextInput = yaml.indexOf('\n      ', inputStart + 8);
+  const inputBlock = yaml.slice(inputStart, nextInput < 0 ? undefined : nextInput);
+  assert.match(inputBlock, /\btype:\s*boolean\b/,
+    filename + ': strict dispatch input must be typed boolean');
+  assert.match(inputBlock, /\bdefault:\s*false\b/,
+    filename + ': opt-in strict remediation must default to false until green');
+  // Comments or echoes must not be mistaken for a real strict command.
+  const executable = yaml.split('\n').filter(line =>
+    !line.trimStart().startsWith('#')).join('\n');
   assert.ok(yaml.includes(env + ': ' + '$' + '{{ inputs.' + input + " || 'false' }}"),
     filename + ': missing matching dispatch environment');
-  assert.ok(yaml.includes('if [ "$' + env + '" = "true" ]; then\n' +
+  assert.ok(executable.includes('if [ "
+    '            node tests/' + filename + ' ' + flag),
+    filename + ': conditional must execute exact strict test CLI');
+  assert.ok(executable.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
+    filename + ': routine hosted CI must run the negative CLI regression');
+}
+console.log(cases.length + ' gateway strict acceptance CLIs and workflow bindings fail closed');
+ + env + '" = "true" ]; then\n' +
     '            node tests/' + filename + ' ' + flag),
     filename + ': conditional must execute exact strict test CLI');
   assert.ok(yaml.includes('node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs'),
