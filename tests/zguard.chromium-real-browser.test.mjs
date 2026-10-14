@@ -679,6 +679,82 @@ async function runBrowser(extensionPath, profilePath, url) {
       assert.equal(evaluated.exceptionDetails, undefined,
         'Real HTML form submission fixture must evaluate');
       observed.formSubmit = evaluated.result?.value;
+
+      // Separate from programmatic requestSubmit: press real browser Enter
+      // on a focused submit button, and observe the generated submit event.
+      // The fixture catches all missed submissions before external navigation.
+      async function nativeKeyboardFormProbe(action) {
+        const setup = await cdp('Runtime.evaluate', {
+          expression: '(' + ((url) => {
+            const form = document.createElement('form');
+            form.method = 'GET';
+            form.action = url;
+            form.target = '_blank';
+            const button = document.createElement('button');
+            button.type = 'submit';
+            button.textContent = 'Local keyboard form probe';
+            form.append(button);
+            document.body.append(form);
+            const state = {
+              focused: false, enterTrusted: false, submitReached: false,
+              submitTrusted: false, seenOnDocument: false,
+              cancelledByFixture: false
+            };
+            window.__zguardKeyboardFormState = state;
+            function keydown(event) {
+              if (event.key === 'Enter') state.enterTrusted = event.isTrusted;
+            }
+            function safety(event) {
+              if (event.target !== form) return;
+              state.seenOnDocument = true;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            function target(event) {
+              state.submitReached = true;
+              state.submitTrusted = event.isTrusted;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            button.addEventListener('keydown', keydown);
+            document.addEventListener('submit', safety, true);
+            form.addEventListener('submit', target);
+            window.__zguardKeyboardFormCleanup = () => {
+              button.removeEventListener('keydown', keydown);
+              document.removeEventListener('submit', safety, true);
+              form.removeEventListener('submit', target);
+              form.remove();
+            };
+            button.focus();
+            state.focused = document.activeElement === button;
+            return state.focused;
+          }).toString() + ')(' + JSON.stringify(action) + ')',
+          returnByValue: true
+        });
+        assert.equal(setup.exceptionDetails, undefined,
+          'Native keyboard form setup must run');
+        assert.equal(setup.result?.value, true,
+          'Submit button must be focused before trusted Enter input');
+        for (const type of ['keyDown', 'keyUp']) {
+          await cdp('Input.dispatchKeyEvent', {
+            type, key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+          });
+        }
+        await sleep(80);
+        const result = await cdp('Runtime.evaluate', {
+          expression: '(() => { const state = window.__zguardKeyboardFormState; ' +
+            'window.__zguardKeyboardFormCleanup(); return state; })()',
+          returnByValue: true
+        });
+        assert.equal(result.exceptionDetails, undefined,
+          'Native keyboard form probe must finish safely');
+        return result.result?.value;
+      }
+      observed.formKeyboard = {
+        hostile: await nativeKeyboardFormProbe('https://ads.al5sm.com/popup'),
+        ordinary: await nativeKeyboardFormProbe('https://example.org/video')
+      };
     }
     if (requireShadowDom) {
       // The browser, not our VM, retargets composed clicks from a real
@@ -952,6 +1028,22 @@ try {
           variant + ': fixture must prevent any external form navigation');
         assert.equal(observed.formSubmit?.hostile?.blocked, true,
           variant + ': hostile target=_blank form escaped extension submit guard');
+        for (const kind of ['ordinary', 'hostile']) {
+          assert.equal(observed.formKeyboard[kind].focused, true,
+            variant + ': ' + kind + ' form keyboard probe must focus the submit button');
+          assert.equal(observed.formKeyboard[kind].enterTrusted, true,
+            variant + ': ' + kind + ' form Enter must be genuine browser input');
+        }
+        assert.equal(observed.formKeyboard.ordinary.seenOnDocument, true,
+          variant + ': ordinary keyboard form must reach document submit capture');
+        assert.equal(observed.formKeyboard.ordinary.submitReached, true,
+          variant + ': ordinary keyboard form submission must remain available');
+        assert.equal(observed.formKeyboard.ordinary.submitTrusted, true,
+          variant + ': ordinary keyboard form submit must be trusted');
+        assert.equal(observed.formKeyboard.ordinary.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary external keyboard form submission');
+        assert.equal(observed.formKeyboard.hostile.submitReached, false,
+          variant + ': hostile trusted keyboard form submission escaped popup guard');
       }
       if (requireShadowDom) {
         assert.equal(observed.shadowDom?.ordinary?.composed, true,
