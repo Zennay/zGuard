@@ -255,7 +255,12 @@ try {
   const safeExample = 'PORT=8090\n';
   for (const [label, stagedExample] of [
     ['credential-bearing field name', 'PORT=8090\nSERVICE_PASSWORD=qa-placeholder\n'],
-    ['missing explicit default', 'PORT=8090\nSERVICE_MODE=\n']
+    ['spaced credential assignment', 'PORT=8090\nSERVICE_PASSWORD  =qa-placeholder\n'],
+    ['export-prefixed credential assignment', 'PORT=8090\nexport SERVICE_PASSWORD =qa-placeholder\n'],
+    ['tab-separated credential assignment', 'PORT=8090\nSERVICE_TOKEN\t=qa-placeholder\n'],
+    ['missing explicit default', 'PORT=8090\nSERVICE_MODE=\n'],
+    ['whitespace-only default', 'PORT=8090\nSERVICE_MODE=  \n'],
+    ['malformed declaration', 'PORT=8090\nSERVICE_MODE\n']
   ]) {
     fs.writeFileSync(envPath, stagedExample);
     git('add', '--', 'zbrowse/.env.example');
@@ -272,13 +277,22 @@ try {
   // worktree modification. Restore both copies before successful recovery.
   fs.writeFileSync(envPath, safeExample);
   git('add', '--', 'zbrowse/.env.example');
-  fs.writeFileSync(envPath, 'PORT=8090\nSERVICE_PASSWORD=qa-placeholder\n');
+  fs.writeFileSync(envPath,
+    '  # indented comment is safe\nexport SERVICE_PASSWORD =qa-placeholder\n');
   const worktreePolicy = runScanner();
   assert.equal(worktreePolicy.status, 1,
     'credential-bearing worktree env example must fail despite safe index');
   assert.ok(worktreePolicy.stderr.includes('worktree example'),
     'error must identify the active worktree policy');
   fs.writeFileSync(envPath, safeExample);
+  // Optional export prefixes, harmless leading comments, and whitespace
+  // around benign assignment delimiters are supported without false alarms.
+  const harmlessExample = '  # optional config\nexport PUBLIC_MODE = enabled\nPORT = 8090\n';
+  fs.writeFileSync(envPath, harmlessExample);
+  git('add', '--', 'zbrowse/.env.example');
+  accept('harmless comments and nonsecret spaced/export assignments');
+  fs.writeFileSync(envPath, safeExample);
+  git('add', '--', 'zbrowse/.env.example');
   accept('safe binary and both clean example-config representations after recovery');
   console.log('Git-index secret-scan integration passed: safe binary, ' +
     'twelve rejected binary/UTF-16/UTF-32/private-key tracked secrets, committed-baseline staged/worktree and hostile-index-path checks, benign public headers, and recovery');
