@@ -5,8 +5,8 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadContentScript(relativePath, mode, enabled = true) {
-  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+async function loadContentScript(relativePath, mode, enabled = true, overrideSource = null) {
+  const source = overrideSource ?? fs.readFileSync(path.join(root, relativePath), 'utf8');
   const events = [];
   let allowedOpenCount = 0;
   let clickHandler;
