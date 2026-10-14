@@ -47,7 +47,11 @@ async function getJson(origin, route, fetcher) {
     headers: { accept: 'application/json' },
     signal: AbortSignal.timeout(7000)
   });
-  assert.equal(response.ok, true, route + ': API must return 2xx, got HTTP ' + response.status);
+  // The production gateway's two public JSON GETs return exactly 200.
+  // Merely checking Response.ok would also accept a 202 placeholder or a
+  // 206 partial response from an incorrect CDN/proxy route as live readiness.
+  assert.equal(response.status, 200,
+    route + ': API must return exactly HTTP 200, got HTTP ' + response.status);
   assert.match(
     response.headers.get('content-type') || '',
     /^application\/json(?:\s*;|$)/i,
@@ -157,6 +161,16 @@ async function selfTest() {
   assert.equal(busy.available, false, 'full capacity must be reported as busy');
 
   await assert.rejects(checkPublicReadiness(async () => response({}, 503)), /HTTP 503/);
+  for (const code of [201, 202, 206]) {
+    await assert.rejects(checkPublicReadiness(async (url) =>
+      url.endsWith('/api/health') ? response(sampleHealth, code) : response(sampleSites)),
+    new RegExp('api/health: API must return exactly HTTP 200, got HTTP ' + code),
+    'health response must not accept noncanonical successful HTTP ' + code);
+    await assert.rejects(checkPublicReadiness(async (url) =>
+      url.endsWith('/api/health') ? response(sampleHealth) : response(sampleSites, code)),
+    new RegExp('api/sites: API must return exactly HTTP 200, got HTTP ' + code),
+    'catalogue response must not accept noncanonical successful HTTP ' + code);
+  }
   await assert.rejects(checkPublicReadiness(async () =>
     response({}, 200, 'text/html')), /static-site HTML fallback/);
   await assert.rejects(checkPublicReadiness(async (url) =>
