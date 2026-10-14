@@ -48,6 +48,8 @@ let sitesMode = 'ready';
 let stalledSiteGets = 0;
 let stalledHealthGets = 0;
 let healthCacheControl = 'no-store';
+let nextHealthStatus = null;
+let nextSitesStatus = null;
 let starts = 0;
 let viewerResponseMode = 'valid';
 let nextStartFailure = null;
@@ -123,7 +125,9 @@ const server = http.createServer(async (req, res) => {
           { name: 'Video\u202Efake.invalid', url: sites[0].url }
         ], maxSessionMinutes: 15 });
       } else {
-        sendJson(res, 200, { sites, maxSessionMinutes: 15 });
+        const status = nextSitesStatus ?? 200;
+        nextSitesStatus = null;
+        sendJson(res, status, { sites, maxSessionMinutes: 15 });
       }
       return;
     }
@@ -151,7 +155,9 @@ const server = http.createServer(async (req, res) => {
         });
         return;
       }
-      sendJson(res, 200, {
+      const status = nextHealthStatus ?? 200;
+      nextHealthStatus = null;
+      sendJson(res, status, {
         status: 'ok', activeSessions: health === 'busy' ? 1 : 0,
         startingSessions: 0, capacity: 1
       }, healthCacheControl);
@@ -415,6 +421,34 @@ try {
       return originalSetInterval(callback, delay, ...args);
     };
   })(); true`);
+
+  // Real Chromium/loopback GETs: misleading proxy 202/206 JSON may carry
+  // superficially valid health or curated sites, but cannot unlock Open.
+  // Recovery on documented HTTP 200 is an equally mandatory positive control.
+  for (const status of [202, 206]) {
+    nextHealthStatus = status;
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+      'Browser engine offline', status + ': non-200 health must fail closed in Chrome');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, status + ': unsafe health status must disable real Open button');
+    assert.equal(starts, 0, 'unsafe HTTP health must not mint a browser');
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, status + ': canonical HTTP 200 health must recover Open');
+    nextSitesStatus = status;
+    await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      0, status + ': unsafe catalogue cannot render unreviewed suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, status + ': unsafe catalogue must lock browser start');
+    assert.equal(starts, 0, 'unsafe catalogue must not allocate a browser');
+    await evaluate('ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      sites.length, status + ': canonical 200 catalogue should restore suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, status + ': canonical 200 catalogue must restore Open');
+  }
 
   // Simulate an erroneously cacheable 200/OK gateway-health response.
   // Even if origin/CDN policy drifts, the TV client must fetch fresh capacity
