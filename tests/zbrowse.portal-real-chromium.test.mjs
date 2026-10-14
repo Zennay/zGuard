@@ -45,6 +45,8 @@ const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
 let sitesMode = 'ready';
+let stalledSiteGets = 0;
+let stalledHealthGets = 0;
 let healthCacheControl = 'no-store';
 let starts = 0;
 let viewerResponseMode = 'valid';
@@ -79,6 +81,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/sites') {
+      if (sitesMode === 'hang-once') {
+        // Keep exactly one synthetic HTTP read pending until Chrome aborts it.
+        // No public gateway, production token or Docker connection is made.
+        sitesMode = 'ready';
+        stalledSiteGets++;
+        return;
+      }
       if (sitesMode === 'offline') {
         sendJson(res, 503, { error: 'Synthetic catalogue unavailable' });
       } else if (sitesMode === 'userinfo') {
@@ -94,6 +103,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/health') {
+      if (health === 'hang-once') {
+        health = 'ready';
+        stalledHealthGets++;
+        return;
+      }
       if (health === 'offline') {
         sendJson(res, 503, { error: 'Gateway unavailable' });
         return;
@@ -276,8 +290,8 @@ try {
       'real TV browser JS must not raise an exception in: ' + expression.slice(0, 100));
     return result.result?.value;
   }
-  async function until(predicate, label) {
-    for (let i = 0; i < 100; i++) {
+  async function until(predicate, label, attempts = 100) {
+    for (let i = 0; i < attempts; i++) {
       if (await predicate()) return;
       await sleep(50);
     }
@@ -1340,6 +1354,41 @@ try {
     'successful recovery must clear old failure guidance');
   assert.equal(starts, beforeAutoCatalogueRecovery,
     'recovering the catalogue is read-only and must not start a browser');
+
+  // Native Chromium acceptance of the bounded 7-second READ-only requests:
+  // one local HTTP socket deliberately never returns an API response. Chrome
+  // itself must abort it and fail closed, then recover on the next healthy
+  // response without any viewer session POST.
+  const beforeStalledReadStarts = starts;
+  health = 'hang-once';
+  await evaluate('refreshHealth(); true');
+  await until(async () => await evaluate(
+    'document.getElementById("capacityText").textContent === "Browser engine offline"'
+  ), 'real Chrome must abort hung readiness GET', 230);
+  assert.equal(stalledHealthGets, 1,
+    'native browser must actually reach the hanging local health endpoint');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'timed-out native health request must revoke stale ready admission');
+  assert.equal(starts, beforeStalledReadStarts,
+    'hung health cannot allocate a viewer browser');
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'healthy native GET must recover after aborted health');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false);
+
+  sitesMode = 'hang-once';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=stalled-first-response' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chrome must abort hung catalogue and restore normal bootstrap', 240);
+  assert.equal(stalledSiteGets, 1,
+    'actual browser must exercise a stuck local curated-site HTTP request');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified site retry and health must restore Open after aborted catalogue');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart);
+  assert.equal(starts, beforeStalledReadStarts,
+    'aborting either read endpoint must not send a remote browser start');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
