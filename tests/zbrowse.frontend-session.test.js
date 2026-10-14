@@ -479,6 +479,22 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await settle();
   assert.equal(goneAllocations, 2, '404 cleanup must permit fresh browser after prior session is gone');
 
+  // An expired lease may respond 410 rather than 404 when End retries an
+  // already-revoked token. Both must be idempotent cleanup confirmations.
+  const leaseGone = await bootPortal({
+    sessionRequest: async () => response(validSession),
+    deleteRequest: async () => response({ error: 'Session expired.' }, 410)
+  });
+  leaseGone.submit();
+  await settle();
+  await leaseGone.element('endButton').listeners.click();
+  await settle();
+  assert.equal(leaseGone.element('browserFrame').src, 'about:blank');
+  assert.equal(leaseGone.element('startButton').disabled, false,
+    '410 must confirm the old session is gone without locking TV admission');
+  assert.equal(leaseGone.element('formMessage').textContent, '',
+    '410 must not look like an unresolved transport failure');
+
   // A BFCache back-navigation may restore a page after its pagehide
   // keepalive DELETE. A restored viewer must not continue using that token,
   // and a retry DELETE is required if the unload request was lost.
