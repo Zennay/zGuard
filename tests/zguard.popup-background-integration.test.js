@@ -30,6 +30,8 @@ async function check(packagePath) {
   const removed = [];
   let onMessage;
   let onCreated;
+  let onUpdated;
+  let onRemoved;
   const storage = {
     get(defaults, callback) {
       return new Promise((resolve) => setTimeout(() => {
@@ -54,6 +56,8 @@ async function check(packagePath) {
     },
     tabs: {
       onCreated: { addListener(handler) { onCreated = handler; } },
+      onUpdated: { addListener(handler) { onUpdated = handler; } },
+      onRemoved: { addListener(handler) { onRemoved = handler; } },
       get: async () => ({ url: 'https://origin.test/home' }),
       remove: async (id) => { removed.push(id); }
     }
@@ -63,6 +67,8 @@ async function check(packagePath) {
   vm.runInNewContext(read('background.js'), backgroundContext);
   assert.equal(typeof onMessage, 'function');
   assert.equal(typeof onCreated, 'function');
+  assert.equal(typeof onUpdated, 'function');
+  assert.equal(typeof onRemoved, 'function');
 
   function message(input) {
     return new Promise((resolve, reject) => {
@@ -125,11 +131,22 @@ async function check(packagePath) {
     pendingUrl: 'https://user:secret@ads.al5sm.com/popup?token=private'
   });
   assert.deepEqual(removed, [51], packagePath + ': enabled popup guard must remove hostile pending tab');
+  // A browser that creates about:blank before publishing a hostile web
+  // destination must still be blocked by the real background listener.
+  await onCreated({ id: 52, openerTabId: 1, url: 'about:blank' });
+  await onUpdated(52, { status: 'loading' }, {});
+  await onUpdated(52, { url: 'https://ads.al5sm.com/late?credential=private' }, {});
+  assert.deepEqual(removed, [51, 52],
+    packagePath + ': delayed hostile popup navigation must close exactly once');
+  onRemoved(52);
+  await onUpdated(52, { url: 'https://ads.al5sm.com/again' }, {});
+  assert.deepEqual(removed, [51, 52],
+    packagePath + ': removed tab must clear the delayed-navigation record');
   const after = await message({ type: 'get-settings' });
-  assert.equal(after.blockedCount, 1);
+  assert.equal(after.blockedCount, 2);
   assert.equal(after.lastBlocked.detail.url, 'https://ads.al5sm.com');
   const refreshed = await popup();
-  assert.equal(refreshed.count.textContent, '1',
+  assert.equal(refreshed.count.textContent, '2',
     packagePath + ': popup should read real persisted blocked count');
   assert.equal(refreshed.strict.active, true);
   assert.equal(refreshed.enabled.checked, true);
