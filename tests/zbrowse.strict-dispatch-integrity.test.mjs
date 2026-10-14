@@ -13,6 +13,11 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zbrowse-disconnected-session-start.yml', [
+    ['require_disconnect_reconciliation', 'REQUIRE_DISCONNECT_RECONCILIATION',
+      [['zbrowse.disconnected-session-start-real-http.test.mjs',
+        '--require-disconnect-reconciliation']]]
+  ]],
   ['zbrowse-websocket-proxy-error-log-privacy.yml', [
     ['require_redacted_ws_proxy_errors', 'REQUIRE_REDACTED_WS_PROXY_ERRORS',
       [['zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs',
