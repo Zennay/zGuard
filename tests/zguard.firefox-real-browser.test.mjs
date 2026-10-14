@@ -384,6 +384,15 @@ try{
     'Strict Firefox popup policy must capture the native area before its target click');
   assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
     'Strict real image-map middle-region new-tab hotspot must not leave a tab');
+  // W3C Enter activation on a real <area> is not a pointer click. It must be
+  // stopped before the target listener while strict is active, with no tab.
+  const strictMapKeyboardBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await keyboardActivate('#nativeTabMapArea');
+  const strictMapKeyboardAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(strictMapKeyboardAfter.nativeMapClicks,strictMapKeyboardBefore.nativeMapClicks,
+    'Strict Firefox Enter on a native image-map area must be intercepted');
+  assert.equal((await wd('GET','/session/'+session+'/window/handles')).length,2,
+    'Strict image-map keyboard Enter must not open a new tab');
   // Browser-level fallback: invoke a page-authored window.open from an actual
   // trusted WebDriver button click. The different loopback port is a separate
   // origin, and no external website or production browser is contacted.
@@ -585,6 +594,31 @@ try{
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
   assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
     new Set(balancedHandles),'Image-map popup cleanup must preserve original tabs');
+  // The same allowed map hotspot must also open through genuine WebDriver Enter.
+  // A synthetic click()/dispatchEvent would not establish keyboard activation.
+  const balancedMapKeyboardBefore=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  await keyboardActivate('#nativeTabMapArea');
+  await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'balanced Firefox keyboard activation of image-map area must open a tab',60);
+  const balancedMapKeyboardAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedMapKeyboardAfter.nativeMapClicks,
+    balancedMapKeyboardBefore.nativeMapClicks+1,
+    'Balanced Firefox image-map Enter must reach normal link click handler');
+  assert.equal(balancedMapKeyboardAfter.nativeMapTrusted,true,
+    'Firefox keyboard-originated image-map click must be browser-trusted');
+  const withKeyboardTab=await wd('GET','/session/'+session+'/window/handles');
+  const keyboardMapTab=withKeyboardTab.find(h=>!balancedHandles.includes(h));
+  assert.ok(keyboardMapTab,'Keyboard image-map opening must create an independent tab');
+  await wd('POST','/session/'+session+'/window',{handle:keyboardMapTab});
+  await until(async()=> new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'native Enter-opened image-map tab must load second localhost origin',50);
+  assert.equal(new URL(await wd('GET','/session/'+session+'/url')).origin,
+    'http://127.0.0.1:'+frameServer.address().port,
+    'Allowed image-map keyboard target must load distinct origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),'Image-map keyboard popup cleanup must restore two original tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -601,6 +635,7 @@ try{
   console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   console.log('Firefox native middle-button real-tab PASS: strict cross-origin cancelled; balanced trusted auxclick opens and loads ordinary second-origin tab.');
   console.log('Firefox real image-map tab PASS: strict centre hotspot suppressed; balanced trusted hotspot opens loaded second-origin tab.');
+  console.log('Firefox keyboard image-map PASS: strict native Enter rejected; balanced Enter opened a loaded separate-origin tab.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
