@@ -77,20 +77,29 @@ assert.equal(await probe(500), false, 'real HTTP 500 must not mark a browser rea
 assert.equal(await probe(503), false, 'HTTP 503 service unavailable must not be ready');
 assert.equal(await probe(101), false, 'upgrade-only HTTP 101 must not be considered browser readiness');
 
-const redirects = await probe(302);
-const notFound = await probe(404);
-const throttled = await probe(429);
+// A browser stream must actually be ready, not merely respond with an HTTP
+// success family or a redirect/login/error placeholder. These 13 statuses
+// are deliberately exercised through the shipped waitForBrowser() source.
+const invalidStatuses = [
+  201, 202, 204, 206, 207, 301, 302, 307, 308, 404, 408, 410, 429
+];
+const readiness = new Map();
+for (const status of invalidStatuses) {
+  readiness.set(status, await probe(status));
+}
 // A 401 can represent a deliberate viewer Basic authentication challenge. Its
 // legitimacy depends on verifying that challenge; do not invent that policy.
 const unauthorized = await probe(401);
 if (strict) {
-  assert.deepEqual({ redirects, notFound, throttled },
-    { redirects: false, notFound: false, throttled: false },
-    'shipped readiness must not accept redirects, missing browser routes or throttled endpoints (issue #293)');
+  assert.deepEqual(
+    [...readiness].filter(([, ready]) => ready).map(([status]) => status),
+    [],
+    'shipped readiness must refuse all successful placeholders, redirects and error states (issue #293)'
+  );
   console.log('Shipped browser readiness refuses invalid HTTP statuses');
 } else {
-  console.log('Shipped HTTPS browser readiness decision: HTTP302-ready=' + redirects +
-    ', HTTP404-ready=' + notFound + ', HTTP429-ready=' + throttled +
+  console.log('Shipped HTTPS readiness status matrix: non-ready statuses accepted=' +
+    [...readiness.values()].filter(Boolean).length + '/' + invalidStatuses.length +
     ', HTTP401-ready=' + unauthorized +
     ' (strict --require-valid-readiness awaits gateway runtime remediation; issue #293)');
 }
