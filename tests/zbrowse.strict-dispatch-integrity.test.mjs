@@ -13,6 +13,10 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zbrowse-viewer-proxy-log-privacy.yml', [
+    ['require_redacted_proxy_errors', 'REQUIRE_REDACTED_PROXY_ERRORS',
+      [['zbrowse.proxy-error-log-privacy-real-http.test.mjs', '--require-redacted-proxy-errors']]]
+  ]],
   ['zbrowse-viewer-range-cache.yml', [
     ['require_no_store', 'REQUIRE_NO_STORE',
       [['zbrowse.viewer-conditional-range-real-http.test.mjs', '--require-no-store']]]
