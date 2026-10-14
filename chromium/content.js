@@ -83,5 +83,21 @@
       event.stopImmediatePropagation();
       send('external-link', { url: href, mode });
     }, true);
+
+    // requestSubmit() and trusted form-submit gestures bypass anchor clicks.
+    // Respect the effective submitter's formtarget/formaction overrides.
+    document.addEventListener('submit', (event) => {
+      const form = event.target;
+      if (!form || form.tagName !== 'FORM') return;
+      const submitter = event.submitter;
+      const override = (name) => Boolean(submitter &&
+        typeof submitter.hasAttribute === 'function' && submitter.hasAttribute(name));
+      const target = override('formtarget') ? submitter.formTarget : form.target;
+      const action = override('formaction') ? submitter.formAction : form.action;
+      if (String(target).toLowerCase() !== '_blank' || !shouldBlock(action || '', mode)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      send('external-link', { url: String(action || ''), mode });
+    }, true);
   });
 })();

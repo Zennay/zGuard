@@ -10,6 +10,7 @@ async function loadContentScript(relativePath, mode, enabled = true) {
   const events = [];
   let allowedOpenCount = 0;
   let clickHandler;
+  let submitHandler;
 
   const api = {
     runtime: {
@@ -47,6 +48,7 @@ async function loadContentScript(relativePath, mode, enabled = true) {
     document: {
       addEventListener(name, listener) {
         if (name === 'click') clickHandler = listener;
+        if (name === 'submit') submitHandler = listener;
       }
     }
   };
@@ -71,6 +73,25 @@ async function loadContentScript(relativePath, mode, enabled = true) {
         stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
       };
       if (clickHandler) clickHandler(event);
+      return actions;
+    },
+    submit(action, { target = '_blank', submitterAction, submitterTarget } = {}) {
+      const actions = [];
+      const submitter = {
+        hasAttribute(name) {
+          return name === 'formaction' ? submitterAction !== undefined
+            : name === 'formtarget' ? submitterTarget !== undefined : false;
+        },
+        formAction: submitterAction,
+        formTarget: submitterTarget
+      };
+      const event = {
+        target: { tagName: 'FORM', action, target },
+        submitter,
+        preventDefault() { actions.push('preventDefault'); },
+        stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
+      };
+      if (submitHandler) submitHandler(event);
       return actions;
     },
     events,
@@ -285,6 +306,44 @@ async function verifyBrowser(relativePath) {
     relativePath + ': modified area gesture must be intercepted'
   );
 
+  // Form submissions with target=_blank do not dispatch anchor click events.
+  assert.deepEqual(
+    balanced.submit('https://ads.al5sm.com/popup'),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': hostile target=_blank form must be intercepted'
+  );
+  assert.deepEqual(
+    balanced.submit('https://example.org/video'),
+    [], relativePath + ': benign external form must remain usable in balanced mode'
+  );
+  assert.deepEqual(
+    strict.submit('https://example.org/video'),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': strict form policy must block external new tabs'
+  );
+  assert.deepEqual(
+    strict.submit('https://origin.test/next'),
+    [], relativePath + ': same-origin form submission must remain available'
+  );
+  assert.deepEqual(
+    balanced.submit('https://ads.al5sm.com/popup', { target: '_self' }),
+    [], relativePath + ': ordinary same-tab form must remain available'
+  );
+  assert.deepEqual(
+    balanced.submit('https://origin.test/next', {
+      target: '_self',
+      submitterAction: 'https://ads.al5sm.com/popup',
+      submitterTarget: '_blank'
+    }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': submitter formaction/formtarget must override the form target'
+  );
+  assert.deepEqual(
+    strict.submit('https://example.org/video', { target: '_BLANK' }),
+    ['preventDefault', 'stopImmediatePropagation'],
+    relativePath + ': special target=_blank must be case-insensitive'
+  );
+
   const disabled = await loadContentScript(relativePath, 'strict', false);
   assert.notEqual(
     disabled.open('https://ads.al5sm.com/popup'),
@@ -303,6 +362,8 @@ async function verifyBrowser(relativePath) {
   assert.deepEqual(disabled.click({ baseVal: 'https://ads.al5sm.com/popup' },
     { target: { baseVal: '_blank' } }), [],
   relativePath + ': disabled guard must preserve SVG popup gestures');
+  assert.deepEqual(disabled.submit('https://ads.al5sm.com/popup'), [],
+    relativePath + ': disabled extension must not intercept forms');
   assert.equal(disabled.events.length, 0);
 }
 

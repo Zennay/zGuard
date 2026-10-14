@@ -94,6 +94,7 @@ jobs:
           # Both previously missed non-HTML-anchor popup gestures are required gates.
           node tests/zguard.chromium-real-browser.test.mjs --require-image-map
           node tests/zguard.chromium-real-browser.test.mjs --require-svg-link
+          node tests/zguard.chromium-real-browser.test.mjs --require-form-submit
           if [ "$REQUIRE_MAINWORLD" = "true" ]; then
             node tests/zguard.chromium-real-browser.test.mjs --require-mainworld
           fi
