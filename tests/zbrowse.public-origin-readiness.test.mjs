@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
 
 // The API must represent the audited sites shipped with this exact checkout,
 // not just *any* HTTPS website claiming to be a curated entry.
@@ -280,6 +281,16 @@ async function testRealLoopbackCancellation() {
         req.socket.once('close', () => { active.closed = true; });
         return;
       }
+      if (active.compressed) {
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'content-encoding': active.compressed,
+          'content-length': String(active.bytes.length),
+          'cache-control': 'no-store'
+        });
+        res.end(active.bytes);
+        return;
+      }
       res.writeHead(active.status, {
         'content-type': active.contentType,
         'cache-control': 'no-store',
@@ -401,6 +412,39 @@ async function testRealLoopbackCancellation() {
       }
       assert.equal(active.closed, true,
         path + ': silent real HTTP connection must close after timeout');
+    }
+    // CDN gzip/Brotli may advertise a tiny compressed wire length while
+    // delivering a huge decoded JSON body. Bounds must apply *after* HTTP
+    // decompression, not only against Content-Length or transfer bytes.
+    for (const [algorithm, compressor] of [
+      ['gzip', gzipSync],
+      ['br', brotliCompressSync]
+    ]) {
+      for (const [path, budget] of [
+        ['/api/health', 4096],
+        ['/api/sites', 65536]
+      ]) {
+        const oversizedDecoded = Buffer.from(' '.repeat(budget + 1024));
+        const compressed = compressor(oversizedDecoded);
+        assert.ok(compressed.length < budget,
+          algorithm + ' test must use a compressed wire body below the byte budget');
+        scenario = {
+          path, compressed: algorithm, bytes: compressed, closed: false
+        };
+        await assert.rejects(checkPublicReadiness(loopbackFetch),
+          new RegExp('JSON body exceeds ' + budget + ' bytes'),
+          algorithm + ' ' + path + ': decoded-body bomb must be refused');
+        // Compression itself is not suspect. Valid gzip/Brotli responses
+        // matching the reviewed gateway schema must still be accepted.
+        const json = JSON.stringify(path === '/api/health' ? sampleHealth : sampleSites);
+        scenario = {
+          path, compressed: algorithm, bytes: compressor(Buffer.from(json)),
+          closed: false
+        };
+        const valid = await checkPublicReadiness(loopbackFetch);
+        assert.equal(valid.connected, true,
+          algorithm + ' ' + path + ': reviewed compressed API must recover');
+      }
     }
     scenario = null;
     const recovered = await checkPublicReadiness(loopbackFetch);
