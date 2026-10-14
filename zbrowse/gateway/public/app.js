@@ -484,10 +484,11 @@ function showBrowser() {
       $("browserLoading").hidden = true;
     }
   }, { once: true });
-  state.viewerLoadTimeout = window.setTimeout(() => {
-    // Object identity prevents a stale callback affecting a later session
-    // even if a gateway reuses the same bearer for its original owner.
-    if (state.session !== session) return;
+  const loadTimeoutId = window.setTimeout(() => {
+    // clearTimeout() cannot retract a callback already queued for dispatch.
+    // Compare the timer identity as well as the exact session object so a
+    // late callback cannot close an already loaded or newer viewer.
+    if (state.viewerLoadTimeout !== loadTimeoutId || state.session !== session) return;
     endSession().then(() => {
       // A release failure has its own stronger warning and retains admission
       // lock. Never overwrite that or a subsequent successful viewer.
@@ -496,6 +497,7 @@ function showBrowser() {
       }
     });
   }, 30000);
+  state.viewerLoadTimeout = loadTimeoutId;
   frame.src = session.viewerUrl;
 
   state.heartbeat = window.setInterval(() => {
