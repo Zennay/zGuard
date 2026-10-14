@@ -325,7 +325,7 @@ try {
   const focusedEnd = await evaluate(`(() => {
     const button = document.getElementById("endButton");
     button.addEventListener("keydown", event => {
-      if (event.key === "Enter") window.__qaPortalKeyboard.endKeyTrusted = event.isTrusted;
+      if (event.key === " ") window.__qaPortalKeyboard.endKeyTrusted = event.isTrusted;
     }, { once: true });
     button.addEventListener("click", event => {
       window.__qaPortalKeyboard.endClickTrusted = event.isTrusted;
@@ -337,8 +337,8 @@ try {
   assert.equal(focusedEnd, true, 'End session must remain keyboard focusable');
   for (const type of ['keyDown', 'keyUp']) {
     await cdp('Input.dispatchKeyEvent', {
-      type, key: 'Enter', code: 'Enter',
-      windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+      type, key: ' ', code: 'Space',
+      windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32
     });
   }
   await sleep(150);
@@ -351,9 +351,9 @@ try {
   })`);
   console.log('Native portal End keyboard diagnostic (booleans only): ' +
     JSON.stringify(keyboardEnd));
-  await until(() => deletions === 1, 'one keyboard-triggered gateway capacity release');
+  await until(() => deletions === 1, 'one Space-triggered gateway capacity release');
   assert.equal(await evaluate('window.__qaPortalKeyboard.endKeyTrusted'),
-    true, 'End session must receive a native trusted Enter key');
+    true, 'End session must receive a native trusted Space key');
   await until(async () => await evaluate(
     'document.getElementById("browserView").hidden && !document.getElementById("homeView").hidden'
   ), 'home returns after ending the viewer');
