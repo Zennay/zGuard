@@ -296,8 +296,8 @@ for (const [label, injected] of [
   ['job cannot be disabled', '    if: false'],
   ['expression cannot disable gate', '    if: ${{ false }}']
 ]) {
-  const changed = fixture.replace('    runs-on: ubuntu-latest',
-    '    runs-on: ubuntu-latest\n' + injected);
+  const changed = fixture.replace('    runs-on: ubuntu-24.04',
+    '    runs-on: ubuntu-24.04\n' + injected);
   assert.notEqual(changed, fixture, label + ': test mutation must change workflow');
   assert.throws(() => testWorkflow(sample, sampleGates, changed),
     undefined, label + ': strict CI cannot report false-green skipped work');
