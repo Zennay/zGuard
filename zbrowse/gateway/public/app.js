@@ -132,6 +132,7 @@ let sessionEnding = false;
 let pendingReleaseToken = null;
 let releaseAttemptInFlight = false;
 let pageExitGeneration = 0;
+let pageActive = true;
 
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
@@ -151,9 +152,16 @@ async function startSession(url) {
     // pagehide handler to release. Do not mount a browser on an abandoned
     // page; use keepalive DELETE if the response still arrives.
     if (pageExitGeneration !== requestGeneration) {
-      await request("/api/session/" + session.token, {
-        method: "DELETE", keepalive: true
-      }).catch(() => {});
+      // Navigation may finish before an in-flight POST returns its token.
+      // A failed late DELETE must be reconciled just like an ordinary End;
+      // otherwise BFCache restoration could start/reuse that still-live token.
+      pendingReleaseToken = session.token;
+      sessionEnding = true;
+      syncStartButton();
+      $("capacityText").parentElement.className = "status";
+      $("capacityText").textContent = "Finishing previous browser session";
+      await releasePendingSession();
+      if (pageActive && !pendingReleaseToken) await refreshHealth(false);
       return;
     }
     state.session = session;
@@ -290,6 +298,7 @@ $("fullscreenButton").addEventListener("click", async () => {
 });
 
 window.addEventListener("pagehide", () => {
+  pageActive = false;
   pageExitGeneration++;
   const token = state.session?.token || pendingReleaseToken;
   if (token) {
@@ -303,6 +312,7 @@ window.addEventListener("pagehide", () => {
 });
 
 window.addEventListener("pageshow", (event) => {
+  pageActive = true;
   if (!event.persisted) return;
   // A BFCache restore brings back JavaScript and iframe state from before
   // pagehide, but pagehide already attempted to destroy that browser token.

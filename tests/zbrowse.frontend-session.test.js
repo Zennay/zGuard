@@ -331,6 +331,61 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     1, 'repeated pagehide must not duplicate already-released late sessions'
   );
 
+  // A late POST after pagehide can acquire a browser, but its keepalive
+  // DELETE can fail while BFCache restores the same page. Preserve the token
+  // for retry instead of making a new start reuse a still-live browser.
+  const latePending = deferred();
+  let lateFailedDeletes = 0;
+  let lateAllocations = 0;
+  const lateFailure = await bootPortal({
+    sessionRequest() {
+      lateAllocations++;
+      return latePending.promise;
+    },
+    deleteRequest() {
+      lateFailedDeletes++;
+      return lateFailedDeletes === 1
+        ? response({ error: 'Temporary gateway failure' }, 503)
+        : response(null, 204);
+    }
+  });
+  lateFailure.submit();
+  lateFailure.pagehide();
+  lateFailure.pageshow(true);
+  latePending.resolve(response(validSession));
+  await settle();
+  assert.equal(lateFailedDeletes, 1,
+    'abandoned late response must attempt exactly one initial keepalive DELETE');
+  assert.equal(lateFailure.element('browserFrame').srcHistory.includes(validViewer), false,
+    'abandoned late response may not mount the bearer iframe even on restore');
+  assert.equal(lateFailure.element('startButton').disabled, true,
+    'failed late DELETE must lock Open across BFCache restoration');
+  assert.equal(lateFailure.element('capacityText').textContent,
+    'Finishing previous browser session');
+  assert.match(lateFailure.element('formMessage').textContent,
+    /Retrying automatically/, 'failed late cleanup must have visible retry feedback');
+  lateFailure.submit();
+  await settle();
+  assert.equal(lateAllocations, 1,
+    'unreconciled late token must not allow another same-owner POST');
+  const latePoll = [...lateFailure.intervals.values()].find(({ milliseconds }) =>
+    milliseconds === 20000
+  );
+  assert.ok(latePoll, 'TV must retain health poll to reconcile a late issued token');
+  latePoll.callback();
+  await settle();
+  assert.equal(lateFailedDeletes, 2, 'periodic health retries late session DELETE');
+  assert.equal(lateFailure.element('startButton').disabled, false,
+    'successful late cleanup unlocks a fresh start');
+  assert.equal(lateFailure.element('formMessage').textContent, '',
+    'confirmed late cleanup clears the retry warning');
+  // Submit again: sessionRequest intentionally returns the same already
+  // resolved fixture; only POST count matters for this positive guard.
+  lateFailure.submit();
+  await settle();
+  assert.equal(lateAllocations, 2,
+    'fresh start remains possible after failed late cleanup is reconciled');
+
   // The explicit End control must free the viewer immediately, keep the
   // ordinary capacity poller alive, and never double-release on unload.
   const manual = await bootPortal({ sessionRequest: async () => response(validSession) });
