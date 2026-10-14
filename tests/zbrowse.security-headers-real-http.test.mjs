@@ -36,6 +36,14 @@ function verifyHeaders(headers, label) {
   assert.equal(get('cross-origin-embedder-policy'), null,
     label + ': intentional remote browser stream COEP exception must remain');
   const csp = get('content-security-policy') || '';
+  // Express finalhandler intentionally overrides the app CSP on generated
+  // 400/404 HTML errors with a stricter default-src 'none' policy. Treat
+  // that behavior as acceptable only on those explicit error paths.
+  if (label !== 'JSON success') {
+    assert.equal(csp.trim(), "default-src 'none'",
+      label + ': framework error page must emit a deny-all CSP');
+    return;
+  }
   for (const directive of [
     "default-src 'self'", "script-src 'self'", "style-src 'self'",
     "img-src 'self' data:", "frame-src 'self'",
