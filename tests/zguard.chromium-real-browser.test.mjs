@@ -391,27 +391,57 @@ async function runBrowser(extensionPath, profilePath, url) {
               hrefIsAnimated: typeof link.href === 'object' &&
                 typeof link.href.baseVal === 'string',
               targetIsAnimated: typeof link.target === 'object' &&
-                typeof link.target.baseVal === 'string'
+                typeof link.target.baseVal === 'string',
+              keyboard: {
+                focused: false, enterTrusted: false,
+                seenSvgAtCapture: false, reachedLink: false,
+                trusted: false, detail: null, cancelledByFixture: false
+              }
             };
             window.__zguardSvgState = state;
+            window.__zguardSvgLink = link;
             function safeCapture(event) {
               if (!event.composedPath().includes(link)) return;
-              state.seenSvgAtCapture = true;
-              state.closestIsSvgLink = event.target.closest('a') === link;
+              if (event.detail === 0) {
+                state.keyboard.seenSvgAtCapture = true;
+              } else {
+                state.seenSvgAtCapture = true;
+                state.closestIsSvgLink = event.target.closest('a') === link;
+              }
               event.preventDefault();
-              state.cancelledByFixture = event.defaultPrevented;
+              if (event.detail === 0) {
+                state.keyboard.cancelledByFixture = event.defaultPrevented;
+              } else {
+                state.cancelledByFixture = event.defaultPrevented;
+              }
             }
             function onTarget(event) {
-              state.reachedLink = true;
-              state.trusted = event.isTrusted;
+              if (event.detail === 0) {
+                state.keyboard.reachedLink = true;
+                state.keyboard.trusted = event.isTrusted;
+                state.keyboard.detail = event.detail;
+              } else {
+                state.reachedLink = true;
+                state.trusted = event.isTrusted;
+              }
               event.preventDefault();
-              state.cancelledByFixture = event.defaultPrevented;
+              if (event.detail === 0) {
+                state.keyboard.cancelledByFixture = event.defaultPrevented;
+              } else {
+                state.cancelledByFixture = event.defaultPrevented;
+              }
+            }
+            function onKey(event) {
+              if (event.key === 'Enter') state.keyboard.enterTrusted = event.isTrusted;
             }
             document.addEventListener('click', safeCapture, true);
             link.addEventListener('click', onTarget);
+            link.addEventListener('keydown', onKey);
             window.__zguardSvgCleanup = () => {
               document.removeEventListener('click', safeCapture, true);
               link.removeEventListener('click', onTarget);
+              link.removeEventListener('keydown', onKey);
+              delete window.__zguardSvgLink;
               svg.remove();
             };
             svg.scrollIntoView({ block: 'center' });
@@ -432,6 +462,26 @@ async function runBrowser(extensionPath, profilePath, url) {
         ]) {
           await cdp('Input.dispatchMouseEvent', { ...pos, ...params });
         }
+        // Real keyboard Enter is a distinct activation path from native
+        // pointer clicks. The document fixture cancels missed target=_blank
+        // navigations; a repaired extension may intercept them first.
+        const focus = await cdp('Runtime.evaluate', {
+          expression: '(() => { const link = window.__zguardSvgLink; link.focus(); ' +
+            'const focused = document.activeElement === link; ' +
+            'window.__zguardSvgState.keyboard.focused = focused; return focused; })()',
+          returnByValue: true
+        });
+        assert.equal(focus.exceptionDetails, undefined,
+          'SVG keyboard focus setup must run in Chrome');
+        assert.equal(focus.result?.value, true,
+          'SVG hyperlink must be focusable for real keyboard acceptance');
+        for (const type of ['keyDown', 'keyUp']) {
+          await cdp('Input.dispatchKeyEvent', {
+            type, key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+          });
+        }
+        await sleep(80);
         const response = await cdp('Runtime.evaluate', {
           expression: '(() => { const state = window.__zguardSvgState; ' +
             'window.__zguardSvgCleanup(); return state; })()',
@@ -840,6 +890,24 @@ try {
           variant + ': fixture must cancel ordinary SVG external navigation');
         assert.equal(observed.svgLink.hostile.reachedLink, false,
           variant + ': hostile SVG target=_blank link escaped popup guard');
+        for (const kind of ['hostile', 'ordinary']) {
+          assert.equal(observed.svgLink[kind].keyboard.focused, true,
+            variant + ': ' + kind + ' SVG hyperlink must receive keyboard focus');
+          assert.equal(observed.svgLink[kind].keyboard.enterTrusted, true,
+            variant + ': ' + kind + ' SVG Enter must be genuine browser input');
+        }
+        assert.equal(observed.svgLink.ordinary.keyboard.seenSvgAtCapture, true,
+          variant + ': ordinary SVG keyboard click must reach document capture');
+        assert.equal(observed.svgLink.ordinary.keyboard.reachedLink, true,
+          variant + ': harmless SVG keyboard activation must remain available');
+        assert.equal(observed.svgLink.ordinary.keyboard.trusted, true,
+          variant + ': SVG Enter click must be browser-trusted');
+        assert.equal(observed.svgLink.ordinary.keyboard.detail, 0,
+          variant + ': SVG Enter click must carry keyboard detail=0');
+        assert.equal(observed.svgLink.ordinary.keyboard.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary SVG keyboard navigation');
+        assert.equal(observed.svgLink.hostile.keyboard.reachedLink, false,
+          variant + ': hostile SVG keyboard activation escaped popup guard');
       }
       if (requireImageMap) {
         assert.equal(observed.imageMap?.ordinary?.seenAreaAtCapture, true,
