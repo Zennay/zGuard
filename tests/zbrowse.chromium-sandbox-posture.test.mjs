@@ -28,9 +28,21 @@ function chromiumOptions(script) {
   }
   return words;
 }
+// Reject alternate Chromium isolation escape hatches, not just --no-sandbox.
+// --disable-features takes a comma-separated list: allowing one safe feature
+// must not conceal an unsafe feature later in the same literal argument.
 function sandboxWeakening(args) {
-  return args.filter(arg =>
-    /^(?:--no-sandbox|--disable-(?:setuid|seccomp-filter|namespace)-sandbox)(?:=|$)/.test(arg));
+  const dangerousSwitch = /^(?:--no-sandbox|--no-zygote|--single-process|--in-process-gpu|--disable-(?:setuid|seccomp-filter|namespace|gpu)-sandbox|--disable-site-isolation-trials|--disable-web-security)(?:=|$)/;
+  const dangerousFeatures = new Set([
+    'isolateorigins', 'siteperprocess', 'site-per-process',
+    'strictoriginisolation', 'origin-keyed-processes-by-default'
+  ]);
+  return args.filter(arg => {
+    if (dangerousSwitch.test(arg)) return true;
+    if (!arg.startsWith('--disable-features=')) return false;
+    return arg.slice('--disable-features='.length).split(',')
+      .some(feature => dangerousFeatures.has(feature.trim().toLowerCase()));
+  });
 }
 const slash = String.fromCharCode(92);
 const fixture = options => ['exec chromium ' + slash,
@@ -40,6 +52,26 @@ assert.deepEqual(chromiumOptions('# --no-sandbox\n' + fixture(['--kiosk'])), ['-
 assert.deepEqual(sandboxWeakening(chromiumOptions(fixture(['--no-sandbox']))), ['--no-sandbox']);
 assert.deepEqual(sandboxWeakening(chromiumOptions(fixture(['--disable-setuid-sandbox']))),
   ['--disable-setuid-sandbox']);
+// Negative fixtures must exercise every bypass without claiming that a
+// baseline source inspection is runtime evidence of active kernel sandboxing.
+for (const arg of [
+  '--disable-seccomp-filter-sandbox', '--disable-namespace-sandbox',
+  '--disable-gpu-sandbox', '--no-zygote', '--single-process',
+  '--in-process-gpu', '--disable-site-isolation-trials',
+  '--disable-web-security', '--disable-features=IsolateOrigins',
+  '--disable-features=TranslateUI,SitePerProcess,MediaRouter',
+  '--disable-features=StrictOriginIsolation',
+  '--disable-features=origin-keyed-processes-by-default'
+]) {
+  assert.deepEqual(sandboxWeakening(chromiumOptions(fixture(['--kiosk', arg]))), [arg],
+    'unreviewed browser isolation weakening must be rejected: ' + arg);
+}
+assert.deepEqual(sandboxWeakening(chromiumOptions(fixture([
+  '--disable-features=TranslateUI,MediaRouter', '--disable-dev-shm-usage'
+]))), [], 'reviewed non-isolation feature flags must remain allowed');
+assert.deepEqual(sandboxWeakening(chromiumOptions(fixture([
+  '--disable-features=NotIsolateOrigins,FakeSitePerProcess'
+]))), [], 'partial feature-name matches must not create false alarms');
 assert.throws(() => chromiumOptions('exec chromium "$FLAGS" "$start_url"'),
   /literal, reviewable/);
 assert.throws(() => chromiumOptions(fixture([]) + '\n' + fixture([])),
