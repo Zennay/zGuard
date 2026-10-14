@@ -347,6 +347,57 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(recovery.element('startButton').disabled, false,
     'stale offline poll must not re-disable browser launch after recovery');
 
+  // The TV portal should not waste a limited browser-start attempt or send
+  // user-supplied credentials to the gateway when the URL is rejected by the
+  // same reviewed HTTPS origin policy the server enforces (issues #266/#293).
+  // Native browser form validation is not sufficient: scripted submits
+  // bypass it, and username/password may hide inside a valid HTTPS URL.
+  let manualStarts = 0;
+  const reviewedUrlPortal = await bootPortal({
+    sessionRequest: async () => {
+      manualStarts++;
+      return response(validSession);
+    }
+  });
+  const rejectedManualUrls = [
+    ['outside origin', 'https://outside.invalid/watch'],
+    ['lookalike suffix', 'https://approved.test.attacker.invalid/'],
+    ['deceptive userinfo host', 'https://approved.test@attacker.invalid/'],
+    ['plain HTTP', 'http://approved.test/'],
+    ['script scheme', 'javascript:alert(1)'],
+    ['embedded credentials', 'https://user:pass@approved.test/watch'],
+    ['encoded userinfo', 'https://us%65r@approved.test/watch'],
+    ['password-only', 'https://:pass@approved.test/watch'],
+    ['malformed URI', 'https://%zz@approved.test/']
+  ];
+  for (const [label, url] of rejectedManualUrls) {
+    reviewedUrlPortal.element('urlInput').value = url;
+    reviewedUrlPortal.submit();
+    await settle();
+    assert.equal(manualStarts, 0,
+      label + ': unreviewed TV URL must never reach POST /api/session');
+    assert.equal(reviewedUrlPortal.requests.filter(({ url: route }) =>
+      route === '/api/session').length, 0,
+    label + ': no gateway attempt may consume limiter quota');
+    assert.match(reviewedUrlPortal.element('formMessage').textContent,
+      /approved HTTPS website without credentials/,
+      label + ': invalid URL must produce actionable local feedback');
+    assert.equal(reviewedUrlPortal.element('startButton').disabled, false,
+      label + ': normal form admission must stay usable');
+  }
+  reviewedUrlPortal.element('urlInput').value = 'https://approved.test/watch?quality=hd';
+  reviewedUrlPortal.submit();
+  await settle();
+  assert.equal(manualStarts, 1,
+    'reviewed HTTPS origin with a custom path and query must remain usable');
+  const reviewedPost = reviewedUrlPortal.requests.filter(({ url }) =>
+    url === '/api/session');
+  assert.equal(reviewedPost.length, 1,
+    'normal approved manual URL must allocate one browser');
+  assert.equal(JSON.parse(reviewedPost[0].options.body).url,
+    'https://approved.test/watch?quality=hd',
+    'TV must preserve reviewed path and query exactly for gateway-side validation');
+
   const pending = deferred();
   const portal = await bootPortal({ sessionRequest: () => pending.promise });
   portal.submit();
