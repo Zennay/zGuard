@@ -89,7 +89,7 @@
       const href = linkValue(anchor, 'href');
       const target = linkValue(anchor, 'target');
       if (!href) return;
-      const newTab = target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
+      const newTab = target.toLowerCase() === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
       if (!newTab || !liveSettings.enabled || !shouldBlock(href, liveSettings.mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
