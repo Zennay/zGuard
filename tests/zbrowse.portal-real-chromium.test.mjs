@@ -1125,6 +1125,12 @@ try {
   // control must enter browser fullscreen, native Tab must reach End session,
   // and Space must release the minted viewer before leaving fullscreen.
   const beforeFullscreenEndStarts = starts;
+  // Enter fullscreen at an actual narrow viewport, not merely desktop size.
+  await cdp('Emulation.setDeviceMetricsOverride', {
+    width: 320, height: 568, deviceScaleFactor: 1, mobile: false
+  });
+  assert.equal(await evaluate('window.innerWidth'), 320,
+    'the actual fullscreen acceptance must run at a 320px viewport');
   assert.equal(await evaluate(`(() => {
     const button = document.getElementById('fullscreenButton');
     button.focus();
@@ -1146,6 +1152,22 @@ try {
       document.elementFromPoint(box.left + box.width / 2,
         box.top + box.height / 2) === end;
   })()`), true, 'real fullscreen must preserve a visually hit-testable End control');
+  const narrowControls = await evaluate('(() => {' +
+    'const toolbar = document.querySelector(".browser-toolbar");' +
+    'return {viewport: window.innerWidth, scroll: toolbar.scrollWidth, width: toolbar.clientWidth,' +
+    'buttons: ["fullscreenButton","endButton"].map(id => {' +
+    'const b = document.getElementById(id), r = b.getBoundingClientRect();' +
+    'return {id, left:r.left, right:r.right,' +
+    'hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===b};' +
+    '})};})()');
+  assert.equal(narrowControls.viewport, 320);
+  assert.ok(narrowControls.scroll <= narrowControls.width + 1,
+    'real 320px fullscreen must not clip the toolbar');
+  for (const control of narrowControls.buttons) {
+    assert.ok(control.left >= 0 && control.right <= 321 && control.hit,
+      'real 320px fullscreen must retain operable ' + control.id +
+        ': ' + JSON.stringify(control));
+  }
   for (const type of ['keyDown', 'keyUp']) {
     await cdp('Input.dispatchKeyEvent', {
       type, key: 'Tab', code: 'Tab',
@@ -1177,6 +1199,7 @@ try {
     'about:blank', 'native fullscreen End must remove the bearer iframe');
   assert.equal(starts, beforeFullscreenEndStarts,
     'fullscreen teardown must not allocate another browser session');
+  await cdp('Emulation.clearDeviceMetricsOverride');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
