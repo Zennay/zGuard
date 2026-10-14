@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import vm from 'node:vm';
 import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { createRequire } from 'node:module';
@@ -277,6 +278,83 @@ try {
   assert.equal(malformedChunked.newReservations, 0,
     'chunked invalid deflate cannot reserve browser capacity');
 
+
+  // Raw HTTP/1.1 framing acceptance, using the SAME source-bound Express
+  // session route. Ambiguous message lengths are not allowed to reach Docker
+  // admission or return a browser bearer. This proves Node's loopback parser
+  // behavior only; reverse-proxy request-smuggling posture is separate.
+  async function submitRawFraming(extraHeaders, wireBody) {
+    sessions.clear();
+    sessionsByIp.clear();
+    const beforeStarts = started;
+    const beforeReserves = reservations;
+    const message = [
+      'POST /api/session HTTP/1.1',
+      'Host: ' + ip + ':' + server.address().port,
+      'Connection: close',
+      'Content-Type: application/json',
+      ...extraHeaders,
+      '',
+      wireBody
+    ].join('\r\n');
+    const raw = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({
+        host: ip, port: server.address().port
+      });
+      const chunks = [];
+      socket.setTimeout(4000, () =>
+        socket.destroy(new Error('localhost malformed framing timed out')));
+      socket.on('connect', () => socket.write(message));
+      socket.on('data', chunk => chunks.push(chunk));
+      socket.once('end', () =>
+        resolve(Buffer.concat(chunks).toString('latin1')));
+      socket.once('error', reject);
+    });
+    return {
+      raw,
+      starts: started - beforeStarts,
+      reserves: reservations - beforeReserves
+    };
+  }
+  const shortJson = JSON.stringify({ url: sites[0].url });
+  const ambiguousFraming = [
+    ['duplicate equal lengths', [
+      'Content-Length: ' + Buffer.byteLength(shortJson),
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['conflicting lengths', [
+      'Content-Length: 0',
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['content length alongside chunked', [
+      'Content-Length: ' + Buffer.byteLength(shortJson),
+      'Transfer-Encoding: chunked'
+    ], '0\r\n\r\n'],
+    ['chunked alongside content length', [
+      'Transfer-Encoding: chunked',
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], '0\r\n\r\n'],
+    ['comma-joined lengths', [
+      'Content-Length: 0, ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['signed length', ['Content-Length: +' + Buffer.byteLength(shortJson)], shortJson],
+    ['hex length', ['Content-Length: 0x20'], shortJson],
+    ['negative length', ['Content-Length: -1'], shortJson]
+  ];
+  for (const [label, headers, payload] of ambiguousFraming) {
+    const outcome = await submitRawFraming(headers, payload);
+    assert.ok(outcome.raw.startsWith('HTTP/1.1 400 '),
+      label + ': Node HTTP parser must deny ambiguous message framing');
+    assert.equal(outcome.starts, 0,
+      label + ': denied framing must never launch a browser');
+    assert.equal(outcome.reserves, 0,
+      label + ': denied framing must never reserve a browser slot');
+    assert.ok(!outcome.raw.includes('J'.repeat(32)) &&
+      !outcome.raw.includes('viewerUrl') &&
+      !outcome.raw.includes('/s/J'),
+      label + ': denied framing may not return bearer metadata');
+  }
+
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
   assert.equal(badCharset.status, 415, 'unsupported JSON charset must be rejected');
@@ -295,7 +373,7 @@ try {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
-  console.log('Shipped gateway exact 8 KiB JSON boundary, three compressed ' +
+  console.log('Shipped gateway exact 8 KiB JSON boundary, eight raw HTTP framing denials, three compressed ' +
     'inflation-limit cases, chunked admission, invalid gzip/deflate/Brotli and unsupported encoding, ' + malformedBodies.length +
     ' malformed parser failures and recovery passed');
 } finally {
