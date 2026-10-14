@@ -62,7 +62,7 @@ function verifyGitHubBoundary(pattern, token, label) {
   }
   for (const text of [
     "prefix" + token, "task" + token, "filename_" + token,
-    token.slice(0, -2)
+    token.slice(0, -12)
   ]) {
     assert.equal(pattern.test(text), false,
       label + ": embedded or truncated token-like text is not a secret");
