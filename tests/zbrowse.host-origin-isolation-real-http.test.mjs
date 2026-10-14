@@ -151,6 +151,32 @@ try {
   const mismatch = await submit({ host: legitimateHost, origin: forgedOrigin });
   assert.ok(denied(mismatch), 'foreign Origin with the canonical Host must be denied');
 
+  // Null, opaque and deliberately malformed Origin / Fetch Metadata must
+  // never mint a new bearer or reuse a prior valid owner's bearer. Test real
+  // HTTP responses rather than only checking the origin matcher in isolation.
+  const untrustedBrowserMetadata = [
+    ['opaque Origin', 'null', 'same-origin'],
+    ['trailing slash Origin', publicTv + '/', 'same-origin'],
+    ['whitespace-padded Origin', ' ' + publicTv, 'same-origin'],
+    ['uppercase foreign Origin', 'HTTPS://ATTACKER.INVALID', 'same-origin'],
+    ['cross-site metadata', publicTv, 'cross-site'],
+    ['mixed-case cross-site metadata', publicTv, 'Cross-Site'],
+    ['unknown metadata token', publicTv, 'same-origin,cross-site'],
+    ['empty metadata token', publicTv, '']
+  ];
+  const badMetadataStarts = [];
+  const badMetadataReuses = [];
+  for (const [label, origin, fetchSite] of untrustedBrowserMetadata) {
+    const initial = await submit({ host: legitimateHost, origin, fetchSite });
+    const existing = await submit({ host: legitimateHost, origin,
+      fetchSite, reuse: true });
+    badMetadataStarts.push([label, initial]);
+    badMetadataReuses.push([label, existing]);
+  }
+  assert.ok(badMetadataStarts.every(([, outcome]) => denied(outcome)) &&
+    badMetadataReuses.every(([, outcome]) => denied(outcome)),
+    'untrusted browser Origin / Fetch Metadata cannot create or reuse bearer sessions');
+
   // Distinguish a foreign Origin from a foreign Host that makes the request
   // appear locally same-origin. Both raw HTTP header values are client input;
   // proxy Host allowlisting must be verified separately in deployment.
