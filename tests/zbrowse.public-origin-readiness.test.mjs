@@ -299,7 +299,7 @@ async function selfTest() {
           }
         },
         cancel() { cancellations++; }
-      }), { headers: { 'content-type': 'application/json', ...headers } });
+      }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/json', ...headers } });
       const fetcher = async url => url.endsWith(route) ? bad : response(sampleHealth);
       await assert.rejects(checkPublicReadiness(fetcher), expected,
         route + ' ' + kind + ' must fail closed');
