@@ -44,6 +44,7 @@ for (const [sample, expected] of [
 const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
+let sitesMode = 'ready';
 let healthCacheControl = 'no-store';
 let starts = 0;
 let viewerResponseMode = 'valid';
@@ -78,7 +79,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/sites') {
-      sendJson(res, 200, { sites, maxSessionMinutes: 15 });
+      if (sitesMode === 'offline') {
+        sendJson(res, 503, { error: 'Synthetic catalogue unavailable' });
+      } else if (sitesMode === 'userinfo') {
+        sendJson(res, 200, {
+          sites: [{ name: 'Injected fixture', url: 'https://user:secret@fawesome.tv/' }],
+          maxSessionMinutes: 15
+        });
+      } else if (sitesMode === 'empty') {
+        sendJson(res, 200, { sites: [], maxSessionMinutes: 15 });
+      } else {
+        sendJson(res, 200, { sites, maxSessionMinutes: 15 });
+      }
       return;
     }
     if (req.method === 'GET' && pathname === '/api/health') {
@@ -1214,6 +1226,50 @@ try {
   assert.equal(starts, beforeFullscreenEndStarts,
     'fullscreen teardown must not allocate another browser session');
   await cdp('Emulation.clearDeviceMetricsOverride');
+
+  // A live health API response cannot certify readiness if the curated
+  // /api/sites endpoint is offline or sends untrusted credentials. Reopen the
+  // ACTUAL bundled portal in Chrome for every case (not a VM DOM fake) and
+  // verify the page itself cannot issue a new browser POST.
+  const beforeCatalogueProbes = starts;
+  for (const mode of ['offline', 'userinfo', 'empty']) {
+    sitesMode = mode;
+    await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
+    await until(async () => await evaluate(
+      'document.readyState === "complete" && ' +
+      'document.getElementById("capacityText")?.textContent === "Site catalogue unavailable"'
+    ), 'real Chromium must show unavailable catalogue: ' + mode);
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+      mode + ': healthy gateway must not unlock browser start without a valid catalogue');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+      mode + ': unsafe site suggestions may not reach the real browser DOM');
+    assert.equal(await evaluate('document.getElementById("urlInput").value'), '',
+      mode + ': a browser should not prefill an unreviewed site');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes("Reload to retry")'),
+      true, mode + ': TV user must see a usable retry message');
+    await evaluate(`(() => {
+      const input = document.getElementById('urlInput');
+      input.value = 'https://fawesome.tv/';
+      return document.getElementById('browserForm').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+    })()`);
+    await sleep(100);
+    assert.equal(starts, beforeCatalogueProbes,
+      mode + ': scripted submit must not allocate a browser when sites are unavailable');
+  }
+  sitesMode = 'ready';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=restored' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chromium must regain valid catalogue readiness on reload');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified catalogue must restore normal Open-button admission');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'restored portal must again prefill its actual reviewed start URL');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'restored real browser must show every curated site');
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
