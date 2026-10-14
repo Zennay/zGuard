@@ -803,6 +803,82 @@ async function runBrowser(extensionPath, profilePath, url) {
       assert.equal(evaluated.exceptionDetails, undefined,
         'Real shadow-root click fixture must evaluate');
       observed.shadowDom = evaluated.result?.value;
+
+      // A synthetic dispatch cannot prove actual browser hit testing across
+      // the shadow boundary. Drive trusted native pointer down/up on the
+      // shadow anchor itself, leaving an in-document safety-capture fallback
+      // to suppress every external target=_blank navigation on a product miss.
+      async function nativeShadowProbe(kind, href) {
+        const setup = await cdp('Runtime.evaluate', {
+          expression: '(' + ((variant, url) => {
+            const host = document.createElement('div');
+            const shadow = host.attachShadow({ mode: 'open' });
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.target = '_blank';
+            anchor.textContent = 'Real pointer shadow anchor ' + variant;
+            anchor.style.cssText = 'display:block;width:160px;height:64px;background:#ddd';
+            shadow.append(anchor);
+            document.body.append(host);
+            const state = {
+              documentCaptured: false, retargeted: false,
+              reachedAnchor: false, trusted: false,
+              cancelledByFixture: false
+            };
+            window.__zguardNativeShadowState = state;
+            function safety(event) {
+              if (!event.composedPath().includes(anchor)) return;
+              state.documentCaptured = true;
+              state.retargeted = event.target === host &&
+                event.composedPath()[0] === anchor;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            function target(event) {
+              state.reachedAnchor = true;
+              state.trusted = event.isTrusted;
+              event.preventDefault();
+              state.cancelledByFixture = event.defaultPrevented;
+            }
+            document.addEventListener('click', safety, true);
+            anchor.addEventListener('click', target);
+            window.__zguardNativeShadowCleanup = () => {
+              document.removeEventListener('click', safety, true);
+              anchor.removeEventListener('click', target);
+              host.remove();
+            };
+            anchor.scrollIntoView({ block: 'center' });
+            const bounds = anchor.getBoundingClientRect();
+            return { x: bounds.left + bounds.width / 2,
+              y: bounds.top + bounds.height / 2 };
+          }).toString() + ')(' + JSON.stringify(kind) + ',' + JSON.stringify(href) + ')',
+          returnByValue: true
+        });
+        assert.equal(setup.exceptionDetails, undefined,
+          'Native shadow-root pointer fixture must initialize');
+        const position = setup.result?.value;
+        assert.ok(Number.isFinite(position?.x) && Number.isFinite(position?.y),
+          'Native shadow anchor must have visible hit-test coordinates');
+        for (const params of [
+          { type: 'mouseMoved', button: 'none', buttons: 0 },
+          { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1 },
+          { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1 }
+        ]) {
+          await cdp('Input.dispatchMouseEvent', { ...position, ...params });
+        }
+        const checked = await cdp('Runtime.evaluate', {
+          expression: '(() => { const observed = window.__zguardNativeShadowState; ' +
+            'window.__zguardNativeShadowCleanup(); return observed; })()',
+          returnByValue: true
+        });
+        assert.equal(checked.exceptionDetails, undefined,
+          'Native shadow pointer evidence must remain available');
+        return checked.result?.value;
+      }
+      observed.nativeShadow = {
+        hostile: await nativeShadowProbe('hostile', 'https://ads.al5sm.com/popup'),
+        ordinary: await nativeShadowProbe('ordinary', 'https://example.org/watch')
+      };
     }
     if (requireAuxclick) {
       // This uses Chrome DevTools' *native* middle-button press/release, not
@@ -1058,6 +1134,18 @@ try {
           variant + ': hostile shadow-root anchor escaped the popup click guard');
         assert.equal(observed.shadowDom?.hostile?.cancelled, true,
           variant + ': hostile shadow-root anchor must cancel navigation');
+        assert.equal(observed.nativeShadow?.ordinary?.documentCaptured, true,
+          variant + ': real pointer on ordinary shadow anchor must reach document capture');
+        assert.equal(observed.nativeShadow.ordinary.retargeted, true,
+          variant + ': real Chromium hit-testing must retarget composed click to shadow host');
+        assert.equal(observed.nativeShadow.ordinary.reachedAnchor, true,
+          variant + ': harmless shadow anchor click must reach the actual target');
+        assert.equal(observed.nativeShadow.ordinary.trusted, true,
+          variant + ': shadow pointer click must be a trusted native event');
+        assert.equal(observed.nativeShadow.ordinary.cancelledByFixture, true,
+          variant + ': fixture must cancel ordinary shadow external navigation');
+        assert.equal(observed.nativeShadow.hostile.reachedAnchor, false,
+          variant + ': hostile real pointer in Shadow DOM bypassed popup guard');
       }
       if (requireAuxclick) {
         for (const name of ['nativeMiddleHostile', 'nativeMiddleOrdinary']) {
