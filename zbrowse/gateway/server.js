@@ -198,6 +198,8 @@ app.get("/api/sites", (req, res) => {
 });
 
 app.post("/api/session", sessionLimiter, async (req, res) => {
+  // Responses can contain browser bearer tokens or their viewer URLs.
+  res.setHeader("Cache-Control", "no-store");
   const ip = requestIp(req, trustProxyHops);
   const existingToken = sessionsByIp.get(ip);
   if (existingToken && sessions.has(existingToken)) {
@@ -233,6 +235,7 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
 });
 
 app.post("/api/session/:token/heartbeat", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
   if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   session.lastSeenAt = Date.now();
@@ -240,6 +243,7 @@ app.post("/api/session/:token/heartbeat", (req, res) => {
 });
 
 app.delete("/api/session/:token", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
   if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
   await destroySession(req.params.token);
@@ -247,6 +251,8 @@ app.delete("/api/session/:token", async (req, res) => {
 });
 
 app.use("/s/", (req, res, next) => {
+  // Even invalid bearer paths and early proxy failures must never be cached.
+  res.setHeader("Cache-Control", "no-store");
   const session = findSession(req);
   if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) {
     return res.status(403).send("This browser session is no longer valid.");
@@ -257,6 +263,19 @@ app.use("/s/", (req, res, next) => {
 });
 
 const browserProxy = createProxyServer();
+// A browser upstream can override response headers; prohibit cacheable
+// 200/206/304/redirect/error viewer bodies before http-proxy forwards them.
+// The header also covers HEAD and Range responses. Static public assets
+// outside /s/ retain their normal cache policy.
+if (typeof browserProxy.on === "function") {
+  browserProxy.on("proxyRes", (proxyRes) => {
+    if (!proxyRes?.headers) return;
+    for (const name of Object.keys(proxyRes.headers)) {
+      if (name.toLowerCase() === "cache-control") delete proxyRes.headers[name];
+    }
+    proxyRes.headers["cache-control"] = "no-store";
+  });
+}
 
 function browserProxyOptions(req) {
   return {

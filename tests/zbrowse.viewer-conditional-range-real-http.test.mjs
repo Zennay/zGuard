@@ -30,6 +30,7 @@ const session = {
 const sessions = new Map([[token, session]]);
 const forwarded = [];
 let errors = 0;
+let proxyResponseHook;
 const sandbox = {
   app, sessions, requestIp, requestPath, trustProxyHops: 0,
   config: { idleMs: 300_000 },
@@ -37,6 +38,10 @@ const sandbox = {
   console: { error() { errors++; } },
   createProxyServer() {
     return {
+      on(event, handler) {
+        assert.equal(event, 'proxyRes', 'viewer no-store must bind the actual proxyRes event');
+        proxyResponseHook = handler;
+      },
       async web(req, res, options) {
         assert.equal(req.zbrowseSession, session,
           'only authenticated session should reach browser proxy');
@@ -58,6 +63,7 @@ const sandbox = {
         if (req.url.includes('/broken')) {
           throw new Error('synthetic failed upstream');
         }
+        if (proxyResponseHook) proxyResponseHook({ headers }, req, res);
         if (req.url.includes('/login-redirect')) {
           res.writeHead(302, {
             ...headers, Location: '/s/' + token + '/login'

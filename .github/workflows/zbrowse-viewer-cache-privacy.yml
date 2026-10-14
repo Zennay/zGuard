@@ -60,6 +60,10 @@ jobs:
             node tests/zbrowse.websocket-upgrade-auth-real-tcp.test.mjs --require-websocket-origin
           fi
           node tests/zbrowse.viewer-path-recovery-real-http.test.mjs
+          # Never regress HTTP bearer-viewer no-store / hostile-upstream guard.
+          node tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store
+          node tests/zbrowse.viewer-cache-real-http.test.mjs --require-no-store
+          node tests/zbrowse.viewer-path-recovery-real-http.test.mjs --require-no-store
           if [ "$REQUIRE_NO_STORE" = "true" ]; then
             node tests/zbrowse.viewer-cache-privacy.test.mjs --require-no-store
             node tests/zbrowse.viewer-cache-real-http.test.mjs --require-no-store
