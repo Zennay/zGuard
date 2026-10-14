@@ -93,7 +93,9 @@ const matrix = [
       ['zbrowse.viewer-path-recovery-real-http.test.mjs', '--require-no-store']
     ]],
     ['require_websocket_origin', 'REQUIRE_WEBSOCKET_ORIGIN',
-      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-origin']]]
+      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-origin']]],
+    ['require_websocket_host', 'REQUIRE_WEBSOCKET_HOST',
+      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-host']]]
   ]],
   ['zbrowse-public-origin-readiness.yml', [
     ['require_valid_readiness', 'REQUIRE_VALID_READINESS',
