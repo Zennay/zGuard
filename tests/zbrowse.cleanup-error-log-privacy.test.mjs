@@ -35,6 +35,7 @@ const logs = [];
 let tick = null;
 let intervalMs = 0;
 let timerUnref = 0;
+let nestedFailure = null;
 const sandbox = {
   sessions, config: { idleMs: 300_000 },
   Date,
@@ -72,6 +73,7 @@ const sandbox = {
         headers: { authorization: 'Bearer ' + token },
         env: { PASSWORD: password }
       };
+      nestedFailure = failure;
       throw failure;
     }
     sessions.delete(token);
@@ -109,6 +111,19 @@ assert.equal(sessions.has(healthyToken), true,
   'unexpired session must never be removed');
 assert.equal(logs.length, 3,
   'every failed container cleanup must emit a diagnostic');
+// Negative control: String(Error) silently discards nested causes and
+// enumerated request credentials, unlike native console.error formatting.
+// The fixture must prove the exact disclosure it is intended to catch.
+assert.ok(nestedFailure instanceof Error, 'fixture must actually throw nested Docker error');
+assert.doesNotMatch(String(nestedFailure), /Authorization: Basic|qa-secret|Bearer /,
+  'the top-level message alone must not contain the hidden request credentials');
+const unsafeNativeLog = format('Cleanup failed', nestedFailure);
+for (const canary of [nestedErrorToken, password, 'qa-secret', 'Authorization: Basic']) {
+  assert.ok(unsafeNativeLog.includes(canary),
+    'negative control: native Docker Error logging must expose nested synthetic secret');
+}
+assert.ok(unsafeNativeLog.includes('\\n') || unsafeNativeLog.includes('\n'),
+  'negative control: nested upstream error includes log-line or escaped newline');
 assert.ok(logs[0].includes('Cleanup failed'),
   'safe, actionable diagnostic label must be retained');
 
