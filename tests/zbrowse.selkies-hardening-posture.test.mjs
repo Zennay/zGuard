@@ -84,12 +84,12 @@ for (const key of legacy) {
 
 // Test the shipped parser against duplicate keys, non-literal keys and
 // interpolated hardening settings. These are negative source mutations.
-const marker = '      "SELKIES_ENABLE_CLIPBOARD=false"';
-assert.ok(source.includes(marker), 'baseline source mutation anchor must exist');
+const marker = '      \`TITLE=zBrowse\`,';
+assert.ok(source.includes(marker), 'stable browser container mutation anchor must exist');
 for (const mutation of [
-  marker + ',\n      "SELKIES_ENABLE_CLIPBOARD=true"',
-  '      "SELKIES_ENABLE_CLIPBOARD=false",\n      runtimeEnv',
-  '      `HARDEN_DESKTOP=\x24{otherInput}`'
+  marker + '\n      "HARDEN_DESKTOP=true",\n      "HARDEN_DESKTOP=false",',
+  marker + '\n      runtimeEnv,',
+  marker + '\n      \`HARDEN_DESKTOP=\x24{otherInput}\`,'
 ]) {
   const modified = source.replace(marker, mutation);
   assert.notEqual(modified, source, 'mutation must actually change source');
