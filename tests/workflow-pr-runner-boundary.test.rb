@@ -5,9 +5,19 @@ def pull_request_trigger?(source)
   source.match?(/^  pull_request:\s*(?:#.*)?$/)
 end
 
-def self_hosted_runner?(value)
+# Never run code from external pull requests on private/self-hosted groups,
+# including custom runner labels, nested {group, labels} mappings or dynamic
+# expressions. Only reviewed GitHub-hosted runner labels are admitted.
+HOSTED_PR_RUNNERS = %w[
+  ubuntu-latest ubuntu-24.04 ubuntu-22.04 ubuntu-24.04-arm
+  windows-latest windows-2025 windows-2022
+  macos-latest macos-15 macos-14
+].freeze
+
+def hosted_pr_runner?(value)
   labels = value.is_a?(Array) ? value : [value]
-  labels.any? { |label| label.to_s.strip.gsub(/\A["\']|["\']\z/, "") == "self-hosted" }
+  labels.length == 1 && labels.first.is_a?(String) &&
+    HOSTED_PR_RUNNERS.include?(labels.first.strip)
 end
 
 def pr_self_hosted_findings(source, parsed, relative)
@@ -17,8 +27,8 @@ def pr_self_hosted_findings(source, parsed, relative)
   parsed["jobs"].filter_map do |job_name, job|
     next unless job.is_a?(Hash)
     runner = job["runs-on"]
-    next unless self_hosted_runner?(runner)
-    "#{relative}: pull_request job #{job_name.inspect} must not run on a self-hosted runner (#{runner.inspect})"
+    next if hosted_pr_runner?(runner)
+    "#{relative}: pull_request job #{job_name.inspect} must use an approved GitHub-hosted runner, not self-hosted, dynamic or runner-group selection (#{runner.inspect})"
   end
 end
 
@@ -39,6 +49,29 @@ self_hosted_source = <<~YAML
       runs-on: [self-hosted, zcloud, vps]
 YAML
 raise "self-hosted PR runner self-test failed" unless pr_self_hosted_findings(self_hosted_source, YAML.safe_load(self_hosted_source), "fixture.yml").length == 1
+
+# Negative matrix: mapping-form runner groups, custom labels and dynamic
+# expressions must not bypass the PR trust boundary.
+[
+  "self-hosted",
+  "zcloud",
+  "[self-hosted, zcloud, vps]",
+  "${{ matrix.runner }}",
+  "{group: private-runners, labels: self-hosted}",
+  "{group: private-runners, labels: [self-hosted, zcloud]}",
+  "{group: private-runners, labels: ubuntu-latest}",
+  "[ubuntu-latest, zcloud]"
+].each do |runner|
+  source = "on:\n  pull_request:\njobs:\n  test:\n    runs-on: #{runner}\n"
+  parsed = YAML.safe_load(source)
+  raise "PR runner boundary bypass for #{runner.inspect}" if pr_self_hosted_findings(source, parsed, "fixture.yml").empty?
+end
+["ubuntu-latest", "ubuntu-24.04", "[ubuntu-latest]"].each do |runner|
+  source = "on:\n  pull_request:\njobs:\n  test:\n    runs-on: #{runner}\n"
+  raise "hosted runner false positive #{runner}" unless pr_self_hosted_findings(
+    source, YAML.safe_load(source), "fixture.yml"
+  ).empty?
+end
 
 manual_source = <<~YAML
   on:
