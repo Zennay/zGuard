@@ -102,12 +102,52 @@ try {
   assert.equal(truncated.newStarts, 0, 'malformed JSON must not launch browser');
   assert.equal(truncated.newReservations, 0);
 
+  // Both sides of the *byte* limit matter: an 8 KiB valid JSON payload
+  // must be admitted, while a one-byte-larger payload must be rejected.
+  const emptyPadded = JSON.stringify({ url: sites[0].url, padding: '' });
+  const exactBody = JSON.stringify({
+    url: sites[0].url,
+    padding: 'x'.repeat(8192 - Buffer.byteLength(emptyPadded, 'utf8'))
+  });
+  assert.equal(Buffer.byteLength(exactBody, 'utf8'), 8192);
+  const exactLimit = await submit(exactBody);
+  assert.equal(exactLimit.status, 201, '8 KiB exact boundary must remain admitted');
+  assert.equal(exactLimit.newStarts, 1,
+    'valid exact-limit JSON body must start one approved browser');
+
+  const oneByteOver = await submit(exactBody.replace(/x"\}$/, 'xx"}'));
+  assert.equal(oneByteOver.status, 413,
+    'one byte beyond the shipped 8 KiB parser limit must fail');
+  assert.equal(oneByteOver.newStarts, 0);
+  assert.equal(oneByteOver.newReservations, 0);
+
   const tooLarge = await submit(JSON.stringify({
     url: sites[0].url, padding: 'x'.repeat(16 * 1024)
   }));
   assert.equal(tooLarge.status, 413, 'actual 8kb parser must reject oversized JSON');
   assert.equal(tooLarge.newStarts, 0, 'oversized request must not start a container');
   assert.equal(tooLarge.newReservations, 0, 'oversized request must not reserve capacity');
+
+  // Syntax errors with different parser failure paths must all be rejected
+  // *before* quota reservations and before a synthetic Docker startup.
+  const malformedBodies = [
+    '{"url":"https://example.org/",}',
+    '{"url":NaN}',
+    '{"url":"unterminated}',
+    '{"url":"\\uZZZZ"}',
+    '{"url":"https://example.org/"}{"url":"https://example.org/"}',
+    '[{"url":"https://example.org/"}'
+  ];
+  const malformedResults = [];
+  for (const body of malformedBodies) {
+    const rejected = await submit(body);
+    assert.equal(rejected.status, 400,
+      'malformed JSON syntax must produce HTTP 400 at parser boundary');
+    assert.equal(rejected.newStarts, 0, 'malformed JSON must not start a browser');
+    assert.equal(rejected.newReservations, 0,
+      'malformed JSON must not consume admission capacity');
+    malformedResults.push(rejected);
+  }
 
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
@@ -120,11 +160,13 @@ try {
   assert.equal(recovered.newStarts, 1);
   assert.equal(reservations, releases, 'every admitted start must release admission reservation');
 
-  for (const rejected of [truncated, tooLarge, badCharset]) {
+  for (const rejected of [truncated, oneByteOver, tooLarge, badCharset,
+    ...malformedResults]) {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
-  console.log('Shipped gateway JSON parsing/size/charset HTTP admission boundary passed');
+  console.log('Shipped gateway exact 8 KiB JSON admission, one-byte-overflow, ' +
+    malformedBodies.length + ' malformed parser failures and recovery passed');
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));
