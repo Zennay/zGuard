@@ -167,6 +167,14 @@ function testWorkflow(name, gates, yaml) {
     name + ': remediation evidence must run on ephemeral hosted runner');
   assert.doesNotMatch(yaml, /runs-on:.*self-hosted/,
     name + ': never execute untrusted PR code on persistent runner');
+  // A workflow may contain every expected strict command yet still be
+  // skipped or reported green by Actions if someone adds a job/step if:false
+  // or turns failures into tolerated outcomes. These gates are release
+  // evidence; a skipped or non-blocking job is not valid acceptance.
+  assert.doesNotMatch(yaml, /^\s*continue-on-error:\s*(?:true|\$\{\{)/mi,
+    name + ': strict evidence cannot ignore job or step failures');
+  assert.doesNotMatch(yaml, /^\s*if:\s*(?:false|\$\{\{\s*false\s*\}\})\s*$/mi,
+    name + ': strict evidence cannot be a disabled job or step');
   assert.ok(yaml.includes('persist-credentials: false'),
     name + ': checkout must not persist token');
   assert.ok(yaml.includes('ref: ' + '$' +
@@ -280,6 +288,21 @@ const tamper = (original, replacement, reason) => {
   assert.throws(() => testWorkflow(sample, sampleGates, replacement),
     undefined, reason + ': regression must fail closed');
 };
+// Assertions above are not just policy documentation: deliberately inject
+// skipped/non-blocking GitHub Actions jobs and verify all are rejected.
+for (const [label, injected] of [
+  ['job cannot ignore failure', '    continue-on-error: true'],
+  ['step cannot ignore failure', '      continue-on-error: true'],
+  ['job cannot be disabled', '    if: false'],
+  ['expression cannot disable gate', '    if: ${{ false }}']
+]) {
+  const changed = fixture.replace('    runs-on: ubuntu-24.04',
+    '    runs-on: ubuntu-24.04\n' + injected);
+  assert.notEqual(changed, fixture, label + ': test mutation must change workflow');
+  assert.throws(() => testWorkflow(sample, sampleGates, changed),
+    undefined, label + ': strict CI cannot report false-green skipped work');
+}
+
 tamper(fixture, fixture.replace('default: false', 'default: true'),
   'disabled-by-default security gate');
 tamper(fixture, fixture.replace('REQUIRE_ORIGIN_ISOLATION: ' +
