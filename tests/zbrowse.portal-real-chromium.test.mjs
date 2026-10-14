@@ -50,6 +50,7 @@ let stalledHealthGets = 0;
 let healthCacheControl = 'no-store';
 let starts = 0;
 let viewerResponseMode = 'valid';
+let nextStartFailure = null;
 let deletions = 0;
 let failNextDelete = false;
 let droppedDeleteAttemptsRemaining = 0;
@@ -145,6 +146,12 @@ const server = http.createServer(async (req, res) => {
         'real portal must POST the selected approved URL');
       starts++;
       startRequestSeen = true;
+      if (nextStartFailure) {
+        const { status, error } = nextStartFailure;
+        nextStartFailure = null;
+        sendJson(res, status, { error });
+        return;
+      }
       await new Promise(resolve => { releaseStart = resolve; });
       const viewerUrl = viewerResponseMode === 'external' ?
         'https://untrusted.invalid/viewer' :
@@ -1552,6 +1559,41 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'confirmed cleanup after timed-out heartbeat must restore normal start');
+
+  // Real Chromium must never render raw error JSON from a failed browser
+  // POST. A reverse proxy might echo a bearer route or credentials into its
+  // failure body; only intentionally reviewed status-based guidance is safe.
+  const forgedBearer = '/s/' + syntheticToken + '/?secret=fixture';
+  for (const [status, expected] of [
+    [502, 'Could not start browser. Try again.'],
+    [503, 'Browser engine unavailable. Try again shortly.'],
+    [409, 'Browser currently in use. Try again shortly.']
+  ]) {
+    const beforeUnsafeStart = starts;
+    const beforeUnsafeViewer = viewerRequests;
+    nextStartFailure = {
+      status,
+      error: 'Proxy diagnostic for ' + forgedBearer +
+        ' https://user:password@upstream.invalid/login'
+    };
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === beforeUnsafeStart + 1,
+      status + ': real POST must reach the local upstream-error fixture');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === ' + JSON.stringify(expected)
+    ), status + ': native TV must render only the reviewed safe error');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes("password")'),
+      false, status + ': proxy URL credentials must not appear in UI');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes(' +
+      JSON.stringify(forgedBearer) + ')'), false,
+      status + ': proxy-issued bearer-like path must not appear in UI');
+    assert.equal(viewerRequests, beforeUnsafeViewer,
+      status + ': rejected browser must not load a viewer');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      status + ': failed POST may not show a viewer');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+      status + ': failed POST should permit deliberate later retry');
+  }
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +
