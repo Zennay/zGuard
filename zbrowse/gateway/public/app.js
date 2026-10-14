@@ -4,7 +4,8 @@ const state = {
   sites: [],
   session: null,
   heartbeat: null,
-  countdown: null
+  countdown: null,
+  viewerLoadTimeout: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -473,12 +474,31 @@ function showBrowser() {
   $("browserLoading").hidden = false;
 
   const frame = $("browserFrame");
-  frame.src = session.viewerUrl;
+  // The initial iframe load may never finish if the upstream viewer stalls.
+  // Register the event listener *before* navigation, and close the browser
+  // through the normal fail-closed teardown path when 30s elapse.
   frame.addEventListener("load", () => {
-    if (state.session?.token === session.token) {
+    if (state.session === session) {
+      window.clearTimeout(state.viewerLoadTimeout);
+      state.viewerLoadTimeout = null;
       $("browserLoading").hidden = true;
     }
   }, { once: true });
+  const loadTimeoutId = window.setTimeout(() => {
+    // clearTimeout() cannot retract a callback already queued for dispatch.
+    // Compare the timer identity as well as the exact session object so a
+    // late callback cannot close an already loaded or newer viewer.
+    if (state.viewerLoadTimeout !== loadTimeoutId || state.session !== session) return;
+    endSession().then(() => {
+      // A release failure has its own stronger warning and retains admission
+      // lock. Never overwrite that or a subsequent successful viewer.
+      if (!state.session && !pendingReleaseToken && !sessionStarting) {
+        setMessage("Browser stream did not load. Try again.");
+      }
+    });
+  }, 30000);
+  state.viewerLoadTimeout = loadTimeoutId;
+  frame.src = session.viewerUrl;
 
   state.heartbeat = window.setInterval(() => {
     request("/api/session/" + session.token + "/heartbeat", {
@@ -569,8 +589,10 @@ async function endSession() {
   }
   window.clearInterval(state.heartbeat);
   window.clearInterval(state.countdown);
+  window.clearTimeout(state.viewerLoadTimeout);
   state.heartbeat = null;
   state.countdown = null;
+  state.viewerLoadTimeout = null;
 
   $("browserFrame").src = "about:blank";
   browserView.hidden = true;

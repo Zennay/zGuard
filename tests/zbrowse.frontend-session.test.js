@@ -64,6 +64,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   const elements = new Map();
   const requests = [];
   const intervals = new Map();
+  const timeouts = new Map();
   const windowEvents = new Map();
   const fullscreenEvents = [];
   const documentEvents = new Map();
@@ -78,6 +79,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     }
   };
   let nextInterval = 1;
+  let nextTimeout = 10000;
 
   function element(id) {
     if (!elements.has(id)) {
@@ -129,7 +131,14 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       intervals.set(id, { callback, milliseconds });
       return id;
     },
-    clearInterval(id) { intervals.delete(id); }
+    clearInterval(id) { intervals.delete(id); },
+    setTimeout(callback, milliseconds) {
+      assert.equal(milliseconds, 30000, 'viewer loading watchdog must be bounded to 30s');
+      const id = nextTimeout++;
+      timeouts.set(id, { callback, milliseconds });
+      return id;
+    },
+    clearTimeout(id) { timeouts.delete(id); }
   };
   const fetch = async (url, options = {}) => {
     requests.push({ url, options });
@@ -169,6 +178,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     element,
     requests,
     intervals,
+    timeouts,
     document,
     fullscreenEvents,
     timeoutControls,
@@ -1091,6 +1101,94 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   await settle();
   assert.equal(lateAllocations, 2,
     'fresh start remains possible after failed late cleanup is reconciled');
+
+  // Gateway start may return a valid bearer while the iframe stream never
+  // dispatches load. Test the *shipped* viewer timer without waiting 30 seconds.
+  const neverLoaded = await bootPortal({
+    sessionRequest: async () => response(validSession)
+  });
+  neverLoaded.element('browserView').hidden = true;
+  neverLoaded.submit();
+  await settle();
+  assert.equal(neverLoaded.timeouts.size, 1,
+    'one pending browser must schedule exactly one viewer load watchdog');
+  const watchdog = [...neverLoaded.timeouts.values()][0];
+  assert.equal(watchdog.milliseconds, 30000,
+    'viewer wait must be time-limited independently of heartbeat');
+  assert.equal(neverLoaded.element('browserLoading').hidden, false,
+    'test must begin with visible loading state');
+  watchdog.callback();
+  await settle();
+  assert.equal(neverLoaded.element('browserView').hidden, true,
+    'viewer loading timeout must restore TV home');
+  assert.equal(neverLoaded.element('browserFrame').src, 'about:blank',
+    'stalled bearer iframe must be detached promptly');
+  assert.equal(neverLoaded.timeouts.size, 0,
+    'endSession must cancel the outstanding load watchdog');
+  assert.equal(neverLoaded.element('startButton').disabled, false,
+    'successful 204 teardown must allow a future new browser');
+  assert.equal(neverLoaded.element('urlInput').focused, true,
+    'timeout must restore keyboard focus to the home URL input');
+  assert.match(neverLoaded.element('formMessage').textContent,
+    /Browser stream did not load/, 'timeout must show actionable stream error');
+  assert.equal(neverLoaded.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+  'viewer timeout must release exactly one gateway session');
+  assert.deepEqual([...neverLoaded.intervals.values()].map(t => t.milliseconds),
+    [20000], 'timeout must clear heartbeat and countdown, not readiness polling');
+
+  // A normal iframe load must cancel the watchdog without ending a healthy
+  // session. Invoking the captured old timer after clearing it must be inert.
+  const loadedViewer = await bootPortal({
+    sessionRequest: async () => response(validSession)
+  });
+  loadedViewer.submit();
+  await settle();
+  const previousWatchdog = [...loadedViewer.timeouts.values()][0];
+  assert.ok(previousWatchdog, 'normal viewer must begin with a timeout guard');
+  loadedViewer.element('browserFrame').listeners.load();
+  await settle();
+  assert.equal(loadedViewer.timeouts.size, 0,
+    'confirmed iframe load must disarm the watchdog');
+  assert.equal(loadedViewer.element('browserLoading').hidden, true,
+    'real iframe load must still clear the loading indicator');
+  previousWatchdog.callback();
+  await settle();
+  assert.equal(loadedViewer.element('browserView').hidden, false,
+    'stale callback cannot tear down loaded viewer');
+  assert.equal(loadedViewer.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE').length, 0,
+  'stale timeout may not dispatch a DELETE');
+
+  // Failed gateway cleanup must keep admission blocked; the generic stream
+  // warning must never overwrite the stronger uncertain-teardown warning.
+  let timeoutDeletes = 0;
+  const failedViewer = await bootPortal({
+    sessionRequest: async () => response(validSession),
+    deleteRequest() {
+      timeoutDeletes++;
+      return timeoutDeletes === 1
+        ? response({ error: 'Synthetic 503' }, 503)
+        : response(null, 204);
+    }
+  });
+  failedViewer.submit();
+  await settle();
+  [...failedViewer.timeouts.values()][0].callback();
+  await settle();
+  assert.equal(failedViewer.element('startButton').disabled, true,
+    'unconfirmed teardown must block another session start');
+  assert.equal(failedViewer.element('capacityText').textContent,
+    'Finishing previous browser session');
+  assert.match(failedViewer.element('formMessage').textContent, /Retrying automatically/,
+    'cleanup failure must not be obscured by generic stream error');
+  const viewerReleasePoll = [...failedViewer.intervals.values()].find(x => x.milliseconds === 20000);
+  assert.ok(viewerReleasePoll, 'periodic readiness must remain available for cleanup retries');
+  viewerReleasePoll.callback();
+  await settle();
+  assert.equal(timeoutDeletes, 2, 'readiness retry must reconcile failed cleanup');
+  assert.equal(failedViewer.element('startButton').disabled, false,
+    'confirmed eventual browser release permits another start');
 
   // The explicit End control must free the viewer immediately, keep the
   // ordinary capacity poller alive, and never double-release on unload.
