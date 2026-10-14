@@ -10,7 +10,15 @@ const checkoutSha = 'df4cb1c069e1874edd31b4311f1884172cec0e10';
 const requiredChecks = JSON.parse(
   fs.readFileSync(path.join(root, '.github', 'required-checks.json'), 'utf8')
 ).checks.map(({ workflow }) => workflow);
-const prHeadContractWorkflows = new Set(requiredChecks);
+// Extension manifest checks are security-sensitive even when not one of the
+// six repository-admin required check contexts. Bind their results to the
+// proposed commit rather than GitHub's synthetic PR merge revision.
+const additionalSourceBoundWorkflows = [
+  '.github/workflows/manifest-integrity-validation.yml'
+];
+const prHeadContractWorkflows = new Set([
+  ...requiredChecks, ...additionalSourceBoundWorkflows
+]);
 
 
 const workflows = fs.readdirSync(workflowDir)
@@ -91,11 +99,31 @@ for (const { relative: workflow, source } of workflows) {
   );
 }
 
-assert.deepEqual(
-  [...prHeadContractWorkflows].sort(),
-  [...requiredChecks].sort(),
-  'all six required checks must prove the exact PR-head checkout contract'
-);
+assert.ok(requiredChecks.every(file => prHeadContractWorkflows.has(file)),
+  'all six required check workflows must remain exact-PR-head bound');
+assert.ok(additionalSourceBoundWorkflows.every(file => prHeadContractWorkflows.has(file)),
+  'manifest source integrity must remain exact-PR-head bound');
+assert.equal(prHeadContractWorkflows.size,
+  requiredChecks.length + additionalSourceBoundWorkflows.length,
+  'the source-bound contract must not silently lose a protected workflow');
+
+// Canary: the previous checkout-without-ref flow silently validated GitHub's
+// synthetic merge ref and still produced a successful status on a PR.
+const manifestWorkflow = workflows.find(({ relative }) =>
+  relative === additionalSourceBoundWorkflows[0]);
+assert.ok(manifestWorkflow, 'the protected manifest workflow must be discovered');
+for (const [name, changed] of [
+  ['implicit merge checkout', manifestWorkflow.source.replace(
+    /ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}/, 'ref: main')],
+  ['missing checkout proof', manifestWorkflow.source.replace(
+    'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', 'echo unverified')]
+]) {
+  assert.notEqual(changed, manifestWorkflow.source, name + ': mutation must change source');
+  const ref = /ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}/;
+  const verify = /name:\\s*Verify checkout commit[\\s\\S]*?EXPECTED_SHA:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head\\.sha\\s*\\|\\|\\s*github\\.sha\\s*\\}\\}[\\s\\S]*?run:\\s*test "\\$\\(git rev-parse HEAD\\)" = "\\$EXPECTED_SHA"/;
+  assert.ok(!ref.test(changed) || !verify.test(changed),
+    name + ': an unsafe checkout mutation must not satisfy PR-head identity proof');
+}
 
 console.log(
   `Dedicated workflow integrity contract passed for ${workflows.length} checkout workflows; ` +
