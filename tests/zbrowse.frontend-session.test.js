@@ -134,6 +134,8 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   });
   assert.equal(available.element('capacityText').textContent, 'Ready to browse');
   assert.equal(available.element('capacityText').parentElement.className, 'status available');
+  assert.equal(available.element('startButton').disabled, false,
+    'healthy gateway should allow a browser start');
 
   const starting = await bootPortal({
     health: { status: 'ok', activeSessions: 0, startingSessions: 1, capacity: 1 }
@@ -144,6 +146,8 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
     'starting gateway reservations must count against capacity'
   );
   assert.equal(starting.element('capacityText').parentElement.className, 'status busy');
+  assert.equal(starting.element('startButton').disabled, false,
+    'busy gateway must still allow reusing an existing owner session');
 
   const active = await bootPortal({
     health: { status: 'ok', activeSessions: 1, startingSessions: 0, capacity: 1 }
@@ -158,6 +162,11 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   assert.equal(draining.element('capacityText').textContent,
     'Browser temporarily unavailable');
   assert.equal(draining.element('capacityText').parentElement.className, 'status');
+  assert.equal(draining.element('startButton').disabled, true,
+    'draining gateway must disable browser creation until healthy');
+  draining.submit();
+  assert.equal(draining.requests.filter(({ url }) => url === '/api/session').length, 0,
+    'scripted form submit cannot bypass draining admission guard');
 
   const unsafeHealth = [
     ['unknown status', { status: 'degraded', activeSessions: 0, startingSessions: 0, capacity: 1 }],
@@ -176,6 +185,11 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
       label + ': invalid health must fail closed without a ready badge');
     assert.equal(portal.element('capacityText').parentElement.className, 'status',
       label + ': invalid health must remove old available/busy styling');
+    assert.equal(portal.element('startButton').disabled, true,
+      label + ': invalid health must disable admission');
+    portal.submit();
+    assert.equal(portal.requests.filter(({ url }) => url === '/api/session').length, 0,
+      label + ': scripted submit must never start browser on malformed health');
   }
 
   const validToken = 'A'.repeat(32);
@@ -230,6 +244,8 @@ async function bootPortal({ health, sessionRequest, healthRequest } = {}) {
   await settle();
   assert.equal(recovery.element('capacityText').textContent, 'Ready to browse',
     'late stale health error must not mask newer healthy state');
+  assert.equal(recovery.element('startButton').disabled, false,
+    'stale offline poll must not re-disable browser launch after recovery');
 
   const pending = deferred();
   const portal = await bootPortal({ sessionRequest: () => pending.promise });
