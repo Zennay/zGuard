@@ -44,6 +44,7 @@ for (const [sample, expected] of [
 const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
+let healthCacheControl = 'no-store';
 let starts = 0;
 let viewerResponseMode = 'valid';
 let deletions = 0;
@@ -59,10 +60,10 @@ let deleteAlreadyGone = false;
 let releaseStart = null;
 let startRequestSeen = false;
 
-function sendJson(res, code, data) {
+function sendJson(res, code, data, cacheControl = 'no-store') {
   res.writeHead(code, {
     'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store'
+    'cache-control': cacheControl
   }).end(JSON.stringify(data));
 }
 const server = http.createServer(async (req, res) => {
@@ -102,7 +103,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         status: 'ok', activeSessions: health === 'busy' ? 1 : 0,
         startingSessions: 0, capacity: 1
-      });
+      }, healthCacheControl);
       return;
     }
     if (req.method === 'POST' && pathname === '/api/session') {
@@ -297,10 +298,23 @@ try {
     };
   })(); true`);
 
+  // Simulate an erroneously cacheable 200/OK gateway-health response.
+  // Even if origin/CDN policy drifts, the TV client must fetch fresh capacity
+  // rather than serving a cached busy/ready answer from browser HTTP cache.
+  healthCacheControl = 'public, max-age=3600';
   health = 'busy';
   await evaluate('refreshHealth()');
   assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
     'Browser currently in use', 'browser-full status should not look ready');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'cacheable previous busy health must not override real ready state');
+  healthCacheControl = 'no-store';
+  health = 'busy';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser currently in use', 'fresh busy gateway health must not be replaced by cached ready');
   assert.equal(await evaluate('document.getElementById("startButton").disabled'),
     false, 'busy gateway must permit owner session reuse attempt');
   // A real TV keyboard can still submit a form by pressing Enter in the

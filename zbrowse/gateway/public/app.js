@@ -62,7 +62,10 @@ async function refreshHealth(retryPendingRelease = true) {
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
-    const health = await request("/api/health");
+    // Readiness controls session admission, so do not reuse a previous 200
+    // from the browser HTTP cache even if a proxy misconfigures max-age.
+    // Server/CDN no-store remains an independent requirement (#293).
+    const health = await request("/api/health", { cache: "no-store" });
     // A slower earlier poll cannot overwrite a newer capacity observation.
     if (sequence !== healthRequestSequence) return;
     // A gateway in shutdown/drain mode must never be shown as available,
