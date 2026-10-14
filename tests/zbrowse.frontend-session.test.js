@@ -18,13 +18,35 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function response(body, status = 200, contentType = 'application/json; charset=utf-8') {
-  return {
+function response(body, status = 200, contentType = 'application/json; charset=utf-8',
+  options = {}) {
+  // Model browser Response.body for actual streamed-JSON parsing, including
+  // adversarial chunk boundaries and a declared Content-Length header.
+  const chunks = options.chunks || [new TextEncoder().encode(JSON.stringify(body))];
+  let index = 0;
+  const mock = {
     status,
     ok: status >= 200 && status < 300,
-    headers: { get: (name) => name.toLowerCase() === 'content-type' ? contentType : null },
+    reads: 0,
+    cancelled: false,
+    headers: { get: (name) => {
+      if (name.toLowerCase() === 'content-type') return contentType;
+      if (name.toLowerCase() === 'content-length') return options.contentLength ?? null;
+      return null;
+    } },
+    body: options.missingBody ? null : { getReader() {
+      return {
+        async read() {
+          mock.reads++;
+          return index < chunks.length ? { done: false, value: chunks[index++] } : { done: true };
+        },
+        async cancel() { mock.cancelled = true; },
+        releaseLock() {}
+      };
+    } },
     json: async () => body
   };
+  return mock;
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -134,7 +156,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     throw new Error('unexpected portal request: ' + url);
   };
 
-  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal, console }, {
+  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal,
+    TextDecoder, Uint8Array, console }, {
     filename: 'zbrowse/gateway/public/app.js',
     timeout: 1000
   });
@@ -188,6 +211,81 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   assert.equal(available.element('capacityText').parentElement.className, 'status available');
   assert.equal(available.element('startButton').disabled, false,
     'healthy gateway should allow a browser start');
+
+  // The public read-only gateway probe already enforces 4KiB health / 64KiB
+  // sites. The actual TV must enforce the same limit before JSON.parse, even
+  // for an apparently healthy HTTP 200 with plausible fields and no length.
+  const readyHealth = { status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1 };
+  for (const [label, malicious] of [
+    ['declared oversized', response(readyHealth, 200, 'application/json',
+      { contentLength: '4097' })],
+    ['invalid Content-Length', response(readyHealth, 200, 'application/json',
+      { contentLength: '4.0' })],
+    ['streamed oversized without header', response({ ...readyHealth, padding: 'x'.repeat(4800) })],
+    ['invalid UTF-8 JSON stream', response(readyHealth, 200, 'application/json',
+      { chunks: [Uint8Array.from([0xc3, 0x28])] })],
+    ['truncated UTF-8 sequence', response(readyHealth, 200, 'application/json',
+      { chunks: [Uint8Array.from([0xe2]), Uint8Array.from([0x82])] })],
+    ['missing response stream', response(readyHealth, 200, 'application/json',
+      { missingBody: true })]
+  ]) {
+    const portal = await bootPortal({ healthRequest: async () => malicious });
+    assert.equal(portal.element('capacityText').textContent, 'Browser engine offline',
+      label + ': malformed health body must not advertise browser availability');
+    assert.equal(portal.element('startButton').disabled, true,
+      label + ': malformed health stream must fail closed');
+    portal.submit();
+    assert.equal(portal.requests.filter(({ url }) => url === '/api/session').length, 0,
+      label + ': cannot issue browser POST on malformed health stream');
+  }
+  const oversizedStream = response({ ...readyHealth, padding: 'x'.repeat(4800) });
+  await bootPortal({ healthRequest: async () => oversizedStream });
+  assert.equal(oversizedStream.cancelled, true,
+    'oversized streaming health response must cancel the upstream body');
+  const oversizedLength = response(readyHealth, 200, 'application/json',
+    { contentLength: '4097' });
+  await bootPortal({ healthRequest: async () => oversizedLength });
+  assert.equal(oversizedLength.reads, 0,
+    'oversized Content-Length must reject before consuming a single byte');
+
+  const validSites = { sites: [{ name: 'Approved', url: 'https://approved.test/' }] };
+  for (const [label, malicious] of [
+    ['declared oversized', response(validSites, 200, 'application/json',
+      { contentLength: '65537' })],
+    ['streamed oversized without header', response({ ...validSites, padding: 'x'.repeat(68000) })],
+    ['invalid UTF-8', response(validSites, 200, 'application/json',
+      { chunks: [Uint8Array.from([0xff])] })],
+    ['missing response stream', response(validSites, 200, 'application/json',
+      { missingBody: true })]
+  ]) {
+    const portal = await bootPortal({ siteRequest: async () => malicious });
+    assert.equal(portal.element('capacityText').textContent, 'Site catalogue unavailable',
+      label + ': malformed catalogue stream must never show ready');
+    assert.equal(portal.element('startButton').disabled, true,
+      label + ': malformed catalogue stream must lock Open');
+    assert.equal(portal.element('siteSuggestions').children.length, 0,
+      label + ': reject all suggestions before DOM insertion');
+    portal.submit();
+    assert.equal(portal.requests.filter(({ url }) => url === '/api/session').length, 0,
+      label + ': do not allocate a browser on oversized/unreadable catalogue');
+  }
+  const oversizedCatalogue = response({ ...validSites, padding: 'x'.repeat(68000) });
+  await bootPortal({ siteRequest: async () => oversizedCatalogue });
+  assert.equal(oversizedCatalogue.cancelled, true,
+    'oversized streamed catalogue must cancel the upstream body');
+  // A valid UTF-8 multibyte character split across read() chunks is safe.
+  const unicodeCatalogue = { sites: [{ name: 'Élite', url: 'https://approved.test/' }] };
+  const encoded = new TextEncoder().encode(JSON.stringify(unicodeCatalogue));
+  const accent = encoded.indexOf(0xc3);
+  assert.ok(accent > 0, 'positive fixture must split a UTF-8 multibyte character');
+  const split = response(unicodeCatalogue, 200, 'application/json', { chunks: [
+    encoded.slice(0, accent + 1), encoded.slice(accent + 1)
+  ] });
+  const validUnicode = await bootPortal({ siteRequest: async () => split });
+  assert.equal(validUnicode.element('startButton').disabled, false,
+    'valid multichunk UTF-8 catalogue must still permit browsing');
+  assert.equal(validUnicode.element('siteSuggestions').children[0].label, 'Élite',
+    'valid UTF-8 split across chunks must preserve the reviewed label');
 
   const starting = await bootPortal({
     health: { status: 'ok', activeSessions: 0, startingSessions: 1, capacity: 1 }
