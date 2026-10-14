@@ -95,12 +95,18 @@ try {
     if (fetchSite !== null) headers['Sec-Fetch-Site'] = fetchSite;
     if (forwardedProto) headers['X-Forwarded-Proto'] = forwardedProto;
     if (forwardedHost) headers['X-Forwarded-Host'] = forwardedHost;
-    // http.request's flat header-array form preserves duplicate Host lines
-    // on the actual TCP request. Test both field orders, not a JS mock.
-    const wireHeaders = Array.isArray(host)
-      ? [...host.flatMap(value => ['Host', value]),
+    // Preserve duplicate Host, Origin and Sec-Fetch-Site lines as actual
+    // wire headers. A JSON object mock can miss Node/proxy coalescing and
+    // misclassify conflicting browser metadata as one reviewed value.
+    const repeated = Array.isArray(host) || Array.isArray(origin) ||
+      Array.isArray(fetchSite);
+    const wireHeaders = repeated
+      ? [...(Array.isArray(host) ? host.flatMap(value => ['Host', value])
+        : ['Host', host]),
         ...Object.entries(headers).filter(([name]) => name !== 'Host')
-          .flatMap(([name, value]) => [name, value])]
+          .flatMap(([name, value]) =>
+            (Array.isArray(value) ? value : [value])
+              .flatMap(item => [name, item]))]
       : headers;
     const reply = await new Promise((resolve, reject) => {
       const request = http.request({
@@ -178,6 +184,39 @@ try {
     duplicateHostReuses.push(await submit({ host: hostValues, origin: publicTv,
       reuse: true }));
   }
+  // Duplicate browser metadata is ambiguous even with a canonical Host.
+  // Check both orderings AND token reuse over genuine HTTP, not VM requests.
+  const conflictingOrigins = [];
+  const conflictingOriginReuses = [];
+  for (const values of [
+    [publicTv, forgedOrigin], [forgedOrigin, publicTv], [publicTv, publicTv]
+  ]) {
+    conflictingOrigins.push(await submit({
+      host: legitimateHost, origin: values
+    }));
+    conflictingOriginReuses.push(await submit({
+      host: legitimateHost, origin: values, reuse: true
+    }));
+  }
+  assert.ok(conflictingOrigins.every(denied) &&
+    conflictingOriginReuses.every(denied),
+    'ambiguous repeated Origin must deny new and reused sessions');
+  const conflictingFetchSites = [];
+  const conflictingFetchSiteReuses = [];
+  for (const values of [
+    ['same-origin', 'cross-site'], ['cross-site', 'same-origin'],
+    ['same-origin', 'same-origin']
+  ]) {
+    conflictingFetchSites.push(await submit({
+      host: legitimateHost, origin: publicTv, fetchSite: values
+    }));
+    conflictingFetchSiteReuses.push(await submit({
+      host: legitimateHost, origin: publicTv, fetchSite: values, reuse: true
+    }));
+  }
+  assert.ok(conflictingFetchSites.every(denied) &&
+    conflictingFetchSiteReuses.every(denied),
+    'ambiguous repeated Fetch Metadata must deny new and reused sessions');
   const wrongPortHost = peer + ':' + (port === 65535 ? 1 : port + 1);
   const alternatePort = await submit({ host: wrongPortHost, origin: publicTv });
   const alternatePortReuse = await submit({ host: wrongPortHost,
