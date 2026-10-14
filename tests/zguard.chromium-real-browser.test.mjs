@@ -719,6 +719,56 @@ async function runBrowser(extensionPath, profilePath, url) {
         ordinary: await imageMapProbe('ordinary', 'https://example.org/watch')
       };
     }
+    if (!coldStart) {
+      // Independently cover actual Chromium form.requestSubmit() with a
+      // submitter that overrides the parent form's same-context destination.
+      // Named and mixed-case new contexts must use the same reviewed guard
+      // as anchors; target listeners prevent all network navigation.
+      const evaluatedTargets = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function probe(action, target) {
+            const form = document.createElement('form');
+            form.method = 'GET';
+            form.action = '/same-origin';
+            form.target = '_self';
+            const submitter = document.createElement('button');
+            submitter.type = 'submit';
+            submitter.setAttribute('formaction', action);
+            submitter.setAttribute('formtarget', target);
+            form.append(submitter);
+            document.body.append(form);
+            let targetReached = false;
+            const cancelAllowed = (event) => {
+              targetReached = true;
+              event.preventDefault();
+            };
+            form.addEventListener('submit', cancelAllowed);
+            try {
+              form.requestSubmit(submitter);
+              return { blocked: !targetReached };
+            } finally {
+              form.removeEventListener('submit', cancelAllowed);
+              form.remove();
+            }
+          }
+          const matrix = {};
+          for (const [name, target] of Object.entries({
+            mixedCase: '_BlAnK', named: 'reportPanel'
+          })) {
+            matrix[name] = {
+              hostile: probe('https://ads.al5sm.com/form', target),
+              ordinary: probe('https://example.org/form', target),
+              sameOrigin: probe('/same-origin', target)
+            };
+          }
+          return matrix;
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(evaluatedTargets.exceptionDetails, undefined,
+        'Real Chromium form-target override fixture must execute');
+      observed.formTargetMatrix = evaluatedTargets.result?.value;
+    }
     if (requireFormSubmit) {
       // Real DOM form.requestSubmit creates an HTML submit event; unlike an
       // anchor click, zGuard's current capture listener does not watch submit.
@@ -1298,6 +1348,19 @@ try {
           variant + ': keyboard image-map Enter click must carry detail=0');
         assert.equal(observed.imageMap.hostile.keyboard.reachedArea, false,
           variant + ': hostile image-map keyboard activation escaped popup guard');
+      }
+      if (!coldStart) {
+        for (const label of ['mixedCase', 'named']) {
+          const matrix = observed.formTargetMatrix?.[label];
+          assert.deepEqual(matrix?.hostile, { blocked: true },
+            variant + ': actual Chromium formtarget ' + label +
+            ' must reject hostile submitter override');
+          for (const safe of ['ordinary', 'sameOrigin']) {
+            assert.deepEqual(matrix?.[safe], { blocked: false },
+              variant + ': real formtarget ' + label +
+              ' must preserve ' + safe + ' submitter override');
+          }
+        }
       }
       if (requireFormSubmit) {
         assert.equal(observed.formSubmit?.ordinary?.seenOnDocument, true,
