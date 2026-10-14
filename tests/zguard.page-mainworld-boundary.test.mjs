@@ -8,6 +8,46 @@ const chromium = fs.readFileSync(new URL('../chromium/page-interceptor.js', impo
 const bundled = fs.readFileSync(new URL('../zbrowse/browser/zguard/page-interceptor.js', import.meta.url), 'utf8');
 assert.equal(bundled, chromium, 'embedded zBrowse page interceptor must remain byte-for-byte identical');
 
+// The MAIN-world filter must never drift from the reviewed hostile-domain
+// lists in the privileged fallback and Firefox packages. Otherwise a newly
+// blocked popup domain could remain accessible in one injection world.
+function extractHostList(source, declaration) {
+  const prefix = declaration === 'Set'
+    ? /const\\s+(?:blockedHosts|HOSTILE_HOSTS)\\s*=\\s*new Set\\((\\[[^\\]]+\\])\\)/
+    : /const\\s+HOSTILE_HOSTS\\s*=\\s*(\\[[^\\]]+\\])/;
+  const match = source.match(prefix);
+  assert.ok(match, 'reviewed hostile-host declaration must remain inspectable');
+  return Array.from(vm.runInNewContext(match[1])).sort();
+}
+const background = fs.readFileSync(new URL('../chromium/background.js', import.meta.url), 'utf8');
+const firefoxBackground = fs.readFileSync(new URL('../firefox/background.js', import.meta.url), 'utf8');
+const chromeContent = fs.readFileSync(new URL('../chromium/content.js', import.meta.url), 'utf8');
+const firefoxContent = fs.readFileSync(new URL('../firefox/content.js', import.meta.url), 'utf8');
+const reviewedHosts = extractHostList(background, 'Array');
+function assertPolicyParity(pageSource) {
+  const mainHosts = extractHostList(pageSource, 'Set');
+  assert.deepEqual(mainHosts, reviewedHosts,
+    'page-world hostile hosts must exactly match the browser-level fallback');
+  for (const [source, type, name] of [
+    [firefoxBackground, 'Array', 'Firefox background'],
+    [chromeContent, 'Set', 'Chromium isolated content'],
+    [firefoxContent, 'Set', 'Firefox isolated content']
+  ]) {
+    assert.deepEqual(extractHostList(source, type), reviewedHosts,
+      name + ' must use the same reviewed hostile-host list');
+  }
+}
+assertPolicyParity(chromium);
+for (const mutation of [
+  chromium.replace("'tmll7.com'", "'lookalike.invalid'"),
+  chromium.replace(", 'nap5k.com'", '')
+]) {
+  assert.throws(() => assertPolicyParity(mutation),
+    /page-world hostile hosts must exactly match/,
+    'removing or swapping any MAIN-world hostile host must fail CI');
+}
+
+
 // MAIN world must never access privileged extension APIs, cookies or network
 // transports: page-origin scripts may observe and forge all DOM events.
 for (const risky of [
