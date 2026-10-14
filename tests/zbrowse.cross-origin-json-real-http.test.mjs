@@ -159,6 +159,20 @@ try {
   });
   const sandboxed = await post({ origin: 'null', fetchSite: 'cross-site' });
   const metadataOnly = await post({ fetchSite: 'cross-site' });
+  // Strict Origin isolation must compare the entire HTTPS authority; a
+  // public-TV-looking substring or forged same-origin metadata is untrusted.
+  const deceptiveOrigins = [
+    ['host-suffix', 'https://zbrowse-tv.lizellay.chatgpt.site.attacker.invalid', 'same-origin'],
+    ['userinfo-lookalike', 'https://zbrowse-tv.lizellay.chatgpt.site@attacker.invalid', 'same-origin'],
+    ['scheme-downgrade', 'http://zbrowse-tv.lizellay.chatgpt.site', 'same-origin'],
+    ['alternate-port', 'https://zbrowse-tv.lizellay.chatgpt.site:8443', 'same-origin'],
+    ['dns-root-dot', 'https://zbrowse-tv.lizellay.chatgpt.site.', 'same-origin'],
+    ['forged-fetch-metadata', 'https://attacker.invalid', 'same-origin']
+  ];
+  const deceptiveResults = {};
+  for (const [name, origin, fetchSite] of deceptiveOrigins) {
+    deceptiveResults[name] = await post({ origin, fetchSite });
+  }
 
   // Non-browser clients without browser metadata may legitimately be supported;
   // do not assert a product policy for these existing gateway consumers.
@@ -177,10 +191,16 @@ try {
       Object.entries(unsafe).map(([name, outcome]) => [name, denied(outcome)])),
       {crossSiteReuse: true, crossSiteNew: true, sandboxed: true, metadataOnly: true},
       'strict admission must reject external and null Origin/Fetch Metadata before reuse/allocation');
+    assert.deepEqual(Object.keys(deceptiveResults).filter(name =>
+      !denied(deceptiveResults[name])), [],
+      'deceptive TV-looking or forged-metadata Origins must not allocate/reuse browsers');
     console.log('Real HTTP origin isolation and existing-session reuse PASS');
   } else {
     console.log('Browser JSON preflight denied=' +
       preflightResults.filter(Boolean).length + '/' + preflightResults.length +
+      '; deceptive Origin requests denied=' +
+      Object.values(deceptiveResults).filter(denied).length + '/' +
+      deceptiveOrigins.length +
       '; raw shipped JSON cross-site HTTP isolation: ' + JSON.stringify(
       Object.fromEntries(Object.entries(unsafe).map(([name, outcome]) =>
         [name, {status: outcome.status, started: outcome.started,
