@@ -296,7 +296,7 @@ try {
       ...extraHeaders,
       '',
       wireBody
-    ].join('\\r\\n');
+    ].join('\r\n');
     const raw = await new Promise((resolve, reject) => {
       const socket = net.createConnection({
         host: ip, port: server.address().port
@@ -329,11 +329,11 @@ try {
     ['content length alongside chunked', [
       'Content-Length: ' + Buffer.byteLength(shortJson),
       'Transfer-Encoding: chunked'
-    ], '0\\r\\n\\r\\n'],
+    ], '0\r\n\r\n'],
     ['chunked alongside content length', [
       'Transfer-Encoding: chunked',
       'Content-Length: ' + Buffer.byteLength(shortJson)
-    ], '0\\r\\n\\r\\n'],
+    ], '0\r\n\r\n'],
     ['comma-joined lengths', [
       'Content-Length: 0, ' + Buffer.byteLength(shortJson)
     ], shortJson],
@@ -343,13 +343,15 @@ try {
   ];
   for (const [label, headers, payload] of ambiguousFraming) {
     const outcome = await submitRawFraming(headers, payload);
-    assert.match(outcome.raw, /^HTTP\\/1\\.1 400\\b/,
+    assert.ok(outcome.raw.startsWith('HTTP/1.1 400 '),
       label + ': Node HTTP parser must deny ambiguous message framing');
     assert.equal(outcome.starts, 0,
       label + ': denied framing must never launch a browser');
     assert.equal(outcome.reserves, 0,
       label + ': denied framing must never reserve a browser slot');
-    assert.doesNotMatch(outcome.raw, /J{32}|viewerUrl|\\/s\\/J/,
+    assert.ok(!outcome.raw.includes('J'.repeat(32)) &&
+      !outcome.raw.includes('viewerUrl') &&
+      !outcome.raw.includes('/s/J'),
       label + ': denied framing may not return bearer metadata');
   }
 
