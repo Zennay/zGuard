@@ -236,6 +236,9 @@ assert.throws(() => {
   assert.ok(skipped.includes(examples[0][0]));
 }, undefined, "the old binary-skip scanner is not an acceptable regression");
 
+// Never print a raw Git filename into CI diagnostics: a repository path can
+// legally contain newlines and terminal-control bytes that spoof log entries.
+// JSON-escape the path while keeping the signature name (not secret value).
 const findings = [];
 for (const relative of tracked) {
   const matches = scanBytes(fs.readFileSync(path.join(root, relative)));
@@ -246,7 +249,7 @@ assert.deepEqual(
   findings,
   [],
   "tracked repository content contains high-confidence secret material: " +
-    findings.map(({ file, signature }) => `${file} (${signature})`).join(", ")
+    findings.map(({ file, signature }) => `${JSON.stringify(file)} (${signature})`).join(", ")
 );
 
 const envExample = fs.readFileSync(path.join(root, "zbrowse/.env.example"), "utf8");
