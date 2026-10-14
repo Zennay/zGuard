@@ -74,7 +74,7 @@ async function getJson(origin, route, fetcher) {
   const maximumBytes = route === '/api/health' ? 4096 : 65536;
   const length = response.headers.get('content-length');
   if (length !== null) {
-    assert.match(length, /^\\d+$/, route + ': invalid Content-Length header');
+    assert.match(length, /^[0-9]+$/, route + ': invalid Content-Length header');
     assert.ok(BigInt(length) <= BigInt(maximumBytes),
       route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
   }
