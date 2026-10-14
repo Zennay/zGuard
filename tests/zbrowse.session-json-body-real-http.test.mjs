@@ -2,6 +2,7 @@
 // parser boundary. Oversized/malformed bodies must fail before Docker startup.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import vm from 'node:vm';
 import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { createRequire } from 'node:module';
@@ -210,6 +211,72 @@ try {
   assert.equal(unsupportedEncoding.newReservations, 0,
     'unsupported compression cannot reserve browser capacity');
 
+  // Validate the real /api/session route with Transfer-Encoding: chunked
+  // instead of just an isolated parser/echo handler. A chunked compression
+  // bomb must be rejected before reserving a slot or creating a browser.
+  async function submitChunked(body, encoding) {
+    sessions.clear();
+    sessionsByIp.clear();
+    const previousStarts = started;
+    const previousReservations = reservations;
+    const data = Buffer.from(body);
+    const response = await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: ip, port: server.address().port,
+        method: 'POST', path: '/api/session',
+        headers: {
+          'content-type': 'application/json',
+          'content-encoding': encoding,
+          'transfer-encoding': 'chunked'
+        }
+      }, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          bodyText: Buffer.concat(chunks).toString('utf8')
+        }));
+        res.once('error', reject);
+      });
+      req.setTimeout(4000, () =>
+        req.destroy(new Error('localhost chunked admission timed out')));
+      req.once('error', reject);
+      const split = Math.max(1, Math.floor(data.length / 3));
+      req.write(data.subarray(0, split));
+      req.write(data.subarray(split, 2 * split));
+      req.end(data.subarray(2 * split));
+    });
+    return {
+      ...response,
+      newStarts: started - previousStarts,
+      newReservations: reservations - previousReservations
+    };
+  }
+  const validChunked = await submitChunked(
+    gzipSync(normalCompressed), 'gzip');
+  assert.equal(validChunked.status, 201,
+    'chunked valid gzip session request must still admit a browser');
+  assert.equal(validChunked.newStarts, 1);
+  assert.equal(validChunked.newReservations, 1);
+
+  const inflatedChunked = await submitChunked(
+    brotliCompressSync(oversizedCompressed), 'br');
+  assert.equal(inflatedChunked.status, 413,
+    'chunked Brotli inflation beyond 8kb must reject session creation');
+  assert.equal(inflatedChunked.newStarts, 0,
+    'chunked compression bomb cannot start a Docker browser');
+  assert.equal(inflatedChunked.newReservations, 0,
+    'chunked compression bomb cannot reserve session capacity');
+
+  const malformedChunked = await submitChunked(
+    Buffer.from('not-compressed-json'), 'deflate');
+  assert.equal(malformedChunked.status, 400,
+    'chunked invalid deflate must reject at the body parsing boundary');
+  assert.equal(malformedChunked.newStarts, 0,
+    'chunked invalid deflate cannot create a browser');
+  assert.equal(malformedChunked.newReservations, 0,
+    'chunked invalid deflate cannot reserve browser capacity');
+
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
   assert.equal(badCharset.status, 415, 'unsupported JSON charset must be rejected');
@@ -223,12 +290,13 @@ try {
 
   for (const rejected of [truncated, oneByteOver, tooLarge, badCharset,
     ...malformedResults, ...compressedOutcomes,
-    ...malformedCompression, unsupportedEncoding]) {
+    ...malformedCompression, unsupportedEncoding,
+    inflatedChunked, malformedChunked]) {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
   console.log('Shipped gateway exact 8 KiB JSON boundary, three compressed ' +
-    'inflation-limit cases, invalid gzip/deflate/Brotli and unsupported encoding, ' + malformedBodies.length +
+    'inflation-limit cases, chunked admission, invalid gzip/deflate/Brotli and unsupported encoding, ' + malformedBodies.length +
     ' malformed parser failures and recovery passed');
 } finally {
   await new Promise((resolve, reject) =>
