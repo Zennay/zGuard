@@ -48,7 +48,43 @@ const workflows = fs.readdirSync(workflowDir)
 
 assert.ok(workflows.length > 0, 'at least one checkout-based workflow must be discovered');
 
+// Every workflow checkout result must be attributable to the proposed PR
+// revision, not just the handful of required/admin security contexts.
+// A displayed green status is insufficient without a trusted source ref,
+// a trusted EXPECTED_SHA input and an executable checked-out HEAD assertion.
+function verifySourceIdentity(workflow, source) {
+  assert.match(source,
+    /^\s+ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\|\|\s*github\.sha\s*\}\}\s*$/m,
+    workflow + ': checkout must target trusted PR HEAD or push SHA');
+  assert.match(source,
+    /^\s+EXPECTED_SHA:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\|\|\s*github\.sha\s*\}\}\s*$/m,
+    workflow + ': expected checkout commit must derive from the trusted event');
+  assert.ok(source.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"'),
+    workflow + ': actual checkout commit must be compared to trusted expected SHA');
+}
+const canaryWorkflow = workflows.find(({ relative }) =>
+  relative === '.github/workflows/manifest-integrity-validation.yml');
+assert.ok(canaryWorkflow, 'source-identity canary workflow must exist');
+verifySourceIdentity(canaryWorkflow.relative, canaryWorkflow.source);
+for (const [label, mutation] of [
+  ['implicit PR merge ref', canaryWorkflow.source.replace(
+    'ref: ' + String.fromCharCode(36) + '{{ github.event.pull_request.head.sha || github.sha }}',
+    'ref: main')],
+  ['untrusted expected revision', canaryWorkflow.source.replace(
+    'EXPECTED_SHA: ' + String.fromCharCode(36) + '{{ github.event.pull_request.head.sha || github.sha }}',
+    'EXPECTED_SHA: ' + String.fromCharCode(36) + '{{ github.sha }}')],
+  ['skipped git identity assertion', canaryWorkflow.source.replace(
+    'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', 'echo checked')]
+]) {
+  assert.notEqual(mutation, canaryWorkflow.source,
+    label + ': negative proof mutation must alter source');
+  assert.throws(() => verifySourceIdentity(canaryWorkflow.relative, mutation),
+    undefined, label + ': source identity policy must fail closed');
+}
+
+
 for (const { relative: workflow, source } of workflows) {
+  verifySourceIdentity(workflow, source);
   const matches = [...source.matchAll(/uses:\s*actions\/checkout@([^\s#]+)/g)];
 
   assert.equal(matches.length, 1, `${workflow} must contain exactly one checkout action`);
@@ -148,5 +184,5 @@ for (const reviewedWorkflow of additionalSourceBoundWorkflows) {
 
 console.log(
   `Dedicated workflow integrity contract passed for ${workflows.length} checkout workflows; ` +
-  `${prHeadContractWorkflows.size} required workflows prove PR-head checkout`
+  `${workflows.length} workflows prove exact PR-head checkout; ${prHeadContractWorkflows.size} have additional source-bound regression contracts`
 );
