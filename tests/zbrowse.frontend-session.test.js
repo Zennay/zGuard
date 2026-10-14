@@ -1143,6 +1143,62 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     options.method === 'DELETE').length, 0,
     'successful heartbeat must not destroy the browser');
 
+  // The gateway's authoritative expiry may move *earlier* than the
+  // original start response. The UI must follow the smaller value without
+  // waiting for another heartbeat, and must never extend its original TTL.
+  let shortenedStarts = 0;
+  const shortened = await bootPortal({
+    sessionRequest: async () => {
+      shortenedStarts++;
+      return response(validSession);
+    },
+    heartbeatRequest: async () => response({ ok: true, expiresAt: Date.now() + 400 })
+  });
+  shortened.element('browserView').hidden = true;
+  shortened.submit();
+  await settle();
+  const shortenedBeat = [...shortened.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 30000);
+  assert.ok(shortenedBeat, 'shortened lease needs real heartbeat callback');
+  shortenedBeat.callback();
+  await settle();
+  assert.equal(shortened.element('browserView').hidden, false,
+    'valid shortened lease must not instantly discard an unexpired viewer');
+  assert.equal(shortened.element('timer').textContent, '00:00',
+    'timer must immediately reflect a subsecond shortened gateway lease');
+  await new Promise(resolve => setTimeout(resolve, 460));
+  const shortenedCountdown = [...shortened.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 1000);
+  assert.ok(shortenedCountdown, 'lease countdown must remain registered');
+  shortenedCountdown.callback();
+  await settle();
+  assert.equal(shortened.element('browserView').hidden, true,
+    'shortened expiry must close viewer even before next heartbeat');
+  assert.equal(shortened.element('browserFrame').src, 'about:blank',
+    'shortened expiry must discard bearer viewer URL');
+  assert.equal(shortened.requests.filter(({ url, options }) =>
+    url === '/api/session/' + validToken && options.method === 'DELETE').length, 1,
+    'shortened expiry must send one cleanup DELETE');
+  assert.equal(shortenedStarts, 1, 'expiry cannot auto-start a replacement browser');
+
+  const originalExpiry = Date.now() + 3600;
+  const refusedExtension = await bootPortal({
+    sessionRequest: async () => response({ ...validSession, expiresAt: originalExpiry }),
+    heartbeatRequest: async () => response({ ok: true, expiresAt: Date.now() + 900_000 })
+  });
+  refusedExtension.submit();
+  await settle();
+  const extendBeat = [...refusedExtension.intervals.values()]
+    .find(({ milliseconds }) => milliseconds === 30000);
+  assert.ok(extendBeat);
+  extendBeat.callback();
+  await settle();
+  const remainingShown = refusedExtension.element('timer').textContent;
+  assert.match(remainingShown, /^00:0[0-3]$/,
+    'future acknowledgement may not extend a short original session lifetime');
+  assert.equal(refusedExtension.element('browserView').hidden, false,
+    'valid acknowledgement must preserve an unexpired existing viewer');
+
   // A 2xx heartbeat without an explicit, live gateway lease is not a
   // renewal. The previous implementation treated every resolved fetch as
   // valid, allowing a proxy 204 or {ok:false} to keep an orphan iframe alive.
