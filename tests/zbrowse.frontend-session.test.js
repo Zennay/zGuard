@@ -18,13 +18,35 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function response(body, status = 200, contentType = 'application/json; charset=utf-8') {
-  return {
+function response(body, status = 200, contentType = 'application/json; charset=utf-8',
+  options = {}) {
+  // Model browser Response.body for actual streamed-JSON parsing, including
+  // adversarial chunk boundaries and a declared Content-Length header.
+  const chunks = options.chunks || [new TextEncoder().encode(JSON.stringify(body))];
+  let index = 0;
+  const mock = {
     status,
     ok: status >= 200 && status < 300,
-    headers: { get: (name) => name.toLowerCase() === 'content-type' ? contentType : null },
+    reads: 0,
+    cancelled: false,
+    headers: { get: (name) => {
+      if (name.toLowerCase() === 'content-type') return contentType;
+      if (name.toLowerCase() === 'content-length') return options.contentLength ?? null;
+      return null;
+    } },
+    body: options.missingBody ? null : { getReader() {
+      return {
+        async read() {
+          mock.reads++;
+          return index < chunks.length ? { done: false, value: chunks[index++] } : { done: true };
+        },
+        async cancel() { mock.cancelled = true; },
+        releaseLock() {}
+      };
+    } },
     json: async () => body
   };
+  return mock;
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -134,7 +156,8 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
     throw new Error('unexpected portal request: ' + url);
   };
 
-  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal, console }, {
+  vm.runInNewContext(app, { document, window, navigator: {}, fetch, Blob, Date, URL, AbortSignal,
+    TextDecoder, Uint8Array, console }, {
     filename: 'zbrowse/gateway/public/app.js',
     timeout: 1000
   });
