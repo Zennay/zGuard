@@ -49,12 +49,14 @@ async function request(url, options = {}) {
     throw error;
   }
   if (url === "/api/session") {
-    // A gateway browser start mints a bearer. If an intermediary returns
-    // plausible JSON disguised as HTML, reject it without losing the token:
-    // the existing checkedSessionPayload() path will attempt DELETE first.
-    // This is defence in depth, not authentication of a compromised proxy.
+    // A gateway browser start mints a bearer. Only 201 Created (new
+    // browser) and 200 OK (documented same-owner reuse) are valid. A proxy's
+    // 202/203/205/206 or mislabeled JSON must not mount a bearer iframe.
+    // Preserve a syntactically valid token for the existing fail-closed
+    // checkedSessionPayload() -> idempotent DELETE recovery path.
     const contentType = response.headers?.get?.("content-type") || "";
-    if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+    const acceptedStatus = response.status === 200 || response.status === 201;
+    if (!acceptedStatus || !/^application\/json(?:\s*;|$)/i.test(contentType)) {
       return body && typeof body === "object"
         ? { ...body, viewerUrl: null } : {};
     }
