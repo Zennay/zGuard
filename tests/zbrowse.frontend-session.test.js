@@ -1147,6 +1147,9 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
   // renewal. The previous implementation treated every resolved fetch as
   // valid, allowing a proxy 204 or {ok:false} to keep an orphan iframe alive.
   for (const [label, reply] of [
+    ['HTML-typed positive JSON', response({ ok: true, expiresAt: Date.now() + 60_000 }, 200, 'text/html')],
+    ['missing Content-Type positive', response({ ok: true, expiresAt: Date.now() + 60_000 }, 200, null)],
+    ['problem+json positive', response({ ok: true, expiresAt: Date.now() + 60_000 }, 200, 'application/problem+json')],
     ['no-content 204', response(null, 204)],
     ['negative lease', response({ ok: false, expiresAt: Date.now() + 60_000 })],
     ['empty JSON', response({})],
