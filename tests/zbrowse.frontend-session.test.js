@@ -736,7 +736,53 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       [20000], label + ': rejected payload must not start heartbeats or countdowns'
     );
     assert.equal(candidate.element('startButton').disabled, false, label + ': retry remains available');
+    const validIssuedToken = typeof payload?.token === 'string' &&
+      /^[A-Za-z0-9_-]{32}$/.test(payload.token);
+    const cleanupRequests = candidate.requests.filter(({ url, options }) =>
+      url === '/api/session/' + validToken && options.method === 'DELETE');
+    assert.equal(cleanupRequests.length, validIssuedToken ? 1 : 0,
+      label + ': reject the unsafe viewer but release only a syntactically valid minted token');
+    if (validIssuedToken) assert.equal(cleanupRequests[0].options.keepalive, true,
+      label + ': malformed successful browser start must use keepalive cleanup');
   }
+
+  // If an invalid viewer response carries a valid gateway token but its
+  // DELETE fails, the response rejection must not create an invisible,
+  // still-allocated browser that a new POST can inadvertently reuse.
+  let rejectedDeletes = 0;
+  let rejectedStarts = 0;
+  const rejectedViewer = await bootPortal({
+    sessionRequest: async () => {
+      rejectedStarts++;
+      return response({ ...validSession, viewerUrl: 'https://untrusted.example/' });
+    },
+    deleteRequest: async () => {
+      rejectedDeletes++;
+      return rejectedDeletes === 1
+        ? response({ error: 'Gateway unavailable' }, 503)
+        : response(null, 204);
+    }
+  });
+  rejectedViewer.element('browserView').hidden = true;
+  rejectedViewer.submit();
+  await settle();
+  assert.equal(rejectedDeletes, 1, 'invalid response must release minted bearer immediately');
+  assert.equal(rejectedViewer.element('browserView').hidden, true);
+  assert.equal(rejectedViewer.element('browserFrame').srcHistory.includes(validViewer), false);
+  assert.equal(rejectedViewer.element('startButton').disabled, true,
+    'failed cleanup of invalid payload must fail closed');
+  assert.match(rejectedViewer.element('formMessage').textContent, /Retrying automatically/);
+  rejectedViewer.submit();
+  await settle();
+  assert.equal(rejectedStarts, 1, 'failed cleanup cannot be bypassed through form submit');
+  const rejectedPoll = [...rejectedViewer.intervals.values()].find(({ milliseconds }) =>
+    milliseconds === 20000
+  );
+  rejectedPoll.callback();
+  await settle();
+  assert.equal(rejectedDeletes, 2, 'normal health poll must retry malformed-viewer cleanup');
+  assert.equal(rejectedViewer.element('startButton').disabled, false,
+    'successful release restores new browser admission');
 
   console.log('zBrowse portal capacity, ordered health polls, admission, payload and page-exit teardown validated');
 })().catch((error) => {
