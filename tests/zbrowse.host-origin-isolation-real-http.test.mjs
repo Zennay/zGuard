@@ -77,7 +77,8 @@ try {
   const publicTv = 'https://zbrowse-tv.lizellay.chatgpt.site';
   const forgedHost = 'attacker.invalid';
   const forgedOrigin = 'http://' + forgedHost;
-  async function submit({ host, origin, fetchSite = 'same-origin', reuse = false }) {
+  async function submit({ host, origin, fetchSite = 'same-origin', reuse = false,
+    forwardedProto }) {
     if (!reuse) {
       sessions.clear();
       sessionsByIp.clear();
@@ -85,16 +86,18 @@ try {
     const oldStarts = starts;
     const oldReserves = reserves;
     const payload = JSON.stringify({ url: sites[0].url });
+    const headers = {
+      'Host': host,
+      'Origin': origin,
+      'Sec-Fetch-Site': fetchSite,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    };
+    if (forwardedProto) headers['X-Forwarded-Proto'] = forwardedProto;
     const reply = await new Promise((resolve, reject) => {
       const request = http.request({
         host: peer, port, method: 'POST', path: '/api/session',
-        headers: {
-          'Host': host,
-          'Origin': origin,
-          'Sec-Fetch-Site': fetchSite,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload)
-        }
+        headers
       }, response => {
         const chunks = [];
         response.on('data', chunk => chunks.push(chunk));
@@ -149,6 +152,29 @@ try {
   const stillAllowed = await submit({ host: legitimateHost, origin: publicTv });
   assert.ok(admitted(stillAllowed, 201),
     'browser admission must recover after the adversarial Host probe');
+
+  // When an operator explicitly configures a trusted reverse-proxy hop,
+  // Express derives req.protocol from X-Forwarded-Proto. Exercise that
+  // reviewed alternate scheme independently: spoofing BOTH Host and the
+  // forwarded scheme cannot create trusted authority from client headers.
+  // This simulates the application-side proxy setting, not a real ingress.
+  app.set('trust proxy', 1);
+  const proxyForeign = await submit({ host: forgedHost,
+    origin: 'https://' + forgedHost, forwardedProto: 'https' });
+  const proxyForeignReuse = await submit({ host: forgedHost,
+    origin: 'https://' + forgedHost, forwardedProto: 'https', reuse: true });
+  const proxyTvForeign = await submit({ host: forgedHost,
+    origin: publicTv, forwardedProto: 'https' });
+  const proxyTvForeignReuse = await submit({ host: forgedHost,
+    origin: publicTv, forwardedProto: 'https', reuse: true });
+  const proxyApproved = await submit({ host: legitimateHost,
+    origin: 'https://' + legitimateHost, forwardedProto: 'https' });
+  assert.ok(admitted(proxyApproved, 201),
+    'legitimate HTTPS origin behind configured proxy must remain usable');
+  const proxyMismatch = await submit({ host: legitimateHost,
+    origin: 'https://' + forgedHost, forwardedProto: 'https' });
+  assert.ok(denied(proxyMismatch),
+    'canonical HTTPS Host must not accept unrelated forwarded Origin');
   assert.equal(reserves, releases, 'all reserved slots must release');
 
   if (strict) {
@@ -160,6 +186,15 @@ try {
       'reviewed TV Origin cannot authorize a browser through an unreviewed Host');
     assert.ok(denied(tvReusedViaForeignHost),
       'reviewed TV Origin cannot reuse a bearer through an unreviewed Host');
+    for (const [name, outcome] of [
+      ['proxy same-origin start', proxyForeign],
+      ['proxy same-origin reuse', proxyForeignReuse],
+      ['proxy reviewed TV start', proxyTvForeign],
+      ['proxy reviewed TV reuse', proxyTvForeignReuse]
+    ]) {
+      assert.ok(denied(outcome),
+        'unreviewed Host must fail under configured HTTPS proxy: ' + name);
+    }
     console.log('Shipped gateway trusted-host origin isolation PASS');
   } else {
     console.log('Actual localhost Host/Origin admission: foreign Host new denied=' +
@@ -167,6 +202,10 @@ try {
       '; foreign Host with reviewed TV Origin new denied=' + denied(tvViaForeignHost) +
       '; foreign Host with reviewed TV Origin reuse denied=' + denied(tvReusedViaForeignHost) +
       '; canonical-Host negative control denied=' + denied(mismatch) +
+      '; proxy-HTTPS foreign Host denied=' + denied(proxyForeign) +
+      '; proxy-HTTPS foreign Host reuse denied=' + denied(proxyForeignReuse) +
+      '; proxy-HTTPS reviewed TV denied=' + denied(proxyTvForeign) +
+      '; proxy-HTTPS reviewed TV reuse denied=' + denied(proxyTvForeignReuse) +
       '. No public reverse-proxy or deployed DNS exposure tested.');
   }
 } finally {
