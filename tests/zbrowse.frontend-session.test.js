@@ -796,6 +796,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       });
     }
   });
+  stalledStart.element('browserView').hidden = true; // HTML initially hides viewer.
   stalledStart.submit();
   await settle();
   const startPost = stalledStart.requests.filter(({ url, options }) =>
@@ -841,6 +842,7 @@ async function bootPortal({ health, sessionRequest, healthRequest, deleteRequest
       };
     }
   });
+  stalledStartBody.element('browserView').hidden = true; // HTML initially hides viewer.
   stalledStartBody.submit();
   await settle();
   const bodyRequest = stalledStartBody.requests.find(({ url, options }) =>
