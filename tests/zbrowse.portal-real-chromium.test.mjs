@@ -126,6 +126,17 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { sites: [
           { name: 'Video\u202Efake.invalid', url: sites[0].url }
         ], maxSessionMinutes: 15 });
+      } else if (['c1-label', 'arabic-mark-label', 'rtl-mark-label',
+        'paragraph-separator-label'].includes(sitesMode)) {
+        const mark = {
+          'c1-label': '\u0085',
+          'arabic-mark-label': '\u061c',
+          'rtl-mark-label': '\u200f',
+          'paragraph-separator-label': '\u2029'
+        }[sitesMode];
+        sendJson(res, 200, { sites: [
+          { name: 'Video' + mark + 'spoofed.invalid', url: sites[0].url }
+        ], maxSessionMinutes: 15 });
       } else {
         const status = nextSitesStatus ?? 200;
         nextSitesStatus = null;
@@ -1465,7 +1476,8 @@ try {
   // verify the page itself cannot issue a new browser POST.
   const beforeCatalogueProbes = starts;
   for (const mode of ['offline', 'userinfo', 'empty',
-    'many', 'long-name', 'long-url', 'bidi-name']) {
+    'many', 'long-name', 'long-url', 'bidi-name',
+    'c1-label', 'arabic-mark-label', 'rtl-mark-label', 'paragraph-separator-label']) {
     sitesMode = mode;
     await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
     await until(async () => await evaluate(
