@@ -7,13 +7,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const workflowDir = path.join(root, '.github', 'workflows');
 const checkoutSha = 'df4cb1c069e1874edd31b4311f1884172cec0e10';
-const temporarilyOwnedWorkflow = '.github/workflows/quality-validation.yml';
 const requiredChecks = JSON.parse(
   fs.readFileSync(path.join(root, '.github', 'required-checks.json'), 'utf8')
 ).checks.map(({ workflow }) => workflow);
-const prHeadContractWorkflows = new Set(
-  requiredChecks.filter((workflow) => workflow !== temporarilyOwnedWorkflow)
-);
+const prHeadContractWorkflows = new Set(requiredChecks);
 
 
 const workflows = fs.readdirSync(workflowDir)
@@ -96,8 +93,8 @@ for (const { relative: workflow, source } of workflows) {
 
 assert.deepEqual(
   [...prHeadContractWorkflows].sort(),
-  requiredChecks.filter((workflow) => workflow !== temporarilyOwnedWorkflow).sort(),
-  'every required workflow outside the explicitly owned quality-validation lane must use the landed PR-head checkout contract'
+  [...requiredChecks].sort(),
+  'all six required checks must prove the exact PR-head checkout contract'
 );
 
 console.log(
