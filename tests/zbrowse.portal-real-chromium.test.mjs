@@ -235,6 +235,11 @@ const server = http.createServer(async (req, res) => {
         nextHeartbeatReply = null;
         if (reply.status === 204) {
           res.writeHead(204, { 'cache-control': 'no-store' }).end();
+        } else if (reply.mediaType) {
+          res.writeHead(reply.status, {
+            'content-type': reply.mediaType,
+            'cache-control': 'no-store'
+          }).end(JSON.stringify(reply.body));
         } else {
           sendJson(res, reply.status, reply.body);
         }
@@ -1576,6 +1581,8 @@ try {
   // usable viewer session. Exercise the actual app.js heartbeat interval,
   // loopback fetch, viewer unmount and one DELETE per invalid reply.
   for (const [label, reply] of [
+    ['html-typed-valid-json', { status: 200, mediaType: 'text/html',
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
     ['no-content', { status: 204 }],
     ['negative-json', { status: 200, body: { ok: false, expiresAt: Date.now() + 900_000 } }],
     ['expired-json', { status: 200, body: { ok: true, expiresAt: Date.now() - 1000 } }]
