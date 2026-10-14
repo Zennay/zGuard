@@ -136,6 +136,21 @@ try {
     Buffer.concat([Buffer.from([0, 0, 0xfe, 0xff]),
       utf32(second, true), Buffer.from([0])]), second);
 
+  // A word or filename may contain a GitHub-shaped suffix without being
+  // a standalone token. Enforce this through the same real Git-index scanner,
+  // not only an isolated regex, while keeping real Bearer tokens detectable.
+  const classic = 'gh' + 'p_' + 'B'.repeat(30);
+  reject('standalone GitHub classic Bearer', 'GitHub classic token',
+    Buffer.from('Bearer ' + classic, 'ascii'), classic);
+  for (const [label, input] of [
+    ['embedded classic token-shaped suffix', 'prefix' + classic],
+    ['embedded fine-grained suffix', 'filename_' + second],
+    ['short classic prefix', classic.slice(0, -12)]
+  ]) {
+    writeAndTrack(Buffer.from(input, 'ascii'));
+    accept(label + ' must not be treated as a credential');
+  }
+
   // The policy must not mistake public keys or ordinary certificates for
   // private credentials even when they are tracked as binary fixtures.
   for (const marker of ['PUBLIC KEY', 'CERTIFICATE', 'PGP PUBLIC KEY BLOCK']) {
