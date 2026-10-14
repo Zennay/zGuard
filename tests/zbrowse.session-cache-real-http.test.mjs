@@ -40,6 +40,9 @@ const sessionsByIp = new Map();
 let starts = 0;
 let released = 0;
 let reservations = 0;
+let rejectReason = null;
+let failBrowserStart = false;
+let logFailures = 0;
 const sandbox = {
   app, sessionLimiter(_req, _res, next) { next(); },
   config: { ttlMs: 900_000, idleMs: 600_000 },
@@ -48,18 +51,23 @@ const sandbox = {
   destroySession() { throw new Error('unexpected teardown in fresh session test'); },
   validStartUrl(value) { return value === allowedStart ? value : null; },
   sessionAdmission: {
-    tryReserve() { reservations++; return { ok: true }; },
+    tryReserve() {
+      if (rejectReason !== null) return { ok: false, reason: rejectReason };
+      reservations++;
+      return { ok: true };
+    },
     release() { released++; }
   },
   async createSession(givenIp, startUrl) {
     assert.equal(givenIp, ip);
     assert.equal(startUrl, allowedStart);
     starts++;
+    if (failBrowserStart) throw new Error('synthetic browser start failed');
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
     return session;
   },
-  console: { error() { throw new Error('unexpected session creation error'); } },
+  console: { error() { logFailures++; } },
   Math, Date
 };
 vm.runInNewContext(handler, sandbox, { filename: 'zbrowse/gateway/server.js', timeout: 1000 });
@@ -70,37 +78,77 @@ const server = await new Promise((resolve, reject) => {
 });
 try {
   const target = 'http://' + ip + ':' + server.address().port + '/api/session';
-  const attempt = async () => {
+  const attempt = async (url = allowedStart) => {
     const response = await fetch(target, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: allowedStart }),
+      body: JSON.stringify({ url }),
       signal: AbortSignal.timeout(4000)
     });
     const payload = await response.json();
-    assert.equal(payload.token, token, 'actual HTTP response must preserve session identity');
-    assert.equal(payload.viewerUrl, '/s/' + token + '/', 'session viewer URL must remain scoped');
-    return { status: response.status, cache: response.headers.get('cache-control') };
+    return { status: response.status, cache: response.headers.get('cache-control'),
+      payload };
   };
   const created = await attempt();
   const reused = await attempt();
+  for (const result of [created, reused]) {
+    assert.equal(result.payload.token, token,
+      'successful session API responses must preserve the issued bearer');
+    assert.equal(result.payload.viewerUrl, '/s/' + token + '/',
+      'successful viewer URL must remain scoped to the issued token');
+  }
   assert.deepEqual([created.status, reused.status], [201, 200],
     'real gateway handler must exercise both new and reused session response branches');
   assert.equal(starts, 1, 'session reuse must avoid a duplicate browser creation');
   assert.equal(reservations, 1, 'reused session must not consume another admission reservation');
   assert.equal(released, 1, 'new session must release admission reservation');
 
-  const noStore = [created, reused].every(response => (
+  // Test every source-bound session API failure response too. These are not
+  // bearer-bearing success payloads, but shared caches must never turn
+  // capacity failures or a rejected site into a stale session response.
+  sessions.clear();
+  sessionsByIp.clear();
+  const invalid = await attempt('https://unreviewed.invalid/');
+  assert.equal(invalid.status, 400, 'unreviewed origin must be denied before admission');
+  assert.equal(invalid.payload.token, undefined,
+    'invalid site failure must not return any session bearer');
+  assert.equal(starts, 1);
+
+  rejectReason = 'pending';
+  const pending = await attempt();
+  assert.equal(pending.status, 409,
+    'duplicate in-flight request must not issue another browser');
+  assert.equal(starts, 1);
+  rejectReason = 'capacity';
+  const full = await attempt();
+  assert.equal(full.status, 503,
+    'full capacity must be represented as unavailable, not a reusable session');
+  assert.equal(starts, 1);
+  rejectReason = null;
+
+  failBrowserStart = true;
+  const failed = await attempt();
+  assert.equal(failed.status, 500, 'synthetic browser failure must be bounded');
+  assert.equal(failed.payload.error, 'The browser could not be started.',
+    'failed session startup must return only a generic message');
+  assert.equal(logFailures, 1,
+    'shipped route must record exactly one startup failure signal');
+  assert.equal(released, 2, 'failed startup must also release the reserved slot');
+  assert.equal(sessions.size, 0, 'failed browser startup must not publish a session');
+  failBrowserStart = false;
+
+  const responses = [created, reused, invalid, pending, full, failed];
+  const noStore = responses.every(response => (
     typeof response.cache === 'string' &&
     response.cache.toLowerCase().split(',').map(x => x.trim()).includes('no-store')
   ));
   if (strict) {
     assert.equal(noStore, true,
-      'actual HTTP POST /api/session 201/200 must both include Cache-Control: no-store (issue #284)');
-    console.log('Real Express 201/200 token-bearing HTTP cache policy PASS');
+      'HTTP POST /api/session 201/200/400/409/503/500 must each include Cache-Control: no-store (issue #284)');
+    console.log('Real Express success and denial session HTTP cache policy PASS');
   } else {
-    console.log('Shipped session route served 201 and reused 200 over local HTTP; ' +
-      'both token-bearing no-store policies=' + noStore +
+    console.log('Shipped session route served 201/200 and 400/409/503/500 over local HTTP; ' +
+      'all six no-store policies=' + noStore +
       ' (strict proof requires --require-no-store; issue #284 remains open)');
   }
 } finally {
