@@ -12,6 +12,8 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
   let remainingReadFailures = failReads;
   let remainingWriteFailures = failWrites;
   let onCreated;
+  let onUpdated;
+  let onRemoved;
   let onMessage;
   let onInstalled;
 
@@ -73,6 +75,8 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
           onCreated = listener;
         }
       },
+      onUpdated: { addListener(listener) { onUpdated = listener; } },
+      onRemoved: { addListener(listener) { onRemoved = listener; } },
       get: async () => {
         if (openerThrows) throw new Error('opener closed');
         return { url: 'https://origin.test/watch' };
@@ -92,6 +96,8 @@ async function loadBackground(relativePath, mode, { enabled = true, openerThrows
 
   return {
     created: (tab) => onCreated(tab),
+    updated: (id, changeInfo) => onUpdated(id, changeInfo, {}),
+    closed: (id) => onRemoved(id),
     installed: async () => {
       await Promise.resolve(onInstalled());
       await new Promise((resolve) => setImmediate(resolve));
@@ -268,9 +274,51 @@ async function verifyBrowser(relativePath) {
   await strictPending.created({ id: 108, openerTabId: 1, url: '', pendingUrl: 'https://external.example/new' });
   await strictPending.created({ id: 109, openerTabId: 1, url: '', pendingUrl: 'https://origin.test/allowed' });
   await strictPending.created({ id: 110, openerTabId: 1, url: 'about:blank', pendingUrl: 'https://external.example/later' });
-  assert.deepEqual(strictPending.removed, [108],
+  assert.deepEqual(strictPending.removed, [108, 110],
     relativePath + ': strict pending external tabs close, same-origin/internal tabs remain open');
   assert.equal(strictPending.settings.lastBlocked.detail.url, 'https://external.example');
+
+  // An opaque about:blank popup can publish its first real destination only
+  // after creation. Test one-shot fallback and preserve later user browsing.
+  const deferredPopup = await loadBackground(relativePath, 'balanced');
+  await deferredPopup.created({ id: 401, openerTabId: 1, url: 'about:blank' });
+  assert.deepEqual(deferredPopup.removed, []);
+  await deferredPopup.updated(401, { status: 'loading' });
+  await deferredPopup.updated(401, { url: 'about:blank' });
+  assert.deepEqual(deferredPopup.removed, [],
+    relativePath + ': opaque and status-only updates are not actionable');
+  await deferredPopup.updated(401, {
+    url: 'https://user:secret@ads.al5sm.com/private?token=hidden'
+  });
+  assert.deepEqual(deferredPopup.removed, [401],
+    relativePath + ': first hostile URL after about:blank must be closed');
+  assert.equal(deferredPopup.settings.lastBlocked.detail.url, 'https://ads.al5sm.com',
+    relativePath + ': popup telemetry must never reveal credentials or paths');
+  await deferredPopup.updated(401, { url: 'https://ads.al5sm.com/second' });
+  assert.deepEqual(deferredPopup.removed, [401],
+    relativePath + ': deferred monitoring cannot double count a block');
+  await deferredPopup.created({ id: 402, openerTabId: 1 });
+  await deferredPopup.updated(402, { url: 'https://example.org/normal' });
+  await deferredPopup.updated(402, { url: 'https://ads.al5sm.com/later' });
+  assert.deepEqual(deferredPopup.removed, [401],
+    relativePath + ': ordinary later navigation remains unrestricted');
+  await deferredPopup.created({ id: 403, openerTabId: 1, url: 'about:blank' });
+  deferredPopup.closed(403);
+  await deferredPopup.updated(403, { url: 'https://ads.al5sm.com/not-a-popup' });
+  assert.deepEqual(deferredPopup.removed, [401],
+    relativePath + ': removed tabs cannot inherit stale pending records');
+  const deferredStrict = await loadBackground(relativePath, 'strict');
+  await deferredStrict.created({ id: 404, openerTabId: 1, url: '' });
+  await deferredStrict.updated(404, { url: 'https://example.org/ordinary-external' });
+  await deferredStrict.created({ id: 405, openerTabId: 1, pendingUrl: 'about:blank' });
+  await deferredStrict.updated(405, { url: 'https://origin.test/safe' });
+  assert.deepEqual(deferredStrict.removed, [404],
+    relativePath + ': deferred strict mode blocks external but allows same-origin');
+  const deferredDisabled = await loadBackground(relativePath, 'strict', { enabled: false });
+  await deferredDisabled.created({ id: 406, openerTabId: 1, url: 'about:blank' });
+  await deferredDisabled.updated(406, { url: 'https://ads.al5sm.com/popup' });
+  assert.deepEqual(deferredDisabled.removed, [],
+    relativePath + ': disabled mode must allow delayed popups');
 
   // Deliberately delayed storage operations recreate the lost-update race.
   // Independent overlapping user changes must both survive completion.
