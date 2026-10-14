@@ -15,6 +15,40 @@ const urlInput = $("urlInput");
 const startButton = $("startButton");
 const message = $("formMessage");
 
+// Match the read-only public readiness byte limits inside the actual TV.
+// Even correctly typed HTTP 200 can stream unlimited JSON unless we stop
+// reading before parsing. Fetch's abort signal remains active during reads.
+async function boundedGatewayJson(response, maximumBytes) {
+  const declared = response.headers?.get?.("content-length");
+  if (declared !== null && declared !== undefined) {
+    if (!/^\d+$/.test(declared) || BigInt(declared) > BigInt(maximumBytes)) {
+      throw new Error("Invalid gateway response size.");
+    }
+  }
+  if (!response.body?.getReader) throw new Error("Missing gateway response stream.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let received = 0;
+  let decoded = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new Error("Invalid gateway response chunk.");
+      received += value.byteLength;
+      if (received > maximumBytes) {
+        await reader.cancel();
+        throw new Error("Gateway response too large.");
+      }
+      decoded += decoder.decode(value, { stream: true });
+    }
+    decoded += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+  return JSON.parse(decoded);
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     headers: { "content-type": "application/json", ...(options.headers || {}) },
@@ -55,7 +89,9 @@ async function request(url, options = {}) {
       throw new Error("Invalid heartbeat response format.");
     }
   }
-  const body = await response.json().catch(() => ({}));
+  const body = response.ok && (url === "/api/health" || url === "/api/sites")
+    ? await boundedGatewayJson(response, url === "/api/health" ? 4096 : 65536)
+    : await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error || "Something went wrong.");
     error.status = response.status;
