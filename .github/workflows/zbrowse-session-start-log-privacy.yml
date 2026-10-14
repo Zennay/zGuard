@@ -48,6 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.session-json-body-real-http.test.mjs
           node tests/zbrowse.session-start-log-privacy-real-http.test.mjs
           if [ "$REQUIRE_REDACTED_START_ERRORS" = "true" ]; then

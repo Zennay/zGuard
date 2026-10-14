@@ -48,6 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.viewer-path-recovery-real-http.test.mjs
           node tests/zbrowse.proxy-error-log-privacy-real-http.test.mjs
           # Credential-safe proxy diagnostics are mandatory on PRs and main.

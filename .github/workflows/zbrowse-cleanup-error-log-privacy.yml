@@ -43,6 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.cleanup-error-log-privacy.test.mjs
           if [ "$REQUIRE_REDACTED_CLEANUP_ERRORS" = "true" ]; then
             node tests/zbrowse.cleanup-error-log-privacy.test.mjs --require-redacted-cleanup-errors
