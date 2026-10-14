@@ -1,24 +1,12 @@
 name: Repository JavaScript syntax validation
 
+# Always on: executable Node shebang tools and casefolded script suffixes
+# are not discoverable by the old lowercase extension-only event paths.
 on:
   pull_request:
-    paths:
-      - "**/*.js"
-      - "**/*.mjs"
-      - "**/*.cjs"
-      - "tests/repository-javascript-syntax.test.mjs"
-      - "tests/repository-javascript-runtime-safety.test.mjs"
-      - ".github/workflows/repository-javascript-syntax.yml"
   push:
     branches:
       - main
-    paths:
-      - "**/*.js"
-      - "**/*.mjs"
-      - "**/*.cjs"
-      - "tests/repository-javascript-syntax.test.mjs"
-      - "tests/repository-javascript-runtime-safety.test.mjs"
-      - ".github/workflows/repository-javascript-syntax.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,11 +21,21 @@ jobs:
     name: Parse tracked JavaScript
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Checkout
+      - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Validate tracked JavaScript syntax
         run: node tests/repository-javascript-syntax.test.mjs
