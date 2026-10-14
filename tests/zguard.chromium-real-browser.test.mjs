@@ -29,12 +29,14 @@ assert.ok(browser, 'A real Chrome/Chromium executable is required; do not skip b
 const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <!-- Test targets are synthetic clicks only; CDP target listeners cancel ordinary navigation. -->
 <a id="hostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile</a>
+<a id="ordinaryStartup" href="https://example.org/video" target="_blank">Startup-safe link</a>
 <script>
   // Parser-time gesture precedes CDP attachment. The fixture's target
   // listener cancels navigation if zGuard has not already intercepted it.
   // This never opens an external URL even when extension injection races.
   (() => {
     const anchor = document.getElementById('hostile');
+    const ordinaryAnchor = document.getElementById('ordinaryStartup');
     function probeStartupGesture() {
       let reachedTarget = false;
       const cancelFixtureNavigation = (event) => {
@@ -47,7 +49,22 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
       });
       anchor.dispatchEvent(event);
       anchor.removeEventListener('click', cancelFixtureNavigation);
-      return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
+      // A blocker that suppresses *every* click is not a functioning popup
+      // policy. Probe a harmless link at the same lifecycle stage, with its
+      // own target handler preventing any external navigation.
+      let ordinaryReached = false;
+      const cancelOrdinaryNavigation = (safeEvent) => {
+        ordinaryReached = true;
+        safeEvent.preventDefault();
+      };
+      ordinaryAnchor.addEventListener('click', cancelOrdinaryNavigation, { once: true });
+      const ordinaryEvent = new MouseEvent('click', {
+        bubbles: true, cancelable: true, ctrlKey: true
+      });
+      ordinaryAnchor.dispatchEvent(ordinaryEvent);
+      ordinaryAnchor.removeEventListener('click', cancelOrdinaryNavigation);
+      return { blocked: !reachedTarget, cancelled: event.defaultPrevented,
+        ordinaryAllowed: ordinaryReached, ordinaryCancelled: ordinaryEvent.defaultPrevented };
     }
     // Three distinct page lifecycle opportunities let QA distinguish whether
     // extension arming lags only initial parsing or remains late through load.
@@ -1093,10 +1110,13 @@ try {
       if (coldStart) {
         for (const stage of ['parser', 'domContentLoaded', 'load']) {
           const gesture = observed.startupStages?.[stage];
-          if (gesture?.blocked !== true || gesture?.cancelled !== true) {
+          if (gesture?.blocked !== true || gesture?.cancelled !== true ||
+              gesture?.ordinaryAllowed !== true || gesture?.ordinaryCancelled !== true) {
             coldStartFailures.push(variant + ' #' + attempt + ' ' + stage +
-              ': blocked=' + String(gesture?.blocked) +
-              ', cancelled=' + String(gesture?.cancelled));
+              ': hostileBlocked=' + String(gesture?.blocked) +
+              ', hostileCancelled=' + String(gesture?.cancelled) +
+              ', ordinaryAllowed=' + String(gesture?.ordinaryAllowed) +
+              ', ordinaryCancelled=' + String(gesture?.ordinaryCancelled));
           }
         }
         if (observed.firstObservedTopFrameProtected !== true) {
