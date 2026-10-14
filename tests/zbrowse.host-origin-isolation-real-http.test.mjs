@@ -88,11 +88,11 @@ try {
     const payload = JSON.stringify({ url: sites[0].url });
     const headers = {
       'Host': host,
-      'Origin': origin,
-      'Sec-Fetch-Site': fetchSite,
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(payload)
     };
+    if (origin !== undefined) headers.Origin = origin;
+    if (fetchSite !== null) headers['Sec-Fetch-Site'] = fetchSite;
     if (forwardedProto) headers['X-Forwarded-Proto'] = forwardedProto;
     const reply = await new Promise((resolve, reject) => {
       const request = http.request({
@@ -149,6 +149,17 @@ try {
   const tvViaForeignHost = await submit({ host: forgedHost, origin: publicTv });
   const tvReusedViaForeignHost = await submit({ host: forgedHost, origin: publicTv,
     reuse: true });
+  // Non-browser clients may omit both Origin and Fetch Metadata. They must
+  // keep working under a canonical Host, but must not make ANY arbitrary Host
+  // an authorized session issuer or session-reuse endpoint.
+  const metadataFreeHost = await submit({ host: forgedHost,
+    origin: undefined, fetchSite: null });
+  const metadataFreeReuse = await submit({ host: forgedHost,
+    origin: undefined, fetchSite: null, reuse: true });
+  const canonicalNonBrowser = await submit({ host: legitimateHost,
+    origin: undefined, fetchSite: null });
+  assert.ok(admitted(canonicalNonBrowser, 201),
+    'metadata-free JSON API clients must work with a reviewed Host');
   const stillAllowed = await submit({ host: legitimateHost, origin: publicTv });
   assert.ok(admitted(stillAllowed, 201),
     'browser admission must recover after the adversarial Host probe');
@@ -167,6 +178,10 @@ try {
     origin: publicTv, forwardedProto: 'https' });
   const proxyTvForeignReuse = await submit({ host: forgedHost,
     origin: publicTv, forwardedProto: 'https', reuse: true });
+  const proxyMetadataFree = await submit({ host: forgedHost,
+    origin: undefined, fetchSite: null, forwardedProto: 'https' });
+  const proxyMetadataFreeReuse = await submit({ host: forgedHost,
+    origin: undefined, fetchSite: null, forwardedProto: 'https', reuse: true });
   const proxyApproved = await submit({ host: legitimateHost,
     origin: 'https://' + legitimateHost, forwardedProto: 'https' });
   assert.ok(admitted(proxyApproved, 201),
@@ -186,11 +201,15 @@ try {
       'reviewed TV Origin cannot authorize a browser through an unreviewed Host');
     assert.ok(denied(tvReusedViaForeignHost),
       'reviewed TV Origin cannot reuse a bearer through an unreviewed Host');
+    assert.ok(denied(metadataFreeHost) && denied(metadataFreeReuse),
+      'metadata-free clients cannot start or reuse browsers through unreviewed Host');
     for (const [name, outcome] of [
       ['proxy same-origin start', proxyForeign],
       ['proxy same-origin reuse', proxyForeignReuse],
       ['proxy reviewed TV start', proxyTvForeign],
-      ['proxy reviewed TV reuse', proxyTvForeignReuse]
+      ['proxy reviewed TV reuse', proxyTvForeignReuse],
+      ['proxy metadata-free start', proxyMetadataFree],
+      ['proxy metadata-free reuse', proxyMetadataFreeReuse]
     ]) {
       assert.ok(denied(outcome),
         'unreviewed Host must fail under configured HTTPS proxy: ' + name);
@@ -201,11 +220,15 @@ try {
       denied(changedHost) + '; foreign Host reuse denied=' + denied(reusedHost) +
       '; foreign Host with reviewed TV Origin new denied=' + denied(tvViaForeignHost) +
       '; foreign Host with reviewed TV Origin reuse denied=' + denied(tvReusedViaForeignHost) +
+      '; metadata-free foreign Host denied=' + denied(metadataFreeHost) +
+      '; metadata-free foreign Host reuse denied=' + denied(metadataFreeReuse) +
       '; canonical-Host negative control denied=' + denied(mismatch) +
       '; proxy-HTTPS foreign Host denied=' + denied(proxyForeign) +
       '; proxy-HTTPS foreign Host reuse denied=' + denied(proxyForeignReuse) +
       '; proxy-HTTPS reviewed TV denied=' + denied(proxyTvForeign) +
       '; proxy-HTTPS reviewed TV reuse denied=' + denied(proxyTvForeignReuse) +
+      '; proxy-HTTPS metadata-free Host denied=' + denied(proxyMetadataFree) +
+      '; proxy-HTTPS metadata-free reuse denied=' + denied(proxyMetadataFreeReuse) +
       '. No public reverse-proxy or deployed DNS exposure tested.');
   }
 } finally {
