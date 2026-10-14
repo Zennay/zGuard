@@ -362,6 +362,36 @@ try{
   const balancedAfter=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(balancedAfter.ordinaryClicks,balancedBefore.ordinaryClicks+1,
     'Balanced mode must restore a native harmless cross-origin Firefox link');
+  // A strict-mode deny must not linger after the user changes mode. Use the
+  // exact same page-authored window.open button and the same foreign loopback
+  // origin that strict mode just rejected. Native popup must now persist.
+  const balancedHandles=await wd('GET','/session/'+session+'/window/handles');
+  assert.equal(balancedHandles.length,2,
+    'Balanced popup control starts with only fixture and extension settings tabs');
+  await click('#openCrossOriginPopup');
+  await until(async()=>
+    (await wd('GET','/session/'+session+'/window/handles')).length===3,
+    'balanced mode must retain ordinary cross-origin JavaScript popup',60);
+  const balancedPageState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
+  assert.equal(balancedPageState.pagePopupCross,2,
+    'Strict and balanced modes must each execute one trusted page open gesture');
+  assert.equal(balancedPageState.pagePopupCrossNative,true,
+    'Balanced page-world window.open must return an actual opened browser handle');
+  const balancedOpenHandles=await wd('GET','/session/'+session+'/window/handles');
+  const balancedPopupHandle=balancedOpenHandles.find(h=>!balancedHandles.includes(h));
+  assert.ok(balancedPopupHandle,
+    'Ordinary cross-origin balanced popup must have an independent native tab');
+  await wd('POST','/session/'+session+'/window',{handle:balancedPopupHandle});
+  await until(async()=>
+    new URL(await wd('GET','/session/'+session+'/url')).pathname==='/child',
+    'balanced popup actually loaded the distinct-origin local target',50);
+  const loadedPage=new URL(await wd('GET','/session/'+session+'/url'));
+  assert.equal(loadedPage.origin,'http://127.0.0.1:'+frameServer.address().port,
+    'Allowed balanced page-created tab must load the second, distinct loopback origin');
+  await wd('DELETE','/session/'+session+'/window');
+  await wd('POST','/session/'+session+'/window',{handle:originalHandle});
+  assert.deepEqual(new Set(await wd('GET','/session/'+session+'/window/handles')),
+    new Set(balancedHandles),'Closing the allowed popup must restore original two tabs');
   await wd('POST','/session/'+session+'/window',{handle:created.handle});
   await wd('DELETE','/session/'+session+'/window');
   await wd('POST','/session/'+session+'/window',{handle:originalHandle});
@@ -372,6 +402,7 @@ try{
   console.log('Firefox MAIN-world window.open guarded='+mainWorld+'; issue #3 independently gated.');
   console.log('Native Firefox MV2 popup PASS: live disabled/strict/balanced settings propagated to existing tab.');
   console.log('Firefox page-created tab fallback PASS: trusted same-origin window.open survives; strict cross-origin window.open leaves no tab; pageworld='+mainWorld+'.');
+  console.log('Firefox balanced page-created popup PASS: harmless second-origin tab survives real window.open and navigates, then closes cleanly.');
   if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,
     'Issue #3: Firefox isolated-world wrapper is not MAIN-world protection');
 }finally{
