@@ -297,7 +297,7 @@ const stagedPaths = execFileSync("git",
   }).split("\0").filter(Boolean);
 for (const relative of stagedPaths) {
   const blob = execFileSync("git", ["show", ":" + relative], {
-    cwd: root, encoding: "buffer", maxBuffer: 32 * 1024 * 1024
+    cwd: root, maxBuffer: 32 * 1024 * 1024
   });
   for (const signature of scanBytes(blob)) {
     findings.push({ file: relative + " (staged index)", signature });
