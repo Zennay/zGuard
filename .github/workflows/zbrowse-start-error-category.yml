@@ -7,11 +7,14 @@ on:
       - 'tests/zbrowse.start-error-category.test.mjs'
       - '.github/workflows/zbrowse-start-error-category.yml'
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'zbrowse/gateway/safe-start-error.js'
       - 'tests/zbrowse.start-error-category.test.mjs'
       - '.github/workflows/zbrowse-start-error-category.yml'
+
+  workflow_dispatch:
 
 permissions:
   contents: read
