@@ -13,11 +13,17 @@ const workflow = fs.readFileSync(
 );
 
 function verify(test, yaml) {
-  // MAIN-world must be read from real WebDriver page evaluation, not an
-  // independent content-script property, constant or an output-only log.
+  // MAIN-world detection must derive from genuine browser-native page JS:
+  // a trusted input runs a page capture listener that calls window.open;
+  // synchronous return false proves pre-open denial, not late tab cleanup.
   assert.ok(test.includes(
-    'const mainWorld=await evaluate(\'return window.open.name==="zGuardWindowOpen"\');'),
-    'main-world result must derive from an evaluated page window.open');
+    'const strictEarlyAfter=JSON.parse(await evaluate(\'return JSON.stringify(window.qa)\'));'),
+    'strict page result must come from WebDriver evaluation of the fixture');
+  assert.ok(test.includes(
+    'assert.equal(strictEarlyAfter.earlyMapTrusted,true,') &&
+    test.includes('assert.equal(strictEarlyAfter.earlyMapNative,false,') &&
+    test.includes('const mainWorld=!strictEarlyAfter.earlyMapNative;'),
+    'MAIN-world conclusion must be bound to a trusted native click and its synchronous page-owned popup result');
   // The opt-in path must assert the actual measured boolean (not just log
   // or report a baseline success) and must remain inside the live browser
   // session before teardown.
@@ -42,8 +48,14 @@ verify(source, workflow);
 
 for (const [label, needle, replacement] of [
   ['page-world replaced with constant',
-    "const mainWorld=await evaluate('return window.open.name===\"zGuardWindowOpen\"');",
+    'const mainWorld=!strictEarlyAfter.earlyMapNative;',
     'const mainWorld=true;'],
+  ['trusted native input bypassed',
+    'assert.equal(strictEarlyAfter.earlyMapTrusted,true,',
+    'assert.equal(strictEarlyAfter.earlyMapTrusted,false,'],
+  ['pre-open denial weakened',
+    'assert.equal(strictEarlyAfter.earlyMapNative,false,',
+    'assert.equal(strictEarlyAfter.earlyMapNative,true,'],
   ['MAIN-world check removed',
     "if(args.includes('--require-pageworld'))assert.equal(mainWorld,true,",
     "if(args.includes('--require-pageworld'))console.log(mainWorld);"],
