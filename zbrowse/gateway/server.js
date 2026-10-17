@@ -21,6 +21,10 @@ const server = http.createServer(app);
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 const sessions = new Map();
 const sessionsByIp = new Map();
+// Shutdown must reject new admissions and wait for already-starting browsers
+// before taking its container teardown snapshot.
+let shuttingDown = false;
+const inFlightSessionStarts = new Set();
 
 const config = {
   port: positiveInt(process.env.PORT, 8090),
@@ -218,6 +222,9 @@ function findSession(req) {
 }
 
 app.get("/api/health", (req, res) => {
+  if (typeof shuttingDown !== "undefined" && shuttingDown) {
+    return res.status(503).json({ status: "draining" });
+  }
   res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
@@ -228,6 +235,10 @@ app.get("/api/sites", (req, res) => {
 app.post("/api/session", sessionLimiter, async (req, res) => {
   // Responses can contain browser bearer tokens or their viewer URLs.
   res.setHeader("Cache-Control", "no-store");
+  // Respond before token reuse or browser creation during process shutdown.
+  if (typeof shuttingDown !== "undefined" && shuttingDown) {
+    return res.status(503).json({ error: "Browser service is shutting down." });
+  }
   // An ignored browser-simple POST body must never fall back to the default
   // start URL or obtain an existing owner's bearer token. Actual HTTP
   // requests always supply req.headers; the bare-route VM fixture does not.
@@ -279,13 +290,17 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     return res.status(503).json({ error: "All browser sessions are currently in use. Please try again shortly." });
   }
 
+  let starting;
   try {
-    const session = await createSession(ip, startUrl);
+    starting = createSession(ip, startUrl);
+    if (typeof inFlightSessionStarts !== "undefined") inFlightSessionStarts.add(starting);
+    const session = await starting;
     return res.status(201).json(publicSession(session));
   } catch (error) {
     console.error("Session creation failed", error);
     return res.status(500).json({ error: "The browser could not be started." });
   } finally {
+    if (starting && typeof inFlightSessionStarts !== "undefined") inFlightSessionStarts.delete(starting);
     sessionAdmission.release(ip);
   }
 });
@@ -398,9 +413,21 @@ const cleanupTimer = setInterval(() => {
 cleanupTimer.unref();
 
 async function shutdown() {
+  // State transition is synchronous, before the first await. The HTTP
+  // listener may still serve existing in-flight connections, but no new
+  // session is admitted and health cannot advertise ready during cleanup.
+  if (typeof shuttingDown !== "undefined") {
+    if (shuttingDown) return;
+    shuttingDown = true;
+  }
   clearInterval(cleanupTimer);
-  await Promise.allSettled([...sessions.keys()].map(destroySession));
-  server.close(() => process.exit(0));
+  const pending = typeof inFlightSessionStarts !== "undefined"
+    ? [...inFlightSessionStarts] : [];
+  await Promise.allSettled(pending);
+  const outcomes = await Promise.allSettled([...sessions.keys()].map(destroySession));
+  // A container that Docker refused to remove is never a successful stop.
+  const failed = outcomes.some(result => result.status === "rejected") || sessions.size > 0;
+  server.close(() => process.exit(failed ? 1 : 0));
   setTimeout(() => process.exit(1), 8000).unref();
 }
 
