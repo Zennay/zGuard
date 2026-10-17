@@ -46,6 +46,27 @@
   // before hydrating storage, so events racing the async read are not lost.
   const liveSettings = { ...DEFAULTS };
   const changedDuringHydration = new Set();
+  // Firefox MV2 content scripts have Xray vision: writing window.open in
+  // this isolated world alone does NOT protect calls made by page JavaScript.
+  // Firefox's exportFunction installs a narrowly scoped callback into the
+  // real page window at document_start. Never export runtime/storage APIs,
+  // mutable settings or a bridge accepting page commands.
+  function installFirefoxPageWorldOpen() {
+    if (typeof exportFunction !== 'function' || !window.wrappedJSObject) return;
+    // Capture the native method through the content script's Xray (not the
+    // page's writable unwrapped property, which may contain attacker code).
+    const nativeOpen = window.open;
+    if (typeof nativeOpen !== 'function') return;
+    function zGuardWindowOpen(rawUrl, target, features) {
+      if (liveSettings.enabled && shouldBlock(rawUrl || '', liveSettings.mode)) {
+        return null;
+      }
+      return nativeOpen.call(window, rawUrl, target, features);
+    }
+    exportFunction(zGuardWindowOpen, window.wrappedJSObject, { defineAs: 'open' });
+  }
+  installFirefoxPageWorldOpen();
+
   function validSetting(name, value) {
     if (name === 'enabled') return typeof value === 'boolean';
     return name === 'mode' && (value === 'balanced' || value === 'strict');
