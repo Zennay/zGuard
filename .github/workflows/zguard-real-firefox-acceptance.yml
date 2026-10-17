@@ -73,6 +73,8 @@ jobs:
           firefox --version
           geckodriver --version
           node --check tests/zguard.firefox-real-browser.test.mjs
+          node --check firefox/content.js
+          node tests/zguard.firefox-pageworld-export-contract.test.mjs
           node tests/zguard.firefox-pageworld-proof-integrity.test.mjs
           (
             cd firefox
