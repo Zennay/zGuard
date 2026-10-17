@@ -1,0 +1,51 @@
+name: zBrowse browser-start safe error category helper
+
+on:
+  pull_request:
+    paths:
+      - 'zbrowse/gateway/safe-start-error.js'
+      - 'tests/zbrowse.start-error-category.test.mjs'
+      - '.github/workflows/zbrowse-start-error-category.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'zbrowse/gateway/safe-start-error.js'
+      - 'tests/zbrowse.start-error-category.test.mjs'
+      - '.github/workflows/zbrowse-start-error-category.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-start-log-category-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  category-unit:
+    name: Read-only startup error category QA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout reviewed exact PR head
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify immutable source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Execute no-network independent security regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check zbrowse/gateway/safe-start-error.js
+          node --test tests/zbrowse.start-error-category.test.mjs
+          test -z "$(git status --porcelain)"
