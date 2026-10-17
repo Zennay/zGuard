@@ -40,6 +40,7 @@ let releases = 0;
 let destroyed = 0;
 let completion;
 let releaseStart;
+let startReleased = false;
 let reportExit;
 const created = new Promise(resolve => { completion = resolve; });
 const shutDown = new Promise(resolve => { reportExit = resolve; });
@@ -76,6 +77,10 @@ const context = {
     completion();
     return new Promise(resolve => {
       releaseStart = () => {
+        // Cleanup may invoke this a second time after shutdown. The fixture
+        // must not resurrect a synthetic container that was already removed.
+        if (startReleased) return;
+        startReleased = true;
         const session = {
           ip: owner, token,
           expiresAt: Date.now() + 900_000,
