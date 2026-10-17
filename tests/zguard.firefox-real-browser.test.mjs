@@ -393,7 +393,6 @@ try{
   await wd('POST','/session/'+session+'/frame',{id:null});
   const handles=await wd('GET','/session/'+session+'/window/handles');
   assert.equal(handles.length,1,'No unauthorized popup may remain');
-  const mainWorld=await evaluate('return window.open.name==="zGuardWindowOpen"');
   // A second real browser tab displays the actual installed extension popup.
   // Preserve the original fixture tab: this is live storage propagation, not
   // merely a fresh navigation after settings have changed.
@@ -485,8 +484,13 @@ try{
     'Real Firefox image-map click must run page window-capture JS');
   assert.equal(strictEarlyAfter.earlyMapTrusted,true,
     'Early page capture handler must observe trusted native image-map input');
-  assert.equal(strictEarlyAfter.earlyMapNative,true,
-    'Firefox page script must actually call and open a popup before background removal');
+  assert.equal(strictEarlyAfter.earlyMapNative,false,
+    'Trusted Firefox MAIN-world early page-capture popup must be denied before native tab creation');
+  // Unlike browser-level tabs.onCreated cleanup, this result is captured
+  // synchronously by real page-authored JS during the trusted input event.
+  // Positive native same-origin and balanced cross-site tab controls below
+  // rule out a browser with all popups disabled.
+  const mainWorld=!strictEarlyAfter.earlyMapNative;
   await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===2,
     'Strict background fallback must remove early image-map page popup',60);
   // Browser-level fallback: invoke a page-authored window.open from an actual
@@ -516,8 +520,8 @@ try{
   const crossState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(crossState.pagePopupCross,1,
     'Real page JavaScript must request cross-origin window.open once');
-  if(!mainWorld)assert.equal(crossState.pagePopupCrossNative,true,
-    'Without MAIN-world interception, Firefox must actually open the target before background fallback');
+  assert.equal(crossState.pagePopupCrossNative,!mainWorld,
+    'Real Firefox MAIN-world Strict must deny page-authored window.open before native tab creation; legacy isolated fallback alone can only close the tab later');
   await until(async()=>
     (await wd('GET','/session/'+session+'/window/handles')).length===2,
     'strict Firefox policy must remove page-created cross-origin popup',60);

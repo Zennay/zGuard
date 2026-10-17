@@ -57,6 +57,13 @@ jobs:
           test -x "$RUNNER_TEMP/firefox/firefox"
           test -x "$RUNNER_TEMP/geckodriver"
           echo "$RUNNER_TEMP/firefox:$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Require strict Firefox page-world proof on reviewed PR heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "REQUIRE_PAGEWORLD=true" >> "$GITHUB_ENV"
+          fi
       - name: Run real Firefox MV2 acceptance against loopback only
         shell: bash
         env:
@@ -66,6 +73,8 @@ jobs:
           firefox --version
           geckodriver --version
           node --check tests/zguard.firefox-real-browser.test.mjs
+          node --check firefox/content.js
+          node tests/zguard.firefox-pageworld-export-contract.test.mjs
           node tests/zguard.firefox-pageworld-proof-integrity.test.mjs
           (
             cd firefox
