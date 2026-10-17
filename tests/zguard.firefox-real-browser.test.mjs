@@ -485,8 +485,8 @@ try{
     'Real Firefox image-map click must run page window-capture JS');
   assert.equal(strictEarlyAfter.earlyMapTrusted,true,
     'Early page capture handler must observe trusted native image-map input');
-  assert.equal(strictEarlyAfter.earlyMapNative,true,
-    'Firefox page script must actually call and open a popup before background removal');
+  assert.equal(strictEarlyAfter.earlyMapNative, !mainWorld,
+    'Native Firefox image-map window.open must be denied before tab creation in MAIN world, or opened for legacy background fallback');
   await until(async()=> (await wd('GET','/session/'+session+'/window/handles')).length===2,
     'Strict background fallback must remove early image-map page popup',60);
   // Browser-level fallback: invoke a page-authored window.open from an actual
@@ -516,8 +516,8 @@ try{
   const crossState=JSON.parse(await evaluate('return JSON.stringify(window.qa)'));
   assert.equal(crossState.pagePopupCross,1,
     'Real page JavaScript must request cross-origin window.open once');
-  if(!mainWorld)assert.equal(crossState.pagePopupCrossNative,true,
-    'Without MAIN-world interception, Firefox must actually open the target before background fallback');
+  assert.equal(crossState.pagePopupCrossNative,!mainWorld,
+    'Real Firefox MAIN-world Strict must deny page-authored window.open before native tab creation; legacy isolated fallback alone can only close the tab later');
   await until(async()=>
     (await wd('GET','/session/'+session+'/window/handles')).length===2,
     'strict Firefox policy must remove page-created cross-origin popup',60);
