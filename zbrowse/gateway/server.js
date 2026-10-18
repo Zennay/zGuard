@@ -122,6 +122,9 @@ async function createSession(ip, startUrl) {
   const containerName = `zbrowse-${token.slice(0, 12).toLowerCase()}`;
   const subfolder = `/s/${token}/`;
 
+  // LinuxServer Selkies TV-kiosk: deny shell, desktop launchers, local file
+  // transfers and client peripherals while retaining video/audio streaming.
+  // Env is deliberately literal/inspectable by existing source contracts.
   const container = await docker.createContainer({
     Image: config.image,
     name: containerName,
@@ -134,9 +137,6 @@ async function createSession(ip, startUrl) {
       "PIXELFLUX_WAYLAND=true",
       "DISABLE_IPV6=true",
       "NO_DECOR=true",
-      // LinuxServer Selkies TV-kiosk: lock down shell, desktop launchers,
-      // file transfers, sharing and client peripherals without disabling
-      // the outgoing video/audio stream.
       "HARDEN_DESKTOP=true",
       "HARDEN_OPENBOX=true",
       "DISABLE_OPEN_TOOLS=true",
