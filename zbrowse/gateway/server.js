@@ -31,32 +31,23 @@ const config = {
   nanoCpus: Math.max(0.25, positiveNumber(process.env.BROWSER_CPU, 1)) * 1e9,
   image: process.env.BROWSER_IMAGE || "zbrowse-browser:1.0.0",
   network: process.env.BROWSER_NETWORK || "zbrowse_net",
-  startUrl: process.env.START_URL || "https://fawesome.tv/"
+  startUrl: process.env.START_URL || "https://fawesome.tv/",
+  publicOrigin: (() => {
+    const value = (process.env.ZBROWSE_PUBLIC_ORIGIN || "").trim();
+    if (!value) return "";
+    let parsed;
+    try { parsed = new URL(value); }
+    catch { throw new Error("Invalid ZBROWSE_PUBLIC_ORIGIN; a canonical HTTPS origin is required."); }
+    if (parsed.protocol !== "https:" || parsed.origin !== value ||
+        parsed.username || parsed.password || parsed.search || parsed.hash ||
+        parsed.pathname !== "/") {
+      throw new Error("ZBROWSE_PUBLIC_ORIGIN must be an exact canonical HTTPS origin.");
+    }
+    return parsed.origin;
+  })()
 };
 
 const sessionAdmission = createSessionAdmission(config.maxSessions);
-
- // The Host header is caller-controlled: only approved authorities can mint tokens.
- // Public exposure requires an explicitly configured canonical HTTPS origin.
- const configuredPublicOriginValue = (process.env.ZBROWSE_PUBLIC_ORIGIN || "").trim();
- let configuredPublicOrigin = "";
- if (configuredPublicOriginValue) {
-   const parsed = new URL(configuredPublicOriginValue);
-   if (parsed.protocol !== "https:" || parsed.origin !== configuredPublicOriginValue ||
-       parsed.username || parsed.password || parsed.search || parsed.hash ||
-       parsed.pathname !== "/") {
-     throw new Error("ZBROWSE_PUBLIC_ORIGIN must be a canonical HTTPS origin without path or credentials.");
-   }
-   configuredPublicOrigin = parsed.origin;
- }
- const gatewayOriginsByHost = new Map([
-   ["127.0.0.1:" + config.port, "http://127.0.0.1:" + config.port],
-   ["localhost:" + config.port, "http://localhost:" + config.port]
- ]);
- if (configuredPublicOrigin) {
-   gatewayOriginsByHost.set(new URL(configuredPublicOrigin).host, configuredPublicOrigin);
- }
-
 
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
 const allowedOrigins = new Set(sites.map((site) => new URL(site.url).origin.toLowerCase()));
@@ -269,15 +260,26 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const rawHost = req.headers.host;
     const repeatedHost = Array.isArray(req.headersDistinct?.host) &&
       req.headersDistinct.host.length !== 1;
-    const trustedOrigin = typeof rawHost === "string" && !repeatedHost
-      ? gatewayOriginsByHost.get(rawHost.toLowerCase()) : undefined;
-    // Require an operator-approved Host AND scheme. Two forged headers must
-    // never establish their own "same-origin" authority.
-    const trustedScheme = trustedOrigin && new URL(trustedOrigin).protocol.slice(0, -1);
+    let trustedOrigin;
+    if (typeof rawHost === "string" && !repeatedHost) {
+      const localHost = /^(127\\.0\\.0\\.1|localhost):([1-9][0-9]{0,4})$/.exec(rawHost.toLowerCase());
+      // Local clients use the *actual* listening socket port, not a port
+      // chosen by the requester. This works for ephemeral local dev ports.
+      if (localHost && req.protocol === "http" &&
+          Number(localHost[2]) === req.socket?.localPort) {
+        trustedOrigin = "http://" + rawHost.toLowerCase();
+      }
+      const canonicalPublic = config.publicOrigin || "";
+      if (canonicalPublic && req.protocol === "https" &&
+          rawHost.toLowerCase() === new URL(canonicalPublic).host) {
+        trustedOrigin = canonicalPublic;
+      }
+    }
+    // Neither a forged Host/Origin pair nor X-Forwarded-Host authorizes a
+    // gateway; the public authority only comes from configured origin.
     const approvedOrigins = new Set([trustedOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
     const invalidFetchSite = fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite);
-    if (!trustedOrigin || req.protocol !== trustedScheme ||
-        repeatedOrigin || invalidFetchSite ||
+    if (!trustedOrigin || repeatedOrigin || invalidFetchSite ||
         (origin !== undefined && !approvedOrigins.has(origin))) {
       return res.status(403).json({ error: "Browser session request not allowed." });
     }
