@@ -230,12 +230,16 @@ app.get("/api/sites", (req, res) => {
 // canonical client identity *before* the unchanged rate limiter runs; its
 // built-in IPv6 aggregation remains intact. This applies only to creation,
 // never to unrelated API routes or the authenticated viewer.
-app.post("/api/session", (req, _res, next) => {
-  Object.defineProperty(req, "ip", {
-    configurable: true,
-    enumerable: true,
-    value: requestIp(req, trustProxyHops)
-  });
+app.use("/api/session", (req, _res, next) => {
+  // Only bind a new-browser POST. Token-specific /heartbeat and /DELETE
+  // requests retain their original Express request representation.
+  if (req.method === "POST" && req.path === "/") {
+    Object.defineProperty(req, "ip", {
+      configurable: true,
+      enumerable: true,
+      value: requestIp(req, trustProxyHops)
+    });
+  }
   next();
 });
 
