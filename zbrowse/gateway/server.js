@@ -139,6 +139,7 @@ async function createSession(ip, startUrl) {
       // the outgoing video/audio stream.
       "HARDEN_DESKTOP=true",
       "HARDEN_OPENBOX=true",
+      "DISABLE_OPEN_TOOLS=true",
       "DISABLE_SUDO=true",
       "DISABLE_TERMINALS=true",
       "RESTART_APP=true",
@@ -152,7 +153,13 @@ async function createSession(ip, startUrl) {
       "SELKIES_CLIPBOARD_SEAMLESS=false|locked",
       "SELKIES_MICROPHONE_ENABLED=false|locked",
       "SELKIES_PRINTING_ENABLED=false|locked",
-      "SELKIES_SHARING_ENABLED=false|locked"
+      "SELKIES_ENABLE_SHARING=false|locked",
+      "SELKIES_ENABLE_COLLAB=false|locked",
+      "SELKIES_ENABLE_SHARED=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_FILES=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_APPS=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_SHARING=false|locked"
     ],
     Labels: {
       "zbrowse.managed": "true",
