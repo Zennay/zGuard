@@ -12,7 +12,7 @@ import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
-import { ipKeyGenerator, rateLimit } from "express-rate-limit";
+import { rateLimit } from "express-rate-limit";
 import { createProxyServer } from "httpxy";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,12 +61,6 @@ app.use(express.json({ limit: "8kb" }));
 const sessionLimiter = rateLimit({
   windowMs: 10 * 60_000,
   limit: 4,
-  // Use exactly the same reviewed proxy-chain identity as session ownership.
-  // Express req.ip can honor malformed/incomplete X-Forwarded-For chains
-  // that requestIp correctly falls back from to the real TCP peer.
-  // ipKeyGenerator applies the library's IPv6 subnet bucketing while
-  // preserving distinct canonical IPv4 clients behind a shared proxy.
-  keyGenerator: (req) => ipKeyGenerator(requestIp(req, trustProxyHops)),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many session attempts. Please try again later." }
@@ -229,6 +223,20 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/sites", (req, res) => {
   res.json({ sites, maxSessionMinutes: Math.round(config.ttlMs / 60_000) });
+});
+
+// Express's native req.ip can accept an incomplete or malformed forwarded
+// chain even when the reviewed browser owner resolver rejects it. Bind the
+// canonical client identity *before* the unchanged rate limiter runs; its
+// built-in IPv6 aggregation remains intact. This applies only to creation,
+// never to unrelated API routes or the authenticated viewer.
+app.post("/api/session", (req, _res, next) => {
+  Object.defineProperty(req, "ip", {
+    configurable: true,
+    enumerable: true,
+    value: requestIp(req, trustProxyHops)
+  });
+  next();
 });
 
 app.post("/api/session", sessionLimiter, async (req, res) => {
