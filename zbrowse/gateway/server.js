@@ -134,8 +134,25 @@ async function createSession(ip, startUrl) {
       "PIXELFLUX_WAYLAND=true",
       "DISABLE_IPV6=true",
       "NO_DECOR=true",
-      "SELKIES_ENABLE_FILE_TRANSFER=false",
-      "SELKIES_ENABLE_CLIPBOARD=false"
+      // LinuxServer Selkies TV-kiosk: lock down shell, desktop launchers,
+      // file transfers, sharing and client peripherals without disabling
+      // the outgoing video/audio stream.
+      "HARDEN_DESKTOP=true",
+      "HARDEN_OPENBOX=true",
+      "DISABLE_SUDO=true",
+      "DISABLE_TERMINALS=true",
+      "RESTART_APP=true",
+      "START_DOCKER=false",
+      "NO_WEBCAM=true",
+      "NO_GAMEPAD=true",
+      "SELKIES_COMMAND_ENABLED=false|locked",
+      "SELKIES_FILE_TRANSFERS=none",
+      "SELKIES_ENABLE_CLIPBOARD=false|locked",
+      "SELKIES_ENABLE_BINARY_CLIPBOARD=false|locked",
+      "SELKIES_CLIPBOARD_SEAMLESS=false|locked",
+      "SELKIES_MICROPHONE_ENABLED=false|locked",
+      "SELKIES_PRINTING_ENABLED=false|locked",
+      "SELKIES_SHARING_ENABLED=false|locked"
     ],
     Labels: {
       "zbrowse.managed": "true",
