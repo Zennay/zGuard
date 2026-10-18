@@ -64,6 +64,44 @@ location / {
 }
 ```
 
+## Vertrouwde gateway-host voor het starten van browsers
+
+Een HTTP-client mag de `Host`-header kiezen. De gateway accepteert deze
+niet langer als bewijs van een toegestane eigen `Origin`. Stel vóór
+publieke sessiestart in `.env` de **canonieke HTTPS-origin van de eigen
+zBrowse-gateway** in, bijvoorbeeld:
+
+```dotenv
+ZBROWSE_PUBLIC_ORIGIN=https://browser.example.com
+```
+
+Gebruik de echte, door jou beheerde hostnaam in plaats van
+`browser.example.com`. De instelling is **uitsluitend** een origin:
+`https://`, exacte host, eventueel een expliciete poort; géén pad,
+query, fragment, gebruikersnaam, wachtwoord of afsluitende slash.
+Een ontbrekende/lege instelling laat alleen direct lokale toegang via
+`127.0.0.1:PORT` of `localhost:PORT` toe voor sessiestart. Een
+ongeldige niet-lege waarde stopt de gateway bij startup in plaats van
+een willekeurige externe host te vertrouwen.
+
+De reverse proxy moet de originele, goedgekeurde `Host`-header
+doorgeven en de HTTPS-scheme betrouwbaar zetten. Configureer bij Nginx
+`proxy_set_header X-Forwarded-Proto $scheme;` en bij Caddy de normale
+trusted proxy instellingen. Beperk de publieke ingress in de proxy
+zelf tot de goedgekeurde host; de gateway controleert daarnaast
+zelfstandig de HTTP Host en scheme vóór bestaande sessiehergebruik
+of het reserveren van een browsercontainer. Twee aan elkaar
+gelijkgemaakte maar ongeautoriseerde `Host` en `Origin` headers
+zijn nooit voldoende.
+
+De expliciet bestaande TV-frontend-origin blijft als oorsprong van
+browserrequests toegestaan, maar **alleen wanneer de gateway-Host en
+scheme zelf vertrouwd zijn**. Deze wijziging verleent geen algemene
+toegang aan andere sites, zet CORS niet open en autoriseert geen
+browseractie zonder de bestaande IP-, TTL- en URL-beperkingen.
+Een productie-ingress-/devicecontrole blijft afzonderlijk verplicht
+voordat de kwetsbaarheidsissue wordt gesloten.
+
 ## Websites aanpassen
 
 De publieke snelkoppelingen staan in `gateway/config/sites.json`. De browserbeperking staat in `browser/policies/policy.json`. Pas beide aan en voer daarna uit:
