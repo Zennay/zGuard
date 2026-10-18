@@ -36,6 +36,28 @@ const config = {
 
 const sessionAdmission = createSessionAdmission(config.maxSessions);
 
+ // The Host header is caller-controlled: only approved authorities can mint tokens.
+ // Public exposure requires an explicitly configured canonical HTTPS origin.
+ const configuredPublicOriginValue = (process.env.ZBROWSE_PUBLIC_ORIGIN || "").trim();
+ let configuredPublicOrigin = "";
+ if (configuredPublicOriginValue) {
+   const parsed = new URL(configuredPublicOriginValue);
+   if (parsed.protocol !== "https:" || parsed.origin !== configuredPublicOriginValue ||
+       parsed.username || parsed.password || parsed.search || parsed.hash ||
+       parsed.pathname !== "/") {
+     throw new Error("ZBROWSE_PUBLIC_ORIGIN must be a canonical HTTPS origin without path or credentials.");
+   }
+   configuredPublicOrigin = parsed.origin;
+ }
+ const gatewayOriginsByHost = new Map([
+   ["127.0.0.1:" + config.port, "http://127.0.0.1:" + config.port],
+   ["localhost:" + config.port, "http://localhost:" + config.port]
+ ]);
+ if (configuredPublicOrigin) {
+   gatewayOriginsByHost.set(new URL(configuredPublicOrigin).host, configuredPublicOrigin);
+ }
+
+
 const sites = JSON.parse(fs.readFileSync(path.join(__dirname, "config/sites.json"), "utf8"));
 const allowedOrigins = new Set(sites.map((site) => new URL(site.url).origin.toLowerCase()));
 
@@ -244,10 +266,18 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const fetchSite = req.headers["sec-fetch-site"];
     const receivedOrigins = req.headersDistinct?.origin;
     const repeatedOrigin = Array.isArray(receivedOrigins) && receivedOrigins.length !== 1;
-    const ownOrigin = req.protocol + "://" + req.get("host");
-    const approvedOrigins = new Set([ownOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
+    const rawHost = req.headers.host;
+    const repeatedHost = Array.isArray(req.headersDistinct?.host) &&
+      req.headersDistinct.host.length !== 1;
+    const trustedOrigin = typeof rawHost === "string" && !repeatedHost
+      ? gatewayOriginsByHost.get(rawHost.toLowerCase()) : undefined;
+    // Require an operator-approved Host AND scheme. Two forged headers must
+    // never establish their own "same-origin" authority.
+    const trustedScheme = trustedOrigin && new URL(trustedOrigin).protocol.slice(0, -1);
+    const approvedOrigins = new Set([trustedOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
     const invalidFetchSite = fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite);
-    if (repeatedOrigin || invalidFetchSite ||
+    if (!trustedOrigin || req.protocol !== trustedScheme ||
+        repeatedOrigin || invalidFetchSite ||
         (origin !== undefined && !approvedOrigins.has(origin))) {
       return res.status(403).json({ error: "Browser session request not allowed." });
     }
