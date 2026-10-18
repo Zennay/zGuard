@@ -85,7 +85,7 @@ De belangrijkste waarden in `.env`:
 - `IDLE_TTL_MINUTES=5`: opruimen wanneer de portal geen heartbeat meer stuurt;
 - `BROWSER_MEMORY_MB=2048`: RAM per sessie;
 - `BROWSER_CPU=1`: CPU-limiet per sessie;
-- `TRUST_PROXY=1`: gebruiken achter één reverse proxy.
+- `TRUST_PROXY=1`: gebruiken achter één reverse proxy. Het sessie-eigenaarschap **en de POST /api/session-aanvraaglimiet** hanteren nu exact dezelfde conservatieve IP-bepaling: bij een ontbrekende, te korte of ongeldige vertrouwde X-Forwarded-For-keten wordt de TCP-peer gebruikt, nooit een onbewezen doorgestuurd clientadres. IPv6 blijft per prefix begrensd via de bestaande express-rate-limit-voorziening. Zet deze waarde alleen gelijk aan het aantal aantoonbaar vertrouwde proxyhops; `TRUST_PROXY=0` negeert X-Forwarded-For volledig.
 
 Het installatiescript vult `DOCKER_GID` automatisch in zodat de gateway alleen via zijn aanvullende groep toegang krijgt tot de Docker-socket.
 

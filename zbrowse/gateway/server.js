@@ -249,6 +249,24 @@ app.get("/api/sites", (req, res) => {
   res.json({ sites, maxSessionMinutes: Math.round(config.ttlMs / 60_000) });
 });
 
+// Express's native req.ip can accept an incomplete or malformed forwarded
+// chain even when the reviewed browser owner resolver rejects it. Bind the
+// canonical client identity *before* the unchanged rate limiter runs; its
+// built-in IPv6 aggregation remains intact. This applies only to creation,
+// never to unrelated API routes or the authenticated viewer.
+app.use("/api/session", (req, _res, next) => {
+  // Only bind a new-browser POST. Token-specific /heartbeat and /DELETE
+  // requests retain their original Express request representation.
+  if (req.method === "POST" && req.path === "/") {
+    Object.defineProperty(req, "ip", {
+      configurable: true,
+      enumerable: true,
+      value: requestIp(req, trustProxyHops)
+    });
+  }
+  next();
+});
+
 app.post("/api/session", sessionLimiter, async (req, res) => {
   // Responses can contain browser bearer tokens or their viewer URLs.
   res.setHeader("Cache-Control", "no-store");
