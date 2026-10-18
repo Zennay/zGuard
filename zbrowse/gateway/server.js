@@ -265,9 +265,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
       const localHost = /^(127\.0\.0\.1|localhost):([1-9][0-9]{0,4})$/.exec(rawHost.toLowerCase());
       // Local clients use the *actual* listening socket port, not a port
       // chosen by the requester. This works for ephemeral local dev ports.
-      if (localHost && req.protocol === "http" &&
+      if (localHost && ["http", "https"].includes(req.protocol) &&
           Number(localHost[2]) === req.socket?.localPort) {
-        trustedOrigin = "http://" + rawHost.toLowerCase();
+        trustedOrigin = req.protocol + "://" + rawHost.toLowerCase();
       }
       const canonicalPublic = config.publicOrigin || "";
       if (canonicalPublic && req.protocol === "https" &&
