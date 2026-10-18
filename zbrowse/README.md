@@ -17,6 +17,9 @@ De publieke startpagina maakt zBrowse niet tot een open proxy:
 - alleen een begrensde `/tmp`-tmpfs blijft schrijfbaar en gatewaylogs worden geroteerd;
 - een Docker-healthcheck controleert de bestaande `/api/health`-route;
 - zGuard blokkeert popups en externe pop-unders.
+- de browsercontainer draait als vergrendelde Selkies-kiosk: desktopgereedschappen, sudo, terminals en window-manager-uitwegen worden uitgeschakeld; sluiten van de kioskapp herstart de browser automatisch;
+- sessiegebruikers kunnen geen Selkies bestanden overdragen, kopiëren/plakken, printen, delen, apps starten of webcam/microfoon/gamepad doorsturen; de TV-video- en audio-uitvoer blijven beschikbaar;
+- geen Docker-in-Docker startup; deze kioskconfiguratie vervangt niet de onafhankelijke Chromium-sandbox, Docker-runtime-isolatie of de browser-gateway-authorisatie.
 
 Voeg alleen websites toe waarvoor je dit soort toegang mag aanbieden. Maak de dienst niet onbeperkt toegankelijk tot ieder willekeurig domein.
 
@@ -109,3 +112,11 @@ docker compose logs -f gateway
 ```
 
 Een geldige healthrespons bevat `"status":"ok"` en het aantal actieve sessies. `docker compose ps gateway` hoort de gateway als `healthy` te tonen.
+
+## Browser-kiosk releasecontrole (#10)
+
+De gateway maakt bij iedere geautoriseerde nieuwe `/api/session` in `gateway/server.js` een browsercontainer met vaste Selkies hardening-variabelen. Deze policy kan niet door de client, het start-URL-veld of externe HTTP-headers worden overschreven. De ingebouwde browser blijft voor eindgebruikers via de normale viewer werken; `RESTART_APP` is bewust aangezet zodat sluiten van Chromium geen onbeheerde desktop geeft.
+
+Bronnen: [Selkies Security and Hardening](https://docs.linuxserver.io/selkies/user-guide/security/) en [Configuration Reference](https://docs.linuxserver.io/selkies/user-guide/configuration/). `SELKIES_FILE_TRANSFERS=none` vervangt het niet-ondersteunde `SELKIES_ENABLE_FILE_TRANSFER`; `|locked` vergrendelt betreffende boolean-instellingen. Privé-data en browser-wachtwoorden horen niet in logs of opleverdocumentatie.
+
+**Vóór productieactivatie** moet de bevoegde eigenaar na de bestaande bron-CI en onafhankelijke review onder een geserialiseerd releasevenster de daadwerkelijke effectieve browsercontainerconfiguratie controleren (`docker inspect` voor Env, privileges, mounts en netwerk), een bruikbare TV-browser openen en aantonen dat terminal, apps, bestanden, sharing en clipboard niet bereikbaar zijn en herstart van Chromium werkt. Doe dit alleen met een geautoriseerde nieuwe lege sessie; geen bestaande actieve sessies, production-DB of worker-taken verstoren. Zolang die acceptatie ontbreekt geldt `fixed_in_source`, niet `deployed` of `runtime_verified`.
