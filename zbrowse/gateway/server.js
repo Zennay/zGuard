@@ -122,6 +122,9 @@ async function createSession(ip, startUrl) {
   const containerName = `zbrowse-${token.slice(0, 12).toLowerCase()}`;
   const subfolder = `/s/${token}/`;
 
+  // LinuxServer Selkies TV-kiosk: deny shell, desktop launchers, local file
+  // transfers and client peripherals while retaining video/audio streaming.
+  // Env is deliberately literal/inspectable by existing source contracts.
   const container = await docker.createContainer({
     Image: config.image,
     name: containerName,
@@ -134,8 +137,29 @@ async function createSession(ip, startUrl) {
       "PIXELFLUX_WAYLAND=true",
       "DISABLE_IPV6=true",
       "NO_DECOR=true",
-      "SELKIES_ENABLE_FILE_TRANSFER=false",
-      "SELKIES_ENABLE_CLIPBOARD=false"
+      "HARDEN_DESKTOP=true",
+      "HARDEN_OPENBOX=true",
+      "DISABLE_OPEN_TOOLS=true",
+      "DISABLE_SUDO=true",
+      "DISABLE_TERMINALS=true",
+      "RESTART_APP=true",
+      "START_DOCKER=false",
+      "NO_WEBCAM=true",
+      "NO_GAMEPAD=true",
+      "SELKIES_COMMAND_ENABLED=false|locked",
+      "SELKIES_FILE_TRANSFERS=none",
+      "SELKIES_ENABLE_CLIPBOARD=false|locked",
+      "SELKIES_ENABLE_BINARY_CLIPBOARD=false|locked",
+      "SELKIES_CLIPBOARD_SEAMLESS=false|locked",
+      "SELKIES_MICROPHONE_ENABLED=false|locked",
+      "SELKIES_PRINTING_ENABLED=false|locked",
+      "SELKIES_ENABLE_SHARING=false|locked",
+      "SELKIES_ENABLE_COLLAB=false|locked",
+      "SELKIES_ENABLE_SHARED=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_FILES=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_APPS=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_SHARING=false|locked"
     ],
     Labels: {
       "zbrowse.managed": "true",
