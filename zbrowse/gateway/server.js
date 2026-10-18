@@ -12,7 +12,7 @@ import { isSessionExpired } from "./session-lifetime.js";
 import Docker from "dockerode";
 import express from "express";
 import helmet from "helmet";
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { createProxyServer } from "httpxy";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +61,12 @@ app.use(express.json({ limit: "8kb" }));
 const sessionLimiter = rateLimit({
   windowMs: 10 * 60_000,
   limit: 4,
+  // Use exactly the same reviewed proxy-chain identity as session ownership.
+  // Express req.ip can honor malformed/incomplete X-Forwarded-For chains
+  // that requestIp correctly falls back from to the real TCP peer.
+  // ipKeyGenerator applies the library's IPv6 subnet bucketing while
+  // preserving distinct canonical IPv4 clients behind a shared proxy.
+  keyGenerator: (req) => ipKeyGenerator(requestIp(req, trustProxyHops)),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many session attempts. Please try again later." }
