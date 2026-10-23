@@ -403,7 +403,15 @@ function browserProxyError(error, response) {
     "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE",
     "ENOTFOUND", "EAI_AGAIN", "ERR_STREAM_PREMATURE_CLOSE"
   ]);
-  const category = safeCodes.has(error?.code) ? error.code : "UPSTREAM_FAILURE";
+  let category = "UPSTREAM_FAILURE";
+  try {
+    // Read the untrusted property once: accessors may throw or return
+    // different values on successive reads. Only fixed literals reach logs.
+    const code = error?.code;
+    if (safeCodes.has(code)) category = code;
+  } catch {
+    // An invalid upstream error object must still receive a generic 502.
+  }
   console.error("Browser proxy error", category);
   if (response?.writeHead && !response.headersSent) {
     response.writeHead(502).end("Browser connection interrupted.");
