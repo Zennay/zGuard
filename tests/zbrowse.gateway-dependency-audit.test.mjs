@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertVpsOwnerGuardedJob } from './workflow-runner-policy.mjs';
 
 const workflow = fs.readFileSync(
   new URL('../.github/workflows/gateway-dependency-audit.yml', import.meta.url),
@@ -28,7 +29,7 @@ assert.match(
   'gateway image must install the locked production dependency graph without lifecycle scripts or implicit audit traffic'
 );
 
-assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'dependency audit must use a portable hosted runner');
+assertVpsOwnerGuardedJob(workflow, 'dependency audit');
 assert.match(workflow, /timeout-minutes:\s*10/, 'dependency audit must have a bounded timeout');
 assert.match(
   workflow,

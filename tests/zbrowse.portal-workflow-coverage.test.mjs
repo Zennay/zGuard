@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertVpsOwnerGuardedJob } from './workflow-runner-policy.mjs';
 
 const workflow = fs.readFileSync(
   new URL('../.github/workflows/portal-accessibility-validation.yml', import.meta.url),
@@ -59,9 +60,6 @@ assert.ok(
   workflow.indexOf(verify) < workflow.indexOf('node tests/zbrowse.frontend-session.test.js'),
   'checkout identity must be proved before browser-session regression tests execute'
 );
-assert.ok(
-  /runs-on:\s*ubuntu-latest/.test(workflow),
-  'untrusted portal pull requests must run on an ephemeral hosted runner'
-);
+assertVpsOwnerGuardedJob(workflow, 'portal accessibility workflow');
 
 console.log('zBrowse portal accessibility workflow coverage passed');
