@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertVpsOwnerGuardedJob } from './workflow-runner-policy.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -48,7 +49,7 @@ assert.match(readme, /read-only rootfilesystem/, 'README must document the read-
 assert.match(readme, /no-new-privileges/, 'README must document privilege-escalation hardening');
 assert.match(readme, /Docker-healthcheck controleert de bestaande `\/api\/health`-route/, 'README must document the application healthcheck');
 assert.match(readme, /docker compose ps gateway/, 'README must document how to inspect gateway health');
-assert.match(readme, /portable hosted runner/, 'README must describe the executable gateway CI gate');
+assert.match(readme, /VPS-runner/, 'README must describe the executable gateway CI gate');
 assert.match(
   readme,
   /effectieve draaiende container/,
@@ -60,7 +61,7 @@ assert.match(
   'README must document the live non-root Docker socket access proof'
 );
 
-assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'containment validation must use a portable hosted runner');
+assertVpsOwnerGuardedJob(workflow, 'containment validation');
 assert.match(workflow, /timeout-minutes:\s*[1-9][0-9]*/, 'containment validation must have a bounded timeout');
 assert.match(workflow, /permissions:\s*\n\s+contents:\s*read/, 'workflow token must remain read-only');
 assert.match(

@@ -51,8 +51,10 @@ The smoke gate also executes behavior coverage for the balanced/strict decision 
 
 ### CI merge gate
 
-`zGuard quality validation` is the portable merge gate for pull requests. It runs on
-`ubuntu-latest` and keeps the extension smoke suite, zBrowse runtime contracts,
+`zGuard quality validation` is the merge gate for pull requests. Like every
+workflow it runs only on the VPS runner pool `[self-hosted, portfolio-pool, vps]`,
+and pull requests reach that runner only when they come from this repository and
+were opened by the owner. It keeps the extension smoke suite, zBrowse runtime contracts,
 locked production install, and high-severity production dependency audit in one
 terminal check.
 

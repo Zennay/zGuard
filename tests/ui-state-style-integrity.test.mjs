@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertVpsOwnerGuardedJob } from './workflow-runner-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -136,7 +137,7 @@ assert.deepEqual(
 );
 
 const workflow = read('.github/workflows/ui-state-style-integrity.yml');
-assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'state-style validation must use a portable hosted runner');
+assertVpsOwnerGuardedJob(workflow, 'state-style validation');
 assert.match(
   workflow,
   /permissions:\s*\n\s+contents:\s*read/,

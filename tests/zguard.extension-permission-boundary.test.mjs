@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertVpsOwnerGuardedJob } from "./workflow-runner-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const load = (location) => JSON.parse(fs.readFileSync(path.join(root, location), "utf8"));
@@ -118,7 +119,7 @@ for (const [label, mutation] of unsafe) {
 const workflow = fs.readFileSync(path.join(root,
   ".github/workflows/zguard-extension-permission-boundary.yml"), "utf8");
 for (const expected of [
-  "pull_request:", "push:", "workflow_dispatch:", "runs-on: ubuntu-latest",
+  "pull_request:", "push:", "workflow_dispatch:",
   "timeout-minutes: 5", "contents: read",
   "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
   "persist-credentials: false", "git rev-parse HEAD", "EXPECTED_SHA:",
@@ -126,6 +127,7 @@ for (const expected of [
 ]) {
   assert.ok(workflow.includes(expected), "Permission workflow missing " + expected);
 }
+assertVpsOwnerGuardedJob(workflow, "Permission workflow");
 assert.doesNotMatch(workflow, /^\s+paths:\s*$/m,
   "Permission protection must run on every PR/push");
 console.log("zGuard extension permission surface validated across three packages");
