@@ -325,6 +325,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const session = await createSession(ip, startUrl);
     return res.status(201).json(publicSession(session));
   } catch (error) {
+    // Docker error objects can carry bearer URLs, passwords and nested request
+    // metadata. Preserve a diagnostic event without printing any untrusted data.
+    error = "BROWSER_START_FAILURE";
     console.error("Session creation failed", error);
     return res.status(500).json({ error: "The browser could not be started." });
   } finally {
@@ -433,7 +436,12 @@ const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
     if (session.cleanupFailed || isSessionExpired(session, config.idleMs, now)) {
-      destroySession(session.token).catch((error) => console.error("Cleanup failed", error));
+      destroySession(session.token).catch((error) => {
+        // A teardown exception may contain container labels, passwords or
+        // nested auth data. Retry ownership stays tracked by destroySession.
+        error = "BROWSER_TEARDOWN_FAILURE";
+        console.error("Cleanup failed", error);
+      });
     }
   }
 }, 30_000);
