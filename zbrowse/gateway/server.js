@@ -325,6 +325,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const session = await createSession(ip, startUrl);
     return res.status(201).json(publicSession(session));
   } catch (error) {
+    // Docker error objects can carry bearer URLs, passwords and nested request
+    // metadata. Preserve a diagnostic event without printing any untrusted data.
+    error = "BROWSER_START_FAILURE";
     console.error("Session creation failed", error);
     return res.status(500).json({ error: "The browser could not be started." });
   } finally {
@@ -400,7 +403,15 @@ function browserProxyError(error, response) {
     "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE",
     "ENOTFOUND", "EAI_AGAIN", "ERR_STREAM_PREMATURE_CLOSE"
   ]);
-  const category = safeCodes.has(error?.code) ? error.code : "UPSTREAM_FAILURE";
+  let category = "UPSTREAM_FAILURE";
+  try {
+    // Read the untrusted property once: accessors may throw or return
+    // different values on successive reads. Only fixed literals reach logs.
+    const code = error?.code;
+    if (safeCodes.has(code)) category = code;
+  } catch {
+    // An invalid upstream error object must still receive a generic 502.
+  }
   console.error("Browser proxy error", category);
   if (response?.writeHead && !response.headersSent) {
     response.writeHead(502).end("Browser connection interrupted.");
@@ -433,7 +444,12 @@ const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
     if (session.cleanupFailed || isSessionExpired(session, config.idleMs, now)) {
-      destroySession(session.token).catch((error) => console.error("Cleanup failed", error));
+      destroySession(session.token).catch((error) => {
+        // A teardown exception may contain container labels, passwords or
+        // nested auth data. Retry ownership stays tracked by destroySession.
+        error = "BROWSER_TEARDOWN_FAILURE";
+        console.error("Cleanup failed", error);
+      });
     }
   }
 }, 30_000);
