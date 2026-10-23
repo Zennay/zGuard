@@ -61,6 +61,11 @@ jobs:
           node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed
           # Failed browser starts must never release a live Docker orphan slot.
           node tests/zbrowse.failed-start-cleanup.test.mjs --require-failed-start-fail-closed
+          # Draining must prevent new starts, reconcile in-flight starts and
+          # report orphaned containers with a failed supervisor exit code.
+          node tests/zbrowse.shutdown-failed-cleanup.test.mjs --require-shutdown-fail-closed
+          node tests/zbrowse.shutdown-admission-race-real-http.test.mjs --require-shutdown-drain
+          node tests/zbrowse.inflight-shutdown-real-http.test.mjs --require-inflight-drain
           if [ "$REQUIRE_FAIL_CLOSED" = "true" ]; then
             node tests/zbrowse.teardown-failclosed.test.mjs --require-fail-closed
             node tests/zbrowse.teardown-admission-real-http.test.mjs --require-fail-closed

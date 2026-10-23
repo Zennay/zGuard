@@ -48,6 +48,8 @@ const context = {
   app, express, Math, Date, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
   config: { ttlMs: 900_000, idleMs: 600_000 },
   cleanupTimer: {},
+  shuttingDown: false,
+  inFlightSessionStarts: new Set(),
   clearInterval() {},
   setTimeout(_callback, ms) {
     assert.equal(ms, 8000);
@@ -117,10 +119,11 @@ try {
       reject(new Error('in-flight request never entered browser creation')), 2000))
   ]);
   const shutdownWork = shutdown();
-  // The current shutdown uses an immediate empty-session snapshot; allow
-  // that microtask to complete before releasing the in-flight creation.
-  await shutdownWork;
+  // Give shutdown a microtask to enter its drain before the creation
+  // completes; a correct shutdown waits for this start and reconciles it.
+  await Promise.resolve();
   releaseStart();
+  await shutdownWork;
   const reply = await pendingResponse;
   responseStatus = reply.status;
   await reply.arrayBuffer();
