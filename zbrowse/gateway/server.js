@@ -106,14 +106,23 @@ function validStartUrl(input) {
   }
 }
 
-async function waitForBrowser(containerName, subfolder, attempts = 45) {
+async function waitForBrowser(containerName, subfolder, attempts = 45, password = null) {
   const agent = new https.Agent({ rejectUnauthorized: false });
   const url = `https://${containerName}:3001${subfolder}`;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const ready = await new Promise((resolve) => {
-      const request = https.get(url, { agent, timeout: 1500 }, (response) => {
+      // Probe the exact authenticated viewer endpoint. Without the same
+      // container-only Basic credentials a 401 challenge only proves that
+      // *something* answered HTTPS, not that this session is ready.
+      const request = https.get(url, {
+        agent,
+        timeout: 1500,
+        ...(password ? { auth: `viewer:${password}` } : {})
+      }, (response) => {
         response.resume();
-        resolve(response.statusCode >= 200 && response.statusCode < 500);
+        // A redirect, 404 placeholder or 4xx/partial response must never
+        // publish a bearer for a viewer that cannot actually load.
+        resolve(response.statusCode === 200);
       });
       request.on("timeout", () => { request.destroy(); resolve(false); });
       request.on("error", () => resolve(false));
@@ -213,7 +222,7 @@ async function createSession(ip, startUrl) {
 
   try {
     await container.start();
-    await waitForBrowser(containerName, subfolder);
+    await waitForBrowser(containerName, subfolder, 45, password);
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
     return session;
