@@ -412,12 +412,14 @@ app.delete("/api/session/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
   if (!session) return res.status(404).json({ error: "Session not found." });
-  // Expiry revokes viewer/heartbeat access, but does not prove that Docker
-  // destroyed the container. The same owner must still be able to DELETE an
-  // expired, tracked browser and receive 204 only after confirmed cleanup.
-  // A changed client IP must not receive the success-shaped not-found body:
-  // the TV interprets that *exact* 404 as proof that capacity was released.
-  if (session.ip !== requestIp(req, trustProxyHops)) {
+  // Never turn a still-tracked browser into a success-shaped 404. The TV
+  // accepts only the *exact* "Session not found." response as proof of
+  // cleanup. Changed ownership and an expired-but-still-live container must
+  // remain locked until the independent idle cleanup actually removes it.
+  // Preserve the expired-bearer 404/no-action API contract while excluding
+  // that 404 from the client's confirmed-release acknowledgement.
+  if (session.ip !== requestIp(req, trustProxyHops) ||
+      isSessionExpired(session, config.idleMs)) {
     return res.status(404).json({ error: "Session release not confirmed." });
   }
   try {
