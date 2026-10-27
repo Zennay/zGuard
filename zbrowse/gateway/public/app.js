@@ -243,6 +243,9 @@ function renderSuggestions() {
 
 let healthRequestSequence = 0;
 let gatewayCanStart = false;
+// A short gateway/catalogue outage can end before an in-flight POST returns.
+// Its old admission decision must remain revoked even after fresh health is green.
+let admissionRevocationGeneration = 0;
 let siteCatalogueReady = false;
 let siteCatalogueRequest = null;
 let siteCatalogueValidatedAt = 0;
@@ -275,6 +278,9 @@ async function ensureSiteCatalogue() {
   if (siteCatalogueReady && catalogueAge >= 0 &&
       catalogueAge < SITE_CATALOGUE_MAX_AGE_MS) return true;
   // Never let a stale catalogue authorize a new session while revalidating.
+  // If a browser POST was already in flight, its old review decision cannot be
+  // reused after this catalogue is refreshed, even if the URL remains approved.
+  if (siteCatalogueReady) admissionRevocationGeneration++;
   siteCatalogueReady = false;
   syncStartButton();
   const attempt = (async () => {
@@ -375,6 +381,7 @@ async function refreshHealth(retryPendingRelease = true) {
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
     if (health?.status === "draining") {
+      if (gatewayCanStart) admissionRevocationGeneration++;
       gatewayCanStart = false;
       syncStartButton();
       status.className = "status";
@@ -414,6 +421,7 @@ async function refreshHealth(retryPendingRelease = true) {
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
     if (sequence !== healthRequestSequence || !stillCurrent()) return;
+    if (gatewayCanStart) admissionRevocationGeneration++;
     gatewayCanStart = false;
     syncStartButton();
     status.className = "status";
@@ -458,6 +466,7 @@ async function startSession(url) {
   if (sessionStarting || sessionEnding || pendingReleaseToken || state.session ||
       !gatewayCanStart || !siteCatalogueReady || !pageActive) return;
   const requestGeneration = pageExitGeneration;
+  const admissionGeneration = admissionRevocationGeneration;
   sessionStarting = true;
   setMessage();
   syncStartButton();
@@ -496,7 +505,8 @@ async function startSession(url) {
     // readiness poll, or a reviewed-site removal. Its bearer must never be
     // mounted using the old admission decision; clean up the allocation even
     // if it was valid when the original POST left this TV.
-    if (pageExitGeneration !== requestGeneration || !pageActive ||
+    if (pageExitGeneration !== requestGeneration ||
+        admissionRevocationGeneration !== admissionGeneration || !pageActive ||
         !gatewayCanStart || !siteCatalogueReady || !isReviewedStartUrl(url)) {
       // Navigation may finish before an in-flight POST returns its token.
       // A failed late DELETE must be reconciled just like an ordinary End;
