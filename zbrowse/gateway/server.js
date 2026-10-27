@@ -310,7 +310,14 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     if (!isSessionExpired(existingSession, config.idleMs)) {
       return res.json(publicSession(existingSession));
     }
-    await destroySession(existingToken);
+    try {
+      await destroySession(existingToken);
+    } catch {
+      // Keep the unremoved browser in tracked capacity. A raw Docker error
+      // may include container env, bearer paths or upstream request details.
+      console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+      return res.status(503).json({ error: "Browser cleanup is pending." });
+    }
   }
 
   const admission = sessionAdmission.tryReserve(ip, sessions.size);
@@ -354,7 +361,14 @@ app.delete("/api/session/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
   if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
-  await destroySession(req.params.token);
+  try {
+    await destroySession(req.params.token);
+  } catch {
+    // Never let Express report a raw Docker teardown exception. Retain
+    // ownership and capacity until a later destroy attempt succeeds.
+    console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+    return res.status(503).json({ error: "Browser cleanup is pending." });
+  }
   return res.status(204).end();
 });
 
