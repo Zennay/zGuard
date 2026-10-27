@@ -411,7 +411,15 @@ app.post("/api/session/:token/heartbeat", (req, res) => {
 app.delete("/api/session/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
-  if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  // Expiry revokes viewer/heartbeat access, but does not prove that Docker
+  // destroyed the container. The same owner must still be able to DELETE an
+  // expired, tracked browser and receive 204 only after confirmed cleanup.
+  // A changed client IP must not receive the success-shaped not-found body:
+  // the TV interprets that *exact* 404 as proof that capacity was released.
+  if (session.ip !== requestIp(req, trustProxyHops)) {
+    return res.status(404).json({ error: "Session release not confirmed." });
+  }
   try {
     await destroySession(req.params.token);
   } catch {
