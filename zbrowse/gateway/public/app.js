@@ -254,8 +254,12 @@ const SITE_CATALOGUE_RETRY_MESSAGE = "Site catalogue unavailable. Retrying autom
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
   // or draining gateway state must prevent an avoidable start POST.
+  // The form is hidden while a viewer is active. Keep its historical enabled
+  // state for TV focus restoration/assistive clients; startSession() still
+  // rejects any scripted submit while state.session exists, independently of
+  // button state. Pending teardown must still lock the control visibly.
   startButton.disabled = sessionStarting || sessionEnding || !!pendingReleaseToken ||
-    !!state.session || !gatewayCanStart || !siteCatalogueReady;
+    !gatewayCanStart || !siteCatalogueReady;
 }
 
 async function ensureSiteCatalogue() {
