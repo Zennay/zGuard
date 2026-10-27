@@ -58,6 +58,21 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: "8kb" }));
 
+// JSON body-parser failures may retain user-supplied request bytes in their
+// error message/body. Handle only known parser failures here, before Express
+// can emit those exception details through its default error handler.
+const jsonParserErrors = new Set([
+  "entity.parse.failed", "entity.too.large", "entity.verify.failed",
+  "encoding.unsupported", "charset.unsupported",
+  "request.aborted", "request.size.invalid"
+]);
+app.use((error, _req, res, next) => {
+  if (!jsonParserErrors.has(error?.type)) return next(error);
+  res.setHeader("Cache-Control", "no-store");
+  const status = error.status === 413 ? 413 : error.status === 415 ? 415 : 400;
+  return res.status(status).json({ error: "Invalid JSON request." });
+});
+
 const sessionLimiter = rateLimit({
   windowMs: 10 * 60_000,
   limit: 4,
