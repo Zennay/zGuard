@@ -781,11 +781,13 @@ function reviewedSiteCatalogue(data) {
 }
 
 async function init() {
-  // refreshHealth already loads the approved site catalogue before checking
-  // capacity. A separate initial catalogue fetch made an offline gateway
-  // perform two back-to-back 7s retries before the TV could show its state.
-  // Keep one fail-closed initial refresh and let the normal poll retry later.
+  // Show the actual gateway/catalogue state after the first bounded refresh.
+  // An unavailable catalogue may be a transient rollout failure; retry once
+  // immediately *after* that first status is rendered, not before it. This
+  // retains the bootstrap recovery attempt without making the TV wait through
+  // two catalogue timeouts just to see the first offline indicator.
   await refreshHealth();
+  if (!siteCatalogueReady && pageActive) await refreshHealth();
   window.setInterval(refreshHealth, 20000);
 }
 
