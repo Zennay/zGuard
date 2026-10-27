@@ -778,7 +778,10 @@ function reviewedSiteCatalogue(data) {
 }
 
 async function init() {
-  await ensureSiteCatalogue();
+  // refreshHealth already loads the approved site catalogue before checking
+  // capacity. A separate initial catalogue fetch made an offline gateway
+  // perform two back-to-back 7s retries before the TV could show its state.
+  // Keep one fail-closed initial refresh and let the normal poll retry later.
   await refreshHealth();
   window.setInterval(refreshHealth, 20000);
 }
