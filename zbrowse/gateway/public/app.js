@@ -248,6 +248,9 @@ let gatewayCanStart = false;
 let admissionRevocationGeneration = 0;
 let siteCatalogueReady = false;
 let siteCatalogueRequest = null;
+// Keep the lifecycle that launched the shared GET so a genuine BFCache exit
+// can discard it, while overlapping retries on the same page still coalesce.
+let siteCatalogueRequestGeneration = -1;
 let siteCatalogueValidatedAt = 0;
 const SITE_CATALOGUE_MAX_AGE_MS = 5 * 60_000;
 // Offline users can force a fresh read by reloading, but automatic polling
@@ -339,10 +342,14 @@ async function ensureSiteCatalogue() {
     }
   })();
   siteCatalogueRequest = attempt;
+  siteCatalogueRequestGeneration = requestGeneration;
   try {
     return await attempt;
   } finally {
-    if (siteCatalogueRequest === attempt) siteCatalogueRequest = null;
+    if (siteCatalogueRequest === attempt) {
+      siteCatalogueRequest = null;
+      siteCatalogueRequestGeneration = -1;
+    }
   }
 }
 
@@ -788,9 +795,13 @@ window.addEventListener("pagehide", (event) => {
 window.addEventListener("pageshow", (event) => {
   pageActive = true;
   if (!event.persisted) return;
-  // A BFCache restore must refresh both engine health and the site allowlist:
-  // the gateway may have deployed a new reviewed catalogue while suspended.
-  revokeCachedReadiness("Checking browser connection");
+  // A real pagehide changes the lifecycle generation and invalidates every
+  // old catalogue GET. A duplicate pageshow *without* an intervening exit,
+  // however, must share the already pending fresh GET with health retries.
+  // Both paths revoke the last green capacity poll and any stale POST.
+  const shareCurrentCatalogue = !siteCatalogueReady && !!siteCatalogueRequest &&
+    siteCatalogueRequestGeneration === pageExitGeneration;
+  revokeCachedReadiness("Checking browser connection", shareCurrentCatalogue);
   // A BFCache restore brings back JavaScript and iframe state from before
   // pagehide, but pagehide already attempted to destroy that browser token.
   // Never resurrect a possibly revoked bearer iframe or its heartbeat timer.
@@ -805,19 +816,24 @@ window.addEventListener("pageshow", (event) => {
 // synchronously. Otherwise the TV can still send a browser-start POST using
 // the last green poll while an online/visibility recovery probe is pending.
 // Invalidate older in-flight responses before scheduling the new probe.
-function revokeCachedReadiness(label) {
+function revokeCachedReadiness(label, shareCurrentCatalogue = false) {
   // A POST already awaiting its bearer must also be reconciled as abandoned:
   // after an offline/restore event, mounting that stale session would bypass
-  // the newly required gateway check. startSession's generation guard performs
-  // an idempotent DELETE as soon as its late response supplies the token.
-  pageExitGeneration++;
+  // the newly required gateway check. startSession checks both generations.
+  // A same-page duplicate pageshow can share an in-flight *fresh* catalogue
+  // GET while independently revoking all older browser-start admissions.
+  if (shareCurrentCatalogue) admissionRevocationGeneration++;
+  else pageExitGeneration++;
   healthRequestSequence++;
   gatewayCanStart = false;
   // A network change or TV resume may cross a gateway deployment. Force a
   // fresh site review even if its previous five-minute TTL has not elapsed.
-  // Detach the old single-flight read; its generation check discards any late
-  // result without clearing the new request or its UI state.
-  siteCatalogueRequest = null;
+  // Detach older single-flight reads only after a real lifecycle/network
+  // change; their late responses cannot overwrite the newer request.
+  if (!shareCurrentCatalogue) {
+    siteCatalogueRequest = null;
+    siteCatalogueRequestGeneration = -1;
+  }
   siteCatalogueReady = false;
   syncStartButton();
   if (!state.session && !pendingReleaseToken) {
