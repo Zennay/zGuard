@@ -249,6 +249,22 @@ async function createSession(ip, startUrl) {
     }
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
+    // A browser can exit while its owner still has minutes of TTL left.
+    // Observe Docker's exit signal so an AutoRemoved kiosk frees its slot
+    // promptly instead of handing out a dead viewer until idle expiry.
+    // A lost Docker wait stream is not proof of removal: the periodic
+    // container-inspection sweep below independently reconciles that case.
+    if (typeof container.wait === "function") {
+      Promise.resolve().then(() => container.wait()).then(
+        () => {
+          if (sessions.get(token) === session) {
+            destroySession(token).catch(() =>
+              console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE"));
+          }
+        },
+        () => { /* Docker watcher unavailable; periodic inspection retries. */ }
+      );
+    }
     return session;
   } catch (error) {
     try {
@@ -579,6 +595,38 @@ app.use((_error, _req, res, _next) => {
   res.status(500).json({ error: "The browser gateway could not complete this request." });
 });
 
+// A Docker wait observer can fail or be lost during a daemon restart. Every
+// active, non-expired browser therefore also gets a bounded-frequency
+// liveness reconciliation. Only a definite stopped state or Docker 404 may
+// release a session; transport errors retain its bearer and capacity.
+async function reconcileBrowserLiveness(session) {
+  if (session.livenessPromise || session.destroyPromise ||
+      typeof session.container?.inspect !== "function") return;
+  const check = (async () => {
+    let exited = false;
+    try {
+      const details = await session.container.inspect();
+      exited = details?.State?.Running === false;
+    } catch (error) {
+      exited = error?.statusCode === 404;
+    }
+    // An in-flight inspection may outlive a successful owner DELETE or a
+    // browser replacement. Never remove a newer session for an old result.
+    if (!exited || sessions.get(session.token) !== session) return;
+    try {
+      await destroySession(session.token);
+    } catch {
+      console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+    }
+  })();
+  session.livenessPromise = check;
+  try {
+    await check;
+  } finally {
+    if (session.livenessPromise === check) delete session.livenessPromise;
+  }
+}
+
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
@@ -589,6 +637,11 @@ const cleanupTimer = setInterval(() => {
         error = "BROWSER_TEARDOWN_FAILURE";
         console.error("Cleanup failed", error);
       });
+    } else {
+      // Do not block the next sweep on a slow Docker response, and do not
+      // stack more inspect requests while an earlier one is unresolved.
+      reconcileBrowserLiveness(session).catch(() =>
+        console.error("Browser liveness check failed", "BROWSER_INSPECTION_FAILURE"));
     }
   }
 }, 30_000);
