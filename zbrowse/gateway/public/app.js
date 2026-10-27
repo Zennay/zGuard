@@ -245,6 +245,8 @@ let healthRequestSequence = 0;
 let gatewayCanStart = false;
 let siteCatalogueReady = false;
 let siteCatalogueRequest = null;
+let siteCatalogueValidatedAt = 0;
+const SITE_CATALOGUE_MAX_AGE_MS = 5 * 60_000;
 
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
@@ -253,10 +255,17 @@ function syncStartButton() {
 }
 
 async function ensureSiteCatalogue() {
-  if (siteCatalogueReady) return true;
+  // A cached in-memory allowlist can outlive a gateway rollout even though
+  // /api/sites itself is no-store. Revalidate periodically so the TV cannot
+  // keep offering origins removed from the reviewed gateway configuration.
   // A slow /api/sites reply can overlap multiple health ticks and BFCache
   // restores. Share one in-flight operation to preserve reviewed results.
   if (siteCatalogueRequest) return siteCatalogueRequest;
+  if (siteCatalogueReady &&
+      Date.now() - siteCatalogueValidatedAt < SITE_CATALOGUE_MAX_AGE_MS) return true;
+  // Never let a stale catalogue authorize a new session while revalidating.
+  siteCatalogueReady = false;
+  syncStartButton();
   const attempt = (async () => {
     try {
       const data = await request("/api/sites", { cache: "no-store", signal: AbortSignal.timeout(7000) });
@@ -265,10 +274,12 @@ async function ensureSiteCatalogue() {
       renderSuggestions();
       if (!urlInput.value.trim()) urlInput.value = state.sites[0].url;
       siteCatalogueReady = true;
+      siteCatalogueValidatedAt = Date.now();
       setMessage();
       return true;
     } catch {
       siteCatalogueReady = false;
+      siteCatalogueValidatedAt = 0;
       state.sites = [];
       renderSuggestions();
       setMessage("Site catalogue unavailable. Reload to retry.");
@@ -286,9 +297,9 @@ async function ensureSiteCatalogue() {
 }
 
 async function refreshHealth(retryPendingRelease = true) {
-  // A temporarily missing catalogue can recover during the regular health
-  // cycle; TV users should not need to reload the kiosk to unlock Open.
-  if (!siteCatalogueReady) await ensureSiteCatalogue();
+  // Recover a missing catalogue and periodically refresh a previously valid
+  // one when the gateway's reviewed site policy changes during a TV session.
+  await ensureSiteCatalogue();
   // A failed DELETE must not become a second same-IP POST that reuses the
   // supposedly ended browser. Retry its release on the regular health poll.
   if (retryPendingRelease && pendingReleaseToken) {
