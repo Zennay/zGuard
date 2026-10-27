@@ -69,6 +69,9 @@ const jsonParserErrors = new Set([
 app.use((error, _req, res, next) => {
   if (!jsonParserErrors.has(error?.type)) return next(error);
   res.setHeader("Cache-Control", "no-store");
+  // Match Express finalhandler's strict error-page policy. Even a JSON
+  // parser rejection must never inherit the interactive TV viewer CSP.
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
   const status = error.status === 413 ? 413 : error.status === 415 ? 415 : 400;
   return res.status(status).json({ error: "Invalid JSON request." });
 });
