@@ -740,9 +740,8 @@ window.addEventListener("pagehide", (event) => {
   // release a pending bearer, but must not freeze an otherwise active TV page.
   // Only a real browser lifecycle transition invalidates readiness until
   // pageshow revalidates it.
-  const syntheticVisibleExit = event?.isTrusted === false &&
-    document.visibilityState === "visible";
-  if (!syntheticVisibleExit) {
+  const syntheticExit = event?.isTrusted === false;
+  if (!syntheticExit) {
     pageActive = false;
     // BFCache can freeze a TV between a health request and its response.
     // Invalidate that response and revoke stale readiness even without a token.
