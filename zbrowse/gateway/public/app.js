@@ -283,9 +283,13 @@ async function ensureSiteCatalogue() {
   if (siteCatalogueReady) admissionRevocationGeneration++;
   siteCatalogueReady = false;
   syncStartButton();
+  // A network/page lifecycle transition invalidates in-flight catalogue reads.
+  // Their old responses must not be stamped with a fresh timestamp on resume.
+  const requestGeneration = pageExitGeneration;
   const attempt = (async () => {
     try {
       const data = await request("/api/sites", { cache: "no-store", signal: AbortSignal.timeout(7000) });
+      if (requestGeneration !== pageExitGeneration || !pageActive) return false;
       if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
       // Replace a preselected site only if that former reviewed suggestion
       // has actually been revoked. Never overwrite a custom URL being typed.
@@ -310,6 +314,9 @@ async function ensureSiteCatalogue() {
       }
       return true;
     } catch {
+      // A superseded pre-offline request must not erase a newer reviewed
+      // catalogue or overwrite its recovery message on the current page.
+      if (requestGeneration !== pageExitGeneration || !pageActive) return false;
       siteCatalogueReady = false;
       siteCatalogueValidatedAt = 0;
       state.sites = [];
@@ -781,6 +788,9 @@ window.addEventListener("pagehide", (event) => {
 window.addEventListener("pageshow", (event) => {
   pageActive = true;
   if (!event.persisted) return;
+  // A BFCache restore must refresh both engine health and the site allowlist:
+  // the gateway may have deployed a new reviewed catalogue while suspended.
+  revokeCachedReadiness("Checking browser connection");
   // A BFCache restore brings back JavaScript and iframe state from before
   // pagehide, but pagehide already attempted to destroy that browser token.
   // Never resurrect a possibly revoked bearer iframe or its heartbeat timer.
@@ -803,6 +813,12 @@ function revokeCachedReadiness(label) {
   pageExitGeneration++;
   healthRequestSequence++;
   gatewayCanStart = false;
+  // A network change or TV resume may cross a gateway deployment. Force a
+  // fresh site review even if its previous five-minute TTL has not elapsed.
+  // Detach the old single-flight read; its generation check discards any late
+  // result without clearing the new request or its UI state.
+  siteCatalogueRequest = null;
+  siteCatalogueReady = false;
   syncStartButton();
   if (!state.session && !pendingReleaseToken) {
     $("capacityText").parentElement.className = "status";
