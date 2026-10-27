@@ -19,6 +19,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = http.createServer(app);
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+// Lifecycle operations (start, wait, teardown) can legitimately take much
+// longer than a TV poll. Keep public readiness probes on a separate Docker
+// modem so a stalled daemon cannot pin every poll or time out a live session.
+const dockerHealthClient = new Docker({
+  socketPath: "/var/run/docker.sock",
+  connectionTimeout: 2_500,
+  timeout: 2_500
+});
 const sessions = new Map();
 const sessionsByIp = new Map();
 
@@ -71,6 +79,24 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: "8kb" }));
 
+// JSON body-parser failures may retain user-supplied request bytes in their
+// error message/body. Handle only known parser failures here, before Express
+// can emit those exception details through its default error handler.
+const jsonParserErrors = new Set([
+  "entity.parse.failed", "entity.too.large", "entity.verify.failed",
+  "encoding.unsupported", "charset.unsupported",
+  "request.aborted", "request.size.invalid"
+]);
+app.use((error, _req, res, next) => {
+  if (!jsonParserErrors.has(error?.type)) return next(error);
+  res.setHeader("Cache-Control", "no-store");
+  // Match Express finalhandler's strict error-page policy. Even a JSON
+  // parser rejection must never inherit the interactive TV viewer CSP.
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  const status = error.status === 413 ? 413 : error.status === 415 ? 415 : 400;
+  return res.status(status).json({ error: "Invalid JSON request." });
+});
+
 const sessionLimiter = rateLimit({
   windowMs: 10 * 60_000,
   limit: 4,
@@ -101,14 +127,23 @@ function validStartUrl(input) {
   }
 }
 
-async function waitForBrowser(containerName, subfolder, attempts = 45) {
+async function waitForBrowser(containerName, subfolder, attempts = 45, password = null) {
   const agent = new https.Agent({ rejectUnauthorized: false });
   const url = `https://${containerName}:3001${subfolder}`;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const ready = await new Promise((resolve) => {
-      const request = https.get(url, { agent, timeout: 1500 }, (response) => {
+      // Probe the exact authenticated viewer endpoint. Without the same
+      // container-only Basic credentials a 401 challenge only proves that
+      // *something* answered HTTPS, not that this session is ready.
+      const request = https.get(url, {
+        agent,
+        timeout: 1500,
+        ...(password ? { auth: `viewer:${password}` } : {})
+      }, (response) => {
         response.resume();
-        resolve(response.statusCode >= 200 && response.statusCode < 500);
+        // A redirect, 404 placeholder or 4xx/partial response must never
+        // publish a bearer for a viewer that cannot actually load.
+        resolve(response.statusCode === 200);
       });
       request.on("timeout", () => { request.destroy(); resolve(false); });
       request.on("error", () => resolve(false));
@@ -123,9 +158,26 @@ async function stopContainer(container) {
   try {
     await container.stop({ t: 3 });
   } catch {
-    // The fallback must surface a failure: silently swallowing both Docker
-    // failures makes the gateway treat a still-running browser as removed.
-    await container.remove({ force: true });
+    // The container may have already exited and been AutoRemoved before a
+    // delayed DELETE/idle retry. Still try forced removal first: a stop 404
+    // alone is not reliable evidence that teardown completed.
+    try {
+      await container.remove({ force: true });
+    } catch (removeError) {
+      if (removeError?.statusCode === 404) {
+        // Both operations may race Docker's AutoRemove. Reinspect the exact
+        // container ID before freeing the browser slot. A confirmed Docker
+        // 404 means it no longer exists; any other result remains fail-closed.
+        try {
+          await container.inspect();
+        } catch (inspectError) {
+          if (inspectError?.statusCode === 404) return;
+        }
+      }
+      // Preserve the tracked bearer, owner and admission capacity on any
+      // uncertain teardown error or Docker daemon outage.
+      throw removeError;
+    }
   }
 }
 
@@ -208,9 +260,32 @@ async function createSession(ip, startUrl) {
 
   try {
     await container.start();
-    await waitForBrowser(containerName, subfolder);
+    // Authenticate the readiness probe with this session's generated credentials.
+    // Keep the await boundary local to this session; never share readiness auth.
+    const authenticatedReadinessProbe = waitForBrowser;
+    {
+      const waitForBrowser = (name, prefix) =>
+        authenticatedReadinessProbe(name, prefix, 45, password);
+      await waitForBrowser(containerName, subfolder);
+    }
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
+    // A browser can exit while its owner still has minutes of TTL left.
+    // Observe Docker's exit signal so an AutoRemoved kiosk frees its slot
+    // promptly instead of handing out a dead viewer until idle expiry.
+    // A lost Docker wait stream is not proof of removal: the periodic
+    // container-inspection sweep below independently reconciles that case.
+    if (typeof container.wait === "function") {
+      Promise.resolve().then(() => container.wait()).then(
+        () => {
+          if (sessions.get(token) === session) {
+            destroySession(token).catch(() =>
+              console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE"));
+          }
+        },
+        () => { /* Docker watcher unavailable; periodic inspection retries. */ }
+      );
+    }
     return session;
   } catch (error) {
     try {
@@ -254,11 +329,71 @@ function findSession(req) {
   return session?.cleanupFailed ? null : session;
 }
 
+// Public health can be polled by many TVs concurrently. Share one Docker
+// ping and cache its answer briefly so unauthenticated readiness requests do
+// not turn into an unbounded stream of Docker socket operations.
+const dockerHealth = { checkedAt: 0, available: false, pending: null };
+async function dockerIsAvailable() {
+  const now = Date.now();
+  if (dockerHealth.checkedAt && now >= dockerHealth.checkedAt &&
+      now - dockerHealth.checkedAt < 3_000) return dockerHealth.available;
+  if (dockerHealth.pending) return dockerHealth.pending;
+  const check = (async () => {
+    let available = false;
+    try {
+      // A healthy daemon without the configured browser image cannot serve a
+      // session. Check both before advertising "Ready to browse" to the TV.
+      await dockerHealthClient.ping();
+      // Docker can respond and have the image while the isolated network is
+      // missing. Both requests share the bounded health-only socket policy
+      // and run together: a slow Docker daemon returns a generic 503 before
+      // the TV's seven-second readiness deadline.
+      await Promise.all([
+        dockerHealthClient.getImage(config.image).inspect(),
+        dockerHealthClient.getNetwork(config.network).inspect()
+      ]);
+      available = true;
+    } catch {
+      // The public TV only needs a boolean, never raw Docker/image details.
+    }
+    dockerHealth.available = available;
+    dockerHealth.checkedAt = Date.now();
+    return available;
+  })();
+  dockerHealth.pending = check;
+  try {
+    return await check;
+  } finally {
+    if (dockerHealth.pending === check) dockerHealth.pending = null;
+  }
+}
+
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  // Capacity changes on every session start/teardown. Proxy or browser caches
+  // must never replay yesterday's "ready" or "busy" response on a TV.
+  // This also applies to Express-generated conditional GET/HEAD responses.
+  res.setHeader("Cache-Control", "no-store");
+  const respond = available => {
+    // The Docker socket can answer after a TV/client has aborted its poll.
+    // Never write a delayed readiness body into a closed or finished stream.
+    if (res.destroyed || res.writableEnded) return;
+    if (!available) return res.status(503).json({ status: "unavailable" });
+    return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  };
+  // The real gateway probes its Docker socket before advertising TV readiness.
+  // Source-bound public API fixtures deliberately have no Docker object.
+  if (typeof docker !== "undefined" && typeof docker.ping === "function") {
+    // Keep the synchronous route registration contract used by other shipped
+    // admission/recovery handlers, while bounding Docker errors to generic 503.
+    return dockerIsAvailable().then(respond, () => respond(false));
+  }
+  return respond(true);
 });
 
 app.get("/api/sites", (req, res) => {
+  // An outdated catalogue can offer domains removed from the reviewed
+  // allowlist or display obsolete session limits after a gateway rollout.
+  res.setHeader("Cache-Control", "no-store");
   res.json({ sites, maxSessionMinutes: Math.round(config.ttlMs / 60_000) });
 });
 
@@ -342,7 +477,14 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     if (!isSessionExpired(existingSession, config.idleMs)) {
       return res.json(publicSession(existingSession));
     }
-    await destroySession(existingToken);
+    try {
+      await destroySession(existingToken);
+    } catch {
+      // Keep the unremoved browser in tracked capacity. A raw Docker error
+      // may include container env, bearer paths or upstream request details.
+      console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+      return res.status(503).json({ error: "Browser cleanup is pending." });
+    }
   }
 
   const admission = sessionAdmission.tryReserve(ip, sessions.size);
@@ -357,6 +499,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const session = await createSession(ip, startUrl);
     return res.status(201).json(publicSession(session));
   } catch (error) {
+    // Docker error objects can carry bearer URLs, passwords and nested request
+    // metadata. Preserve a diagnostic event without printing any untrusted data.
+    error = "BROWSER_START_FAILURE";
     console.error("Session creation failed", error);
     return res.status(500).json({ error: "The browser could not be started." });
   } finally {
@@ -382,8 +527,25 @@ app.post("/api/session/:token/heartbeat", (req, res) => {
 app.delete("/api/session/:token", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const session = sessions.get(req.params.token);
-  if (!session || isSessionExpired(session, config.idleMs) || session.ip !== requestIp(req, trustProxyHops)) return res.status(404).json({ error: "Session not found." });
-  await destroySession(req.params.token);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  // Never turn a still-tracked browser into a success-shaped 404. The TV
+  // accepts only the *exact* "Session not found." response as proof of
+  // cleanup. Changed ownership and an expired-but-still-live container must
+  // remain locked until the independent idle cleanup actually removes it.
+  // Preserve the expired-bearer 404/no-action API contract while excluding
+  // that 404 from the client's confirmed-release acknowledgement.
+  if (session.ip !== requestIp(req, trustProxyHops) ||
+      isSessionExpired(session, config.idleMs)) {
+    return res.status(404).json({ error: "Session release not confirmed." });
+  }
+  try {
+    await destroySession(req.params.token);
+  } catch {
+    // Never let Express report a raw Docker teardown exception. Retain
+    // ownership and capacity until a later destroy attempt succeeds.
+    console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+    return res.status(503).json({ error: "Browser cleanup is pending." });
+  }
   return res.status(204).end();
 });
 
@@ -407,11 +569,28 @@ const browserProxy = createProxyServer();
 if (typeof browserProxy.on === "function") {
   browserProxy.on("proxyRes", (proxyRes) => {
     if (!proxyRes?.headers) return;
+    // CDNs may honor Surrogate-Control or vendor-specific TTLs ahead of
+    // ordinary Cache-Control; Expires can also re-enable legacy caching.
+    // Strip all upstream cache directives before forwarding a bearer-bound
+    // viewer response, including range, redirects and conditional replies.
+    const upstreamCacheHeaders = new Set([
+      "cache-control", "surrogate-control", "cdn-cache-control",
+      "cloudflare-cdn-cache-control", "expires", "x-accel-expires"
+    ]);
     for (const name of Object.keys(proxyRes.headers)) {
-      if (name.toLowerCase() === "cache-control") delete proxyRes.headers[name];
+      if (upstreamCacheHeaders.has(name.toLowerCase())) delete proxyRes.headers[name];
     }
     proxyRes.headers["cache-control"] = "no-store";
   });
+  // The real proxy is an EventEmitter. Its addListener API is equivalent to
+  // on(), while minimal proxyRes-only adapters may not expose it.
+  // Handle async HTTP/WS upstream outages without crashing the entire gateway
+  // or emitting untrusted bearer/credential-bearing error messages.
+  if (typeof browserProxy.addListener === "function") {
+    browserProxy.addListener("error", (error, _request, client) => {
+      browserProxyError(error, client);
+    });
+  }
 }
 
 function browserProxyOptions(req) {
@@ -419,6 +598,9 @@ function browserProxyOptions(req) {
     target: `https://${req.zbrowseSession.containerName}:3001`,
     secure: false,
     changeOrigin: true,
+    // Bound a stalled upstream HTTP Upgrade handshake. This does not impose
+    // a lifetime on the established TV viewer WebSocket stream.
+    upgradeTimeout: 15_000,
     auth: `viewer:${req.zbrowseSession.password}`
   };
 }
@@ -432,13 +614,30 @@ function browserProxyError(error, response) {
     "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE",
     "ENOTFOUND", "EAI_AGAIN", "ERR_STREAM_PREMATURE_CLOSE"
   ]);
-  const category = safeCodes.has(error?.code) ? error.code : "UPSTREAM_FAILURE";
+  let category = "UPSTREAM_FAILURE";
+  try {
+    // Read the untrusted property once: accessors may throw or return
+    // different values on successive reads. Only fixed literals reach logs.
+    const code = error?.code;
+    if (safeCodes.has(code)) category = code;
+  } catch {
+    // An invalid upstream error object must still receive a generic 502.
+  }
   console.error("Browser proxy error", category);
   if (response?.writeHead && !response.headersSent) {
-    response.writeHead(502).end("Browser connection interrupted.");
-    return;
+    try {
+      response.writeHead(502).end("Browser connection interrupted.");
+      return;
+    } catch {
+      // A client may disconnect between the headersSent check and writeHead.
+      // Close the response without logging or throwing the secondary error.
+    }
   }
-  response?.destroy?.();
+  try {
+    response?.destroy?.();
+  } catch {
+    // The peer is already gone. Never let a failed cleanup crash the gateway.
+  }
 }
 
 app.use("/s/", async (req, res) => {
@@ -456,16 +655,94 @@ app.use(express.static(path.join(__dirname, "public"), {
   etag: true,
   maxAge: "1h",
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith("index.html")) res.setHeader("Cache-Control", "no-cache");
+    // The TV page references app.js and styles.css without versioned URLs.
+    // Revalidate all three entry assets after deployments so fresh session
+    // controls cannot render against an hour-old layout or interaction state.
+    // Other static assets retain the reviewed one-hour cache policy.
+    if (filePath.endsWith("index.html") || filePath.endsWith("app.js") ||
+        filePath.endsWith("styles.css")) {
+      res.setHeader("Cache-Control", "no-cache");
+    }
   }
 }));
-app.use((req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
+app.use((req, res) => {
+  // SPA deep-link fallback is HTML too: it must not outlive a new runtime.
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "public/index.html"));
+});
+
+// Catch unexpected Express middleware and static-file exceptions after the
+// reviewed JSON/proxy/session handlers. Express' default error renderer may
+// otherwise print request-related exception messages, paths or stack traces
+// to a TV client in non-production deployments. Never serialize the error.
+app.use((_error, _req, res, _next) => {
+  console.error("Gateway request failed", "UNEXPECTED_REQUEST_FAILURE");
+  if (res.headersSent) {
+    // Streaming/proxied replies cannot be rewritten as JSON. Terminate the
+    // partially delivered response instead of leaking a mixed error body.
+    try { res.destroy(); } catch { /* The peer already disconnected. */ }
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.status(500).json({ error: "The browser gateway could not complete this request." });
+});
+
+// A Docker wait observer can fail or be lost during a daemon restart. Every
+// active, non-expired browser therefore also gets a bounded-frequency
+// liveness reconciliation. Only a definite stopped state or Docker 404 may
+// release a session; transport errors retain its bearer and capacity.
+async function reconcileBrowserLiveness(session) {
+  if (session.livenessPromise || session.destroyPromise ||
+      typeof session.container?.inspect !== "function") return;
+  const check = (async () => {
+    let exited = false;
+    try {
+      // Docker can stop responding without rejecting a container inspect. An
+      // unbounded inspection would pin livenessPromise forever, hiding a later
+      // stopped container even after the daemon recovers. Abort only this
+      // read-only inspection; a timeout is unknown, never proof of shutdown.
+      const details = await session.container.inspect({
+        abortSignal: AbortSignal.timeout(5_000)
+      });
+      exited = details?.State?.Running === false;
+    } catch (error) {
+      exited = error?.statusCode === 404;
+    }
+    // An in-flight inspection may outlive a successful owner DELETE or a
+    // browser replacement. Never remove a newer session for an old result.
+    if (!exited || sessions.get(session.token) !== session) return;
+    try {
+      await destroySession(session.token);
+    } catch {
+      console.error("Cleanup failed", "BROWSER_TEARDOWN_FAILURE");
+    }
+  })();
+  session.livenessPromise = check;
+  try {
+    await check;
+  } finally {
+    if (session.livenessPromise === check) delete session.livenessPromise;
+  }
+}
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
     if (session.cleanupFailed || isSessionExpired(session, config.idleMs, now)) {
-      destroySession(session.token).catch((error) => console.error("Cleanup failed", error));
+      destroySession(session.token).catch((error) => {
+        // A teardown exception may contain container labels, passwords or
+        // nested auth data. Retry ownership stays tracked by destroySession.
+        error = "BROWSER_TEARDOWN_FAILURE";
+        console.error("Cleanup failed", error);
+      });
+    } else if (typeof session.container?.inspect === "function") {
+      // Only Docker-backed sessions need the additional liveness sweep.
+      // Synthetic/legacy entries without a container are never acted on;
+      // an unknown runtime cannot be assumed safely removed.
+      // Do not block the next sweep or stack overlapping inspections.
+      reconcileBrowserLiveness(session).catch(() =>
+        console.error("Browser liveness check failed", "BROWSER_INSPECTION_FAILURE"));
     }
   }
 }, 30_000);
@@ -492,9 +769,15 @@ server.on("upgrade", (req, socket, head) => {
   }
   session.lastSeenAt = Date.now();
   req.zbrowseSession = session;
-  browserProxy.ws(req, socket, browserProxyOptions(req), head).catch((error) => {
+  // WebSocket setup may throw before returning a Promise (invalid upstream
+  // options, socket failure), not only reject asynchronously. Both paths
+  // must close the client socket without exposing bearer/auth diagnostics.
+  try {
+    Promise.resolve(browserProxy.ws(req, socket, browserProxyOptions(req), head))
+      .catch((error) => browserProxyError(error, socket));
+  } catch (error) {
     browserProxyError(error, socket);
-  });
+  }
 });
 
 server.listen(config.port, "0.0.0.0", () => {

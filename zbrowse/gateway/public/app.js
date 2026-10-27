@@ -243,57 +243,140 @@ function renderSuggestions() {
 
 let healthRequestSequence = 0;
 let gatewayCanStart = false;
+// A short gateway/catalogue outage can end before an in-flight POST returns.
+// Its old admission decision must remain revoked even after fresh health is green.
+let admissionRevocationGeneration = 0;
 let siteCatalogueReady = false;
 let siteCatalogueRequest = null;
+// Keep the lifecycle that launched the shared GET so a genuine BFCache exit
+// can discard it, while overlapping retries on the same page still coalesce.
+let siteCatalogueRequestGeneration = -1;
+let siteCatalogueValidatedAt = 0;
+const SITE_CATALOGUE_MAX_AGE_MS = 5 * 60_000;
+// Offline users can force a fresh read by reloading, but automatic polling
+// remains active. Keep the guidance truthful for both TV and desktop users.
+const SITE_CATALOGUE_RETRY_MESSAGE = "Site catalogue unavailable. Retrying automatically. Reload to retry now.";
 
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
   // or draining gateway state must prevent an avoidable start POST.
-  startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart || !siteCatalogueReady;
+  // The form is hidden while a viewer is active. Keep its historical enabled
+  // state for TV focus restoration/assistive clients; startSession() still
+  // rejects any scripted submit while state.session exists, independently of
+  // button state. Pending teardown must still lock the control visibly.
+  startButton.disabled = sessionStarting || sessionEnding || !!pendingReleaseToken ||
+    !gatewayCanStart || !siteCatalogueReady || !pageActive;
 }
 
 async function ensureSiteCatalogue() {
-  if (siteCatalogueReady) return true;
+  // A cached in-memory allowlist can outlive a gateway rollout even though
+  // /api/sites itself is no-store. Revalidate periodically so the TV cannot
+  // keep offering origins removed from the reviewed gateway configuration.
   // A slow /api/sites reply can overlap multiple health ticks and BFCache
   // restores. Share one in-flight operation to preserve reviewed results.
   if (siteCatalogueRequest) return siteCatalogueRequest;
+  const catalogueAge = Date.now() - siteCatalogueValidatedAt;
+  // Wall clocks can move backward after a TV sleep/resume or NTP correction.
+  // A negative age must not preserve a revoked allowlist indefinitely.
+  if (siteCatalogueReady && catalogueAge >= 0 &&
+      catalogueAge < SITE_CATALOGUE_MAX_AGE_MS) return true;
+  // Never let a stale catalogue authorize a new session while revalidating.
+  // If a browser POST was already in flight, its old review decision cannot be
+  // reused after this catalogue is refreshed, even if the URL remains approved.
+  if (siteCatalogueReady) admissionRevocationGeneration++;
+  siteCatalogueReady = false;
+  syncStartButton();
+  // A network/page lifecycle transition invalidates in-flight catalogue reads.
+  // Their old responses must not be stamped with a fresh timestamp on resume.
+  const requestGeneration = pageExitGeneration;
   const attempt = (async () => {
     try {
       const data = await request("/api/sites", { cache: "no-store", signal: AbortSignal.timeout(7000) });
+      if (requestGeneration !== pageExitGeneration || !pageActive) return false;
       if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
+      // Replace a preselected site only if that former reviewed suggestion
+      // has actually been revoked. Never overwrite a custom URL being typed.
+      const previousSuggestion = state.sites.some(
+        (site) => site.url === urlInput.value.trim()
+      );
       state.sites = data.sites;
       renderSuggestions();
-      if (!urlInput.value.trim()) urlInput.value = state.sites[0].url;
+      if (!urlInput.value.trim() ||
+          (previousSuggestion && !isReviewedStartUrl(urlInput.value.trim()))) {
+        urlInput.value = state.sites[0].url;
+      }
       siteCatalogueReady = true;
-      setMessage();
+      siteCatalogueValidatedAt = Date.now();
+      // A successful catalogue refresh must not erase a stronger warning
+      // about a browser whose DELETE has not yet been acknowledged.
+      // A catalogue recovery may clear only its own earlier outage notice.
+      // Preserve a more useful start/teardown error while the TV retries.
+      if (!pendingReleaseToken &&
+          message.textContent === SITE_CATALOGUE_RETRY_MESSAGE) {
+        setMessage();
+      }
       return true;
     } catch {
+      // A superseded pre-offline request must not erase a newer reviewed
+      // catalogue or overwrite its recovery message on the current page.
+      if (requestGeneration !== pageExitGeneration || !pageActive) return false;
       siteCatalogueReady = false;
+      siteCatalogueValidatedAt = 0;
       state.sites = [];
       renderSuggestions();
-      setMessage("Site catalogue unavailable. Reload to retry.");
+      // Catalogue discovery is secondary to confirmed browser teardown.
+      // Keep the safety-critical release guidance visible during outages.
+      // A catalogue outage must not erase a more actionable browser-start or
+      // viewer failure. Capacity already reports the catalogue as unavailable;
+      // only replace an empty/previous catalogue notice. Teardown warnings
+      // remain highest priority while a browser bearer may still be live.
+      if (pendingReleaseToken || !message.textContent ||
+          message.textContent === SITE_CATALOGUE_RETRY_MESSAGE) {
+        setMessage(pendingReleaseToken
+          ? "Could not confirm browser shutdown. Retrying automatically."
+          : SITE_CATALOGUE_RETRY_MESSAGE);
+      }
       return false;
     } finally {
       syncStartButton();
     }
   })();
   siteCatalogueRequest = attempt;
+  siteCatalogueRequestGeneration = requestGeneration;
   try {
     return await attempt;
   } finally {
-    if (siteCatalogueRequest === attempt) siteCatalogueRequest = null;
+    if (siteCatalogueRequest === attempt) {
+      siteCatalogueRequest = null;
+      siteCatalogueRequestGeneration = -1;
+    }
   }
 }
 
 async function refreshHealth(retryPendingRelease = true) {
-  // A temporarily missing catalogue can recover during the regular health
-  // cycle; TV users should not need to reload the kiosk to unlock Open.
-  if (!siteCatalogueReady) await ensureSiteCatalogue();
-  // A failed DELETE must not become a second same-IP POST that reuses the
-  // supposedly ended browser. Retry its release on the regular health poll.
+  // A recovery transition can happen while an older poll is waiting for a
+  // catalogue read or a failed-browser DELETE, before that poll ever received
+  // a health sequence number. Pin the lifecycle generation at entry so the
+  // abandoned poll cannot issue newer health work after offline/pagehide.
+  if (!pageActive) return;
+  const requestGeneration = pageExitGeneration;
+  const stillCurrent = () => pageActive && pageExitGeneration === requestGeneration;
+  // A failed DELETE retains browser capacity and the old bearer. Retry that
+  // teardown *before* catalogue discovery, whose 7-second timeout must not
+  // delay releasing an existing browser or hold its recovery behind an outage.
   if (retryPendingRelease && pendingReleaseToken) {
     await releasePendingSession();
   }
+  if (!stillCurrent()) return;
+  // The first TV bootstrap must validate its catalogue before polling
+  // capacity. That keeps startup deterministic, with one bounded read at a
+  // time. After a valid catalogue has been observed, later revalidation and
+  // Docker health are independent: begin both without serial timeout delays.
+  // In either mode Open still requires BOTH valid, current responses.
+  const catalogueRefresh = siteCatalogueValidatedAt > 0
+    ? ensureSiteCatalogue() : null;
+  if (!catalogueRefresh) await ensureSiteCatalogue();
+  if (!stillCurrent()) return;
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -302,10 +385,17 @@ async function refreshHealth(retryPendingRelease = true) {
     // Server/CDN no-store remains an independent requirement (#293).
     const health = await request("/api/health", { cache: "no-store", signal: AbortSignal.timeout(7000) });
     // A slower earlier poll cannot overwrite a newer capacity observation.
-    if (sequence !== healthRequestSequence) return;
+    if (sequence !== healthRequestSequence || !stillCurrent()) return;
+    // A healthy gateway alone cannot authorize browser creation until the
+    // curated HTTPS catalogue has completed its independent validation.
+    if (catalogueRefresh) {
+      await catalogueRefresh;
+      if (sequence !== healthRequestSequence || !stillCurrent()) return;
+    }
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
     if (health?.status === "draining") {
+      if (gatewayCanStart) admissionRevocationGeneration++;
       gatewayCanStart = false;
       syncStartButton();
       status.className = "status";
@@ -344,7 +434,8 @@ async function refreshHealth(retryPendingRelease = true) {
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
-    if (sequence !== healthRequestSequence) return;
+    if (sequence !== healthRequestSequence || !stillCurrent()) return;
+    if (gatewayCanStart) admissionRevocationGeneration++;
     gatewayCanStart = false;
     syncStartButton();
     status.className = "status";
@@ -386,8 +477,10 @@ let pageActive = true;
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
-  if (sessionStarting || sessionEnding || state.session || !gatewayCanStart || !siteCatalogueReady) return;
+  if (sessionStarting || sessionEnding || pendingReleaseToken || state.session ||
+      !gatewayCanStart || !siteCatalogueReady || !pageActive) return;
   const requestGeneration = pageExitGeneration;
+  const admissionGeneration = admissionRevocationGeneration;
   sessionStarting = true;
   setMessage();
   syncStartButton();
@@ -422,10 +515,13 @@ async function startSession(url) {
       }
       throw error;
     }
-    // A start may finish after pagehide, when no token existed for the
-    // pagehide handler to release. Do not mount a browser on an abandoned
-    // page; use keepalive DELETE if the response still arrives.
-    if (pageExitGeneration !== requestGeneration) {
+    // A start may finish after pagehide, offline recovery, a failed gateway
+    // readiness poll, or a reviewed-site removal. Its bearer must never be
+    // mounted using the old admission decision; clean up the allocation even
+    // if it was valid when the original POST left this TV.
+    if (pageExitGeneration !== requestGeneration ||
+        admissionRevocationGeneration !== admissionGeneration || !pageActive ||
+        !gatewayCanStart || !siteCatalogueReady || !isReviewedStartUrl(url)) {
       // Navigation may finish before an in-flight POST returns its token.
       // A failed late DELETE must be reconciled just like an ordinary End;
       // otherwise BFCache restoration could start/reuse that still-live token.
@@ -597,10 +693,13 @@ async function endSession() {
   $("browserFrame").src = "about:blank";
   browserView.hidden = true;
   homeView.hidden = false;
+  // Network teardown, catalogue recovery and health can each stall for
+  // seconds. Put the TV remote back on the now-visible input immediately;
+  // sessionEnding/pendingReleaseToken still prevent any premature start.
+  urlInput.focus();
 
   await releasePendingSession();
   await refreshHealth(false);
-  urlInput.focus();
 }
 
 function isReviewedStartUrl(value) {
@@ -617,8 +716,14 @@ function isReviewedStartUrl(value) {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
+  // TV remotes and scripted Enter submissions can fire even while Open is
+  // disabled. A pending teardown takes priority over URL validation messages.
+  if (pendingReleaseToken || sessionEnding) {
+    setMessage("Could not confirm browser shutdown. Retrying automatically.");
+    return;
+  }
   if (!siteCatalogueReady) {
-    setMessage("Site catalogue unavailable. Reload to retry.");
+    setMessage(SITE_CATALOGUE_RETRY_MESSAGE);
     return;
   }
   const value = urlInput.value.trim();
@@ -660,8 +765,21 @@ $("fullscreenButton").addEventListener("click", async () => {
   syncFullscreenButton();
 });
 
-window.addEventListener("pagehide", () => {
-  pageActive = false;
+window.addEventListener("pagehide", (event) => {
+  // Some embedded viewers and the real-Chrome acceptance dispatch an untrusted
+  // pagehide without navigating or hiding the document. They still must
+  // release a pending bearer, but must not freeze an otherwise active TV page.
+  // Only a real browser lifecycle transition invalidates readiness until
+  // pageshow revalidates it.
+  const syntheticExit = event?.isTrusted === false;
+  if (!syntheticExit) {
+    pageActive = false;
+    // BFCache can freeze a TV between a health request and its response.
+    // Invalidate that response and revoke stale readiness even without a token.
+    healthRequestSequence++;
+    gatewayCanStart = false;
+    syncStartButton();
+  }
   pageExitGeneration++;
   const token = state.session?.token || pendingReleaseToken;
   if (token) {
@@ -677,6 +795,13 @@ window.addEventListener("pagehide", () => {
 window.addEventListener("pageshow", (event) => {
   pageActive = true;
   if (!event.persisted) return;
+  // A real pagehide changes the lifecycle generation and invalidates every
+  // old catalogue GET. A duplicate pageshow *without* an intervening exit,
+  // however, must share the already pending fresh GET with health retries.
+  // Both paths revoke the last green capacity poll and any stale POST.
+  const shareCurrentCatalogue = !siteCatalogueReady && !!siteCatalogueRequest &&
+    siteCatalogueRequestGeneration === pageExitGeneration;
+  revokeCachedReadiness("Checking browser connection", shareCurrentCatalogue);
   // A BFCache restore brings back JavaScript and iframe state from before
   // pagehide, but pagehide already attempted to destroy that browser token.
   // Never resurrect a possibly revoked bearer iframe or its heartbeat timer.
@@ -685,6 +810,54 @@ window.addEventListener("pageshow", (event) => {
   } else {
     refreshHealth();
   }
+});
+
+// Connectivity changes must revoke an old successful capacity poll
+// synchronously. Otherwise the TV can still send a browser-start POST using
+// the last green poll while an online/visibility recovery probe is pending.
+// Invalidate older in-flight responses before scheduling the new probe.
+function revokeCachedReadiness(label, shareCurrentCatalogue = false) {
+  // A POST already awaiting its bearer must also be reconciled as abandoned:
+  // after an offline/restore event, mounting that stale session would bypass
+  // the newly required gateway check. startSession checks both generations.
+  // A same-page duplicate pageshow can share an in-flight *fresh* catalogue
+  // GET while independently revoking all older browser-start admissions.
+  if (shareCurrentCatalogue) admissionRevocationGeneration++;
+  else pageExitGeneration++;
+  healthRequestSequence++;
+  gatewayCanStart = false;
+  // A network change or TV resume may cross a gateway deployment. Force a
+  // fresh site review even if its previous five-minute TTL has not elapsed.
+  // Detach older single-flight reads only after a real lifecycle/network
+  // change; their late responses cannot overwrite the newer request.
+  if (!shareCurrentCatalogue) {
+    siteCatalogueRequest = null;
+    siteCatalogueRequestGeneration = -1;
+  }
+  siteCatalogueReady = false;
+  syncStartButton();
+  if (!state.session && !pendingReleaseToken) {
+    $("capacityText").parentElement.className = "status";
+    $("capacityText").textContent = label;
+  }
+}
+
+function recheckAfterResume() {
+  if (!pageActive) return;
+  revokeCachedReadiness("Checking browser connection");
+  refreshHealth();
+}
+
+// A disconnected TV must not advertise the last green gateway as usable for
+// up to another 20 seconds. Any in-flight old health response is now stale.
+window.addEventListener("offline", () => {
+  revokeCachedReadiness("Browser engine offline");
+});
+// TV sleep/resume or a recovered network may not coincide with the 20s
+// background interval. Recheck promptly and reopen only after fresh health.
+window.addEventListener("online", recheckAfterResume);
+document.addEventListener("visibilitychange", () => {
+  if (pageActive && document.visibilityState === "visible") recheckAfterResume();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -727,8 +900,13 @@ function reviewedSiteCatalogue(data) {
 }
 
 async function init() {
-  await ensureSiteCatalogue();
+  // Show the actual gateway/catalogue state after the first bounded refresh.
+  // An unavailable catalogue may be a transient rollout failure; retry once
+  // immediately *after* that first status is rendered, not before it. This
+  // retains the bootstrap recovery attempt without making the TV wait through
+  // two catalogue timeouts just to see the first offline indicator.
   await refreshHealth();
+  if (!siteCatalogueReady && pageActive) await refreshHealth();
   window.setInterval(refreshHealth, 20000);
 }
 
