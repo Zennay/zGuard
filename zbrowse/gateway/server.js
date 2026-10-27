@@ -458,13 +458,6 @@ const browserProxy = createProxyServer();
 // The header also covers HEAD and Range responses. Static public assets
 // outside /s/ retain their normal cache policy.
 if (typeof browserProxy.on === "function") {
-  // http-proxy emits asynchronous connection/upgrade errors on this event.
-  // Without a listener, Node treats an upstream outage as an uncaught error
-  // and terminates the entire gateway instead of failing this viewer only.
-  // The shared handler never logs upstream error messages or bearer URLs.
-  browserProxy.on("error", (error, _request, client) => {
-    browserProxyError(error, client);
-  });
   browserProxy.on("proxyRes", (proxyRes) => {
     if (!proxyRes?.headers) return;
     // CDNs may honor Surrogate-Control or vendor-specific TTLs ahead of
@@ -479,6 +472,13 @@ if (typeof browserProxy.on === "function") {
       if (upstreamCacheHeaders.has(name.toLowerCase())) delete proxyRes.headers[name];
     }
     proxyRes.headers["cache-control"] = "no-store";
+  });
+  // http-proxy emits asynchronous connection/upgrade errors on this event.
+  // Without a listener, Node treats an upstream outage as an uncaught error
+  // and terminates the entire gateway instead of failing this viewer only.
+  // The shared handler never logs upstream error messages or bearer URLs.
+  browserProxy.on("error", (error, _request, client) => {
+    browserProxyError(error, client);
   });
 }
 
