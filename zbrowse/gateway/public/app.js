@@ -289,7 +289,12 @@ async function ensureSiteCatalogue() {
       siteCatalogueValidatedAt = Date.now();
       // A successful catalogue refresh must not erase a stronger warning
       // about a browser whose DELETE has not yet been acknowledged.
-      if (!pendingReleaseToken) setMessage();
+      // A catalogue recovery may clear only its own earlier outage notice.
+      // Preserve a more useful start/teardown error while the TV retries.
+      if (!pendingReleaseToken &&
+          message.textContent === "Site catalogue unavailable. Retrying automatically.") {
+        setMessage();
+      }
       return true;
     } catch {
       siteCatalogueReady = false;
@@ -627,10 +632,13 @@ async function endSession() {
   $("browserFrame").src = "about:blank";
   browserView.hidden = true;
   homeView.hidden = false;
+  // Network teardown, catalogue recovery and health can each stall for
+  // seconds. Put the TV remote back on the now-visible input immediately;
+  // sessionEnding/pendingReleaseToken still prevent any premature start.
+  urlInput.focus();
 
   await releasePendingSession();
   await refreshHealth(false);
-  urlInput.focus();
 }
 
 function isReviewedStartUrl(value) {
@@ -654,7 +662,7 @@ form.addEventListener("submit", (event) => {
     return;
   }
   if (!siteCatalogueReady) {
-    setMessage("Site catalogue unavailable. Reload to retry.");
+    setMessage("Site catalogue unavailable. Retrying automatically.");
     return;
   }
   const value = urlInput.value.trim();
