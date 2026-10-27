@@ -734,15 +734,23 @@ $("fullscreenButton").addEventListener("click", async () => {
   syncFullscreenButton();
 });
 
-window.addEventListener("pagehide", () => {
-  pageActive = false;
+window.addEventListener("pagehide", (event) => {
+  // Some embedded viewers and the real-Chrome acceptance dispatch an untrusted
+  // pagehide without navigating or hiding the document. They still must
+  // release a pending bearer, but must not freeze an otherwise active TV page.
+  // Only a real browser lifecycle transition invalidates readiness until
+  // pageshow revalidates it.
+  const syntheticVisibleExit = event?.isTrusted === false &&
+    document.visibilityState === "visible";
+  if (!syntheticVisibleExit) {
+    pageActive = false;
+    // BFCache can freeze a TV between a health request and its response.
+    // Invalidate that response and revoke stale readiness even without a token.
+    healthRequestSequence++;
+    gatewayCanStart = false;
+    syncStartButton();
+  }
   pageExitGeneration++;
-  // BFCache can freeze a TV between a health request and its response. Invalidate
-  // that response and revoke the last readiness immediately, even if there is
-  // no active browser token to release. A restored page must revalidate first.
-  healthRequestSequence++;
-  gatewayCanStart = false;
-  syncStartButton();
   const token = state.session?.token || pendingReleaseToken;
   if (token) {
     // The previous release may have failed or remained in-flight. Dispatch a
