@@ -520,10 +520,12 @@ app.use(express.static(path.join(__dirname, "public"), {
   etag: true,
   maxAge: "1h",
   setHeaders: (res, filePath) => {
-    // HTML and the unversioned TV runtime must revalidate after every deploy.
-    // Otherwise a browser may keep old admission/recovery logic for an hour
-    // even when the gateway itself enforces fresh catalogue and health data.
-    if (filePath.endsWith("index.html") || filePath.endsWith("app.js")) {
+    // The TV page references app.js and styles.css without versioned URLs.
+    // Revalidate all three entry assets after deployments so fresh session
+    // controls cannot render against an hour-old layout or interaction state.
+    // Other static assets retain the reviewed one-hour cache policy.
+    if (filePath.endsWith("index.html") || filePath.endsWith("app.js") ||
+        filePath.endsWith("styles.css")) {
       res.setHeader("Cache-Control", "no-cache");
     }
   }
