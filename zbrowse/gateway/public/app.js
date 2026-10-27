@@ -303,9 +303,16 @@ async function ensureSiteCatalogue() {
       renderSuggestions();
       // Catalogue discovery is secondary to confirmed browser teardown.
       // Keep the safety-critical release guidance visible during outages.
-      setMessage(pendingReleaseToken
-        ? "Could not confirm browser shutdown. Retrying automatically."
-        : "Site catalogue unavailable. Retrying automatically.");
+      // A catalogue outage must not erase a more actionable browser-start or
+      // viewer failure. Capacity already reports the catalogue as unavailable;
+      // only replace an empty/previous catalogue notice. Teardown warnings
+      // remain highest priority while a browser bearer may still be live.
+      if (pendingReleaseToken || !message.textContent ||
+          message.textContent === "Site catalogue unavailable. Retrying automatically.") {
+        setMessage(pendingReleaseToken
+          ? "Could not confirm browser shutdown. Retrying automatically."
+          : "Site catalogue unavailable. Retrying automatically.");
+      }
       return false;
     } finally {
       syncStartButton();
