@@ -308,6 +308,35 @@ function findSession(req) {
   return session?.cleanupFailed ? null : session;
 }
 
+// Public health can be polled by many TVs concurrently. Share one Docker
+// ping and cache its answer briefly so unauthenticated readiness requests do
+// not turn into an unbounded stream of Docker socket operations.
+const dockerHealth = { checkedAt: 0, available: false, pending: null };
+async function dockerIsAvailable() {
+  const now = Date.now();
+  if (dockerHealth.checkedAt && now >= dockerHealth.checkedAt &&
+      now - dockerHealth.checkedAt < 3_000) return dockerHealth.available;
+  if (dockerHealth.pending) return dockerHealth.pending;
+  const check = (async () => {
+    let available = false;
+    try {
+      await docker.ping();
+      available = true;
+    } catch {
+      // The public TV only needs a boolean, never raw Docker details.
+    }
+    dockerHealth.available = available;
+    dockerHealth.checkedAt = Date.now();
+    return available;
+  })();
+  dockerHealth.pending = check;
+  try {
+    return await check;
+  } finally {
+    if (dockerHealth.pending === check) dockerHealth.pending = null;
+  }
+}
+
 app.get("/api/health", async (req, res) => {
   // Capacity changes on every session start/teardown. Proxy or browser caches
   // must never replay yesterday's "ready" or "busy" response on a TV.
@@ -318,12 +347,9 @@ app.get("/api/health", async (req, res) => {
   // telling a remote TV it is ready. Keep transient daemon errors private.
   // Source-bound public API fixtures have no Docker object; production always
   // initializes the client above and treats a failed ping as unavailable.
-  if (typeof docker !== "undefined" && typeof docker.ping === "function") {
-    try {
-      await docker.ping();
-    } catch {
-      return res.status(503).json({ status: "unavailable" });
-    }
+  if (typeof docker !== "undefined" && typeof docker.ping === "function" &&
+      !(await dockerIsAvailable())) {
+    return res.status(503).json({ status: "unavailable" });
   }
   return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
