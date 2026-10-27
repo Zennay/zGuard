@@ -492,10 +492,12 @@ async function startSession(url) {
       }
       throw error;
     }
-    // A start may finish after pagehide, when no token existed for the
-    // pagehide handler to release. Do not mount a browser on an abandoned
-    // page; use keepalive DELETE if the response still arrives.
-    if (pageExitGeneration !== requestGeneration) {
+    // A start may finish after pagehide, offline recovery, a failed gateway
+    // readiness poll, or a reviewed-site removal. Its bearer must never be
+    // mounted using the old admission decision; clean up the allocation even
+    // if it was valid when the original POST left this TV.
+    if (pageExitGeneration !== requestGeneration || !pageActive ||
+        !gatewayCanStart || !siteCatalogueReady || !isReviewedStartUrl(url)) {
       // Navigation may finish before an in-flight POST returns its token.
       // A failed late DELETE must be reconciled just like an ordinary End;
       // otherwise BFCache restoration could start/reuse that still-live token.
