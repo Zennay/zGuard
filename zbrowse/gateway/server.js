@@ -269,10 +269,17 @@ function findSession(req) {
 }
 
 app.get("/api/health", (req, res) => {
+  // Capacity changes on every session start/teardown. Proxy or browser caches
+  // must never replay yesterday's "ready" or "busy" response on a TV.
+  // This also applies to Express-generated conditional GET/HEAD responses.
+  res.setHeader("Cache-Control", "no-store");
   res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
 app.get("/api/sites", (req, res) => {
+  // An outdated catalogue can offer domains removed from the reviewed
+  // allowlist or display obsolete session limits after a gateway rollout.
+  res.setHeader("Cache-Control", "no-store");
   res.json({ sites, maxSessionMinutes: Math.round(config.ttlMs / 60_000) });
 });
 
