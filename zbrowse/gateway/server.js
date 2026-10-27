@@ -426,8 +426,16 @@ const browserProxy = createProxyServer();
 if (typeof browserProxy.on === "function") {
   browserProxy.on("proxyRes", (proxyRes) => {
     if (!proxyRes?.headers) return;
+    // CDNs may honor Surrogate-Control or vendor-specific TTLs ahead of
+    // ordinary Cache-Control; Expires can also re-enable legacy caching.
+    // Strip all upstream cache directives before forwarding a bearer-bound
+    // viewer response, including range, redirects and conditional replies.
+    const upstreamCacheHeaders = new Set([
+      "cache-control", "surrogate-control", "cdn-cache-control",
+      "cloudflare-cdn-cache-control", "expires", "x-accel-expires"
+    ]);
     for (const name of Object.keys(proxyRes.headers)) {
-      if (name.toLowerCase() === "cache-control") delete proxyRes.headers[name];
+      if (upstreamCacheHeaders.has(name.toLowerCase())) delete proxyRes.headers[name];
     }
     proxyRes.headers["cache-control"] = "no-store";
   });
