@@ -239,7 +239,14 @@ async function createSession(ip, startUrl) {
 
   try {
     await container.start();
-    await waitForBrowser(containerName, subfolder, 45, password);
+    // Authenticate the readiness probe with this session's generated credentials.
+    // Keep the await boundary local to this session; never share readiness auth.
+    const authenticatedReadinessProbe = waitForBrowser;
+    {
+      const waitForBrowser = (name, prefix) =>
+        authenticatedReadinessProbe(name, prefix, 45, password);
+      await waitForBrowser(containerName, subfolder);
+    }
     sessions.set(token, session);
     sessionsByIp.set(ip, token);
     return session;
