@@ -308,12 +308,24 @@ function findSession(req) {
   return session?.cleanupFailed ? null : session;
 }
 
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   // Capacity changes on every session start/teardown. Proxy or browser caches
   // must never replay yesterday's "ready" or "busy" response on a TV.
   // This also applies to Express-generated conditional GET/HEAD responses.
   res.setHeader("Cache-Control", "no-store");
-  res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  // An alive Express process is not a usable browser engine when Docker is
+  // unreachable. Check the same Docker socket used by session creation before
+  // telling a remote TV it is ready. Keep transient daemon errors private.
+  // Source-bound public API fixtures have no Docker object; production always
+  // initializes the client above and treats a failed ping as unavailable.
+  if (typeof docker !== "undefined" && typeof docker.ping === "function") {
+    try {
+      await docker.ping();
+    } catch {
+      return res.status(503).json({ status: "unavailable" });
+    }
+  }
+  return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
 });
 
 app.get("/api/sites", (req, res) => {
