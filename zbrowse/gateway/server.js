@@ -428,10 +428,19 @@ function browserProxyError(error, response) {
   }
   console.error("Browser proxy error", category);
   if (response?.writeHead && !response.headersSent) {
-    response.writeHead(502).end("Browser connection interrupted.");
-    return;
+    try {
+      response.writeHead(502).end("Browser connection interrupted.");
+      return;
+    } catch {
+      // A client may disconnect between the headersSent check and writeHead.
+      // Close the response without logging or throwing the secondary error.
+    }
   }
-  response?.destroy?.();
+  try {
+    response?.destroy?.();
+  } catch {
+    // The peer is already gone. Never let a failed cleanup crash the gateway.
+  }
 }
 
 app.use("/s/", async (req, res) => {
