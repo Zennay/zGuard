@@ -490,9 +490,15 @@ server.on("upgrade", (req, socket, head) => {
   }
   session.lastSeenAt = Date.now();
   req.zbrowseSession = session;
-  browserProxy.ws(req, socket, browserProxyOptions(req), head).catch((error) => {
+  // WebSocket setup may throw before returning a Promise (invalid upstream
+  // options, socket failure), not only reject asynchronously. Both paths
+  // must close the client socket without exposing bearer/auth diagnostics.
+  try {
+    Promise.resolve(browserProxy.ws(req, socket, browserProxyOptions(req), head))
+      .catch((error) => browserProxyError(error, socket));
+  } catch (error) {
     browserProxyError(error, socket);
-  });
+  }
 });
 
 server.listen(config.port, "0.0.0.0", () => {
