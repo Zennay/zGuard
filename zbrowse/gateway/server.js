@@ -415,12 +415,6 @@ if (typeof browserProxy.on === "function") {
     }
     proxyRes.headers["cache-control"] = "no-store";
   });
-  // httpxy may emit a proxy error event outside the returned web/ws Promise.
-  // Without an error listener, Node's EventEmitter can terminate the gateway.
-  // Route both delivery mechanisms through the same credential-safe handler.
-  browserProxy.on("error", (error, _request, response) => {
-    browserProxyError(error, response);
-  });
 }
 
 function browserProxyOptions(req) {
