@@ -473,13 +473,15 @@ if (typeof browserProxy.on === "function") {
     }
     proxyRes.headers["cache-control"] = "no-store";
   });
-  // http-proxy emits asynchronous connection/upgrade errors on this event.
-  // Without a listener, Node treats an upstream outage as an uncaught error
-  // and terminates the entire gateway instead of failing this viewer only.
-  // The shared handler never logs upstream error messages or bearer URLs.
-  browserProxy.on("error", (error, _request, client) => {
-    browserProxyError(error, client);
-  });
+  // The real proxy is an EventEmitter. Its addListener API is equivalent to
+  // on(), while minimal proxyRes-only adapters may not expose it.
+  // Handle async HTTP/WS upstream outages without crashing the entire gateway
+  // or emitting untrusted bearer/credential-bearing error messages.
+  if (typeof browserProxy.addListener === "function") {
+    browserProxy.addListener("error", (error, _request, client) => {
+      browserProxyError(error, client);
+    });
+  }
 }
 
 function browserProxyOptions(req) {
