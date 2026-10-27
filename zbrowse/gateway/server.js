@@ -320,10 +320,13 @@ async function dockerIsAvailable() {
   const check = (async () => {
     let available = false;
     try {
+      // A healthy daemon without the configured browser image cannot serve a
+      // session. Check both before advertising "Ready to browse" to the TV.
       await docker.ping();
+      await docker.getImage(config.image).inspect();
       available = true;
     } catch {
-      // The public TV only needs a boolean, never raw Docker details.
+      // The public TV only needs a boolean, never raw Docker/image details.
     }
     dockerHealth.available = available;
     dockerHealth.checkedAt = Date.now();
