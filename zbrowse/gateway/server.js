@@ -19,6 +19,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = http.createServer(app);
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+// Lifecycle operations (start, wait, teardown) can legitimately take much
+// longer than a TV poll. Keep public readiness probes on a separate Docker
+// modem so a stalled daemon cannot pin every poll or time out a live session.
+const dockerHealthClient = new Docker({
+  socketPath: "/var/run/docker.sock",
+  connectionTimeout: 2_500,
+  timeout: 2_500
+});
 const sessions = new Map();
 const sessionsByIp = new Map();
 
@@ -322,12 +330,15 @@ async function dockerIsAvailable() {
     try {
       // A healthy daemon without the configured browser image cannot serve a
       // session. Check both before advertising "Ready to browse" to the TV.
-      await docker.ping();
-      await docker.getImage(config.image).inspect();
+      await dockerHealthClient.ping();
       // Docker can respond and have the image while the isolated network is
-      // missing. That would make every container.create fail after TV reports
-      // "Ready to browse"; require the actual configured network as well.
-      await docker.getNetwork(config.network).inspect();
+      // missing. Both requests share the bounded health-only socket policy
+      // and run together: a slow Docker daemon returns a generic 503 before
+      // the TV's seven-second readiness deadline.
+      await Promise.all([
+        dockerHealthClient.getImage(config.image).inspect(),
+        dockerHealthClient.getNetwork(config.network).inspect()
+      ]);
       available = true;
     } catch {
       // The public TV only needs a boolean, never raw Docker/image details.
