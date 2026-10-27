@@ -261,8 +261,11 @@ async function ensureSiteCatalogue() {
   // A slow /api/sites reply can overlap multiple health ticks and BFCache
   // restores. Share one in-flight operation to preserve reviewed results.
   if (siteCatalogueRequest) return siteCatalogueRequest;
-  if (siteCatalogueReady &&
-      Date.now() - siteCatalogueValidatedAt < SITE_CATALOGUE_MAX_AGE_MS) return true;
+  const catalogueAge = Date.now() - siteCatalogueValidatedAt;
+  // Wall clocks can move backward after a TV sleep/resume or NTP correction.
+  // A negative age must not preserve a revoked allowlist indefinitely.
+  if (siteCatalogueReady && catalogueAge >= 0 &&
+      catalogueAge < SITE_CATALOGUE_MAX_AGE_MS) return true;
   // Never let a stale catalogue authorize a new session while revalidating.
   siteCatalogueReady = false;
   syncStartButton();
@@ -270,9 +273,17 @@ async function ensureSiteCatalogue() {
     try {
       const data = await request("/api/sites", { cache: "no-store", signal: AbortSignal.timeout(7000) });
       if (!reviewedSiteCatalogue(data)) throw new Error("Invalid site catalogue");
+      // Replace a preselected site only if that former reviewed suggestion
+      // has actually been revoked. Never overwrite a custom URL being typed.
+      const previousSuggestion = state.sites.some(
+        (site) => site.url === urlInput.value.trim()
+      );
       state.sites = data.sites;
       renderSuggestions();
-      if (!urlInput.value.trim()) urlInput.value = state.sites[0].url;
+      if (!urlInput.value.trim() ||
+          (previousSuggestion && !isReviewedStartUrl(urlInput.value.trim()))) {
+        urlInput.value = state.sites[0].url;
+      }
       siteCatalogueReady = true;
       siteCatalogueValidatedAt = Date.now();
       setMessage();
@@ -282,7 +293,7 @@ async function ensureSiteCatalogue() {
       siteCatalogueValidatedAt = 0;
       state.sites = [];
       renderSuggestions();
-      setMessage("Site catalogue unavailable. Reload to retry.");
+      setMessage("Site catalogue unavailable. Retrying automatically.");
       return false;
     } finally {
       syncStartButton();
