@@ -251,7 +251,8 @@ const SITE_CATALOGUE_MAX_AGE_MS = 5 * 60_000;
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
   // or draining gateway state must prevent an avoidable start POST.
-  startButton.disabled = sessionStarting || sessionEnding || !gatewayCanStart || !siteCatalogueReady;
+  startButton.disabled = sessionStarting || sessionEnding || !!pendingReleaseToken ||
+    !!state.session || !gatewayCanStart || !siteCatalogueReady;
 }
 
 async function ensureSiteCatalogue() {
@@ -286,14 +287,20 @@ async function ensureSiteCatalogue() {
       }
       siteCatalogueReady = true;
       siteCatalogueValidatedAt = Date.now();
-      setMessage();
+      // A successful catalogue refresh must not erase a stronger warning
+      // about a browser whose DELETE has not yet been acknowledged.
+      if (!pendingReleaseToken) setMessage();
       return true;
     } catch {
       siteCatalogueReady = false;
       siteCatalogueValidatedAt = 0;
       state.sites = [];
       renderSuggestions();
-      setMessage("Site catalogue unavailable. Retrying automatically.");
+      // Catalogue discovery is secondary to confirmed browser teardown.
+      // Keep the safety-critical release guidance visible during outages.
+      setMessage(pendingReleaseToken
+        ? "Could not confirm browser shutdown. Retrying automatically."
+        : "Site catalogue unavailable. Retrying automatically.");
       return false;
     } finally {
       syncStartButton();
@@ -308,14 +315,14 @@ async function ensureSiteCatalogue() {
 }
 
 async function refreshHealth(retryPendingRelease = true) {
-  // Recover a missing catalogue and periodically refresh a previously valid
-  // one when the gateway's reviewed site policy changes during a TV session.
-  await ensureSiteCatalogue();
-  // A failed DELETE must not become a second same-IP POST that reuses the
-  // supposedly ended browser. Retry its release on the regular health poll.
+  // A failed DELETE retains browser capacity and the old bearer. Retry that
+  // teardown *before* catalogue discovery, whose 7-second timeout must not
+  // delay releasing an existing browser or hold its recovery behind an outage.
   if (retryPendingRelease && pendingReleaseToken) {
     await releasePendingSession();
   }
+  // Recover the site catalogue independently, still fail-closed for admission.
+  await ensureSiteCatalogue();
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -408,7 +415,8 @@ let pageActive = true;
 async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
-  if (sessionStarting || sessionEnding || state.session || !gatewayCanStart || !siteCatalogueReady) return;
+  if (sessionStarting || sessionEnding || pendingReleaseToken || state.session ||
+      !gatewayCanStart || !siteCatalogueReady) return;
   const requestGeneration = pageExitGeneration;
   sessionStarting = true;
   setMessage();
@@ -639,6 +647,12 @@ function isReviewedStartUrl(value) {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
+  // TV remotes and scripted Enter submissions can fire even while Open is
+  // disabled. A pending teardown takes priority over URL validation messages.
+  if (pendingReleaseToken || sessionEnding) {
+    setMessage("Could not confirm browser shutdown. Retrying automatically.");
+    return;
+  }
   if (!siteCatalogueReady) {
     setMessage("Site catalogue unavailable. Reload to retry.");
     return;
