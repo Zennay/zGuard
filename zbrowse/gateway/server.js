@@ -637,9 +637,11 @@ const cleanupTimer = setInterval(() => {
         error = "BROWSER_TEARDOWN_FAILURE";
         console.error("Cleanup failed", error);
       });
-    } else {
-      // Do not block the next sweep on a slow Docker response, and do not
-      // stack more inspect requests while an earlier one is unresolved.
+    } else if (typeof session.container?.inspect === "function") {
+      // Only Docker-backed sessions need the additional liveness sweep.
+      // Synthetic/legacy entries without a container are never acted on;
+      // an unknown runtime cannot be assumed safely removed.
+      // Do not block the next sweep or stack overlapping inspections.
       reconcileBrowserLiveness(session).catch(() =>
         console.error("Browser liveness check failed", "BROWSER_INSPECTION_FAILURE"));
     }
