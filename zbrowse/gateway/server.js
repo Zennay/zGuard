@@ -324,6 +324,10 @@ async function dockerIsAvailable() {
       // session. Check both before advertising "Ready to browse" to the TV.
       await docker.ping();
       await docker.getImage(config.image).inspect();
+      // Docker can respond and have the image while the isolated network is
+      // missing. That would make every container.create fail after TV reports
+      // "Ready to browse"; require the actual configured network as well.
+      await docker.getNetwork(config.network).inspect();
       available = true;
     } catch {
       // The public TV only needs a boolean, never raw Docker/image details.
