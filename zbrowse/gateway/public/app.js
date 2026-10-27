@@ -247,6 +247,9 @@ let siteCatalogueReady = false;
 let siteCatalogueRequest = null;
 let siteCatalogueValidatedAt = 0;
 const SITE_CATALOGUE_MAX_AGE_MS = 5 * 60_000;
+// Offline users can force a fresh read by reloading, but automatic polling
+// remains active. Keep the guidance truthful for both TV and desktop users.
+const SITE_CATALOGUE_RETRY_MESSAGE = "Site catalogue unavailable. Retrying automatically. Reload to retry now.";
 
 function syncStartButton() {
   // Capacity may be busy yet reusable for this client; only invalid, offline
@@ -292,7 +295,7 @@ async function ensureSiteCatalogue() {
       // A catalogue recovery may clear only its own earlier outage notice.
       // Preserve a more useful start/teardown error while the TV retries.
       if (!pendingReleaseToken &&
-          message.textContent === "Site catalogue unavailable. Retrying automatically.") {
+          message.textContent === SITE_CATALOGUE_RETRY_MESSAGE) {
         setMessage();
       }
       return true;
@@ -308,10 +311,10 @@ async function ensureSiteCatalogue() {
       // only replace an empty/previous catalogue notice. Teardown warnings
       // remain highest priority while a browser bearer may still be live.
       if (pendingReleaseToken || !message.textContent ||
-          message.textContent === "Site catalogue unavailable. Retrying automatically.") {
+          message.textContent === SITE_CATALOGUE_RETRY_MESSAGE) {
         setMessage(pendingReleaseToken
           ? "Could not confirm browser shutdown. Retrying automatically."
-          : "Site catalogue unavailable. Retrying automatically.");
+          : SITE_CATALOGUE_RETRY_MESSAGE);
       }
       return false;
     } finally {
@@ -669,7 +672,7 @@ form.addEventListener("submit", (event) => {
     return;
   }
   if (!siteCatalogueReady) {
-    setMessage("Site catalogue unavailable. Retrying automatically.");
+    setMessage(SITE_CATALOGUE_RETRY_MESSAGE);
     return;
   }
   const value = urlInput.value.trim();
