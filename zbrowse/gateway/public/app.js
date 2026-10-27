@@ -334,16 +334,20 @@ async function ensureSiteCatalogue() {
 }
 
 async function refreshHealth(retryPendingRelease = true) {
-  // Frozen / abandoned pages may not trust old readiness or dispatch a new
-  // capacity poll. pageshow / online / visibility recovery performs a fresh
-  // bounded check before admitting another browser.
+  // A recovery transition can happen while an older poll is waiting for a
+  // catalogue read or a failed-browser DELETE, before that poll ever received
+  // a health sequence number. Pin the lifecycle generation at entry so the
+  // abandoned poll cannot issue newer health work after offline/pagehide.
   if (!pageActive) return;
+  const requestGeneration = pageExitGeneration;
+  const stillCurrent = () => pageActive && pageExitGeneration === requestGeneration;
   // A failed DELETE retains browser capacity and the old bearer. Retry that
   // teardown *before* catalogue discovery, whose 7-second timeout must not
   // delay releasing an existing browser or hold its recovery behind an outage.
   if (retryPendingRelease && pendingReleaseToken) {
     await releasePendingSession();
   }
+  if (!stillCurrent()) return;
   // The first TV bootstrap must validate its catalogue before polling
   // capacity. That keeps startup deterministic, with one bounded read at a
   // time. After a valid catalogue has been observed, later revalidation and
@@ -352,6 +356,7 @@ async function refreshHealth(retryPendingRelease = true) {
   const catalogueRefresh = siteCatalogueValidatedAt > 0
     ? ensureSiteCatalogue() : null;
   if (!catalogueRefresh) await ensureSiteCatalogue();
+  if (!stillCurrent()) return;
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -360,12 +365,12 @@ async function refreshHealth(retryPendingRelease = true) {
     // Server/CDN no-store remains an independent requirement (#293).
     const health = await request("/api/health", { cache: "no-store", signal: AbortSignal.timeout(7000) });
     // A slower earlier poll cannot overwrite a newer capacity observation.
-    if (sequence !== healthRequestSequence) return;
+    if (sequence !== healthRequestSequence || !stillCurrent()) return;
     // A healthy gateway alone cannot authorize browser creation until the
     // curated HTTPS catalogue has completed its independent validation.
     if (catalogueRefresh) {
       await catalogueRefresh;
-      if (sequence !== healthRequestSequence) return;
+      if (sequence !== healthRequestSequence || !stillCurrent()) return;
     }
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
@@ -408,7 +413,7 @@ async function refreshHealth(retryPendingRelease = true) {
     status.className = "status " + (available ? "available" : "busy");
     $("capacityText").textContent = available ? "Ready to browse" : "Browser currently in use";
   } catch {
-    if (sequence !== healthRequestSequence) return;
+    if (sequence !== healthRequestSequence || !stillCurrent()) return;
     gatewayCanStart = false;
     syncStartButton();
     status.className = "status";
