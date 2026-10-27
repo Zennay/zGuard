@@ -340,8 +340,11 @@ async function refreshHealth(retryPendingRelease = true) {
   if (retryPendingRelease && pendingReleaseToken) {
     await releasePendingSession();
   }
-  // Recover the site catalogue independently, still fail-closed for admission.
-  await ensureSiteCatalogue();
+  // Catalogue discovery and gateway readiness are independent read-only
+  // operations. Start both now: an offline gateway should report offline at
+  // once, rather than waiting seven seconds for an unrelated stalled site
+  // catalogue first. The Open control still requires *both* valid results.
+  const catalogueRefresh = ensureSiteCatalogue();
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -350,6 +353,10 @@ async function refreshHealth(retryPendingRelease = true) {
     // Server/CDN no-store remains an independent requirement (#293).
     const health = await request("/api/health", { cache: "no-store", signal: AbortSignal.timeout(7000) });
     // A slower earlier poll cannot overwrite a newer capacity observation.
+    if (sequence !== healthRequestSequence) return;
+    // A healthy gateway alone cannot authorize browser creation until the
+    // curated HTTPS catalogue has completed its independent validation.
+    await catalogueRefresh;
     if (sequence !== healthRequestSequence) return;
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
