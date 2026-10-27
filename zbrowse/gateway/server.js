@@ -503,10 +503,19 @@ app.use(express.static(path.join(__dirname, "public"), {
   etag: true,
   maxAge: "1h",
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith("index.html")) res.setHeader("Cache-Control", "no-cache");
+    // HTML and the unversioned TV runtime must revalidate after every deploy.
+    // Otherwise a browser may keep old admission/recovery logic for an hour
+    // even when the gateway itself enforces fresh catalogue and health data.
+    if (filePath.endsWith("index.html") || filePath.endsWith("app.js")) {
+      res.setHeader("Cache-Control", "no-cache");
+    }
   }
 }));
-app.use((req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
+app.use((req, res) => {
+  // SPA deep-link fallback is HTML too: it must not outlive a new runtime.
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "public/index.html"));
+});
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
