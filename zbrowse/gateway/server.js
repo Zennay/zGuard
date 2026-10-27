@@ -137,9 +137,26 @@ async function stopContainer(container) {
   try {
     await container.stop({ t: 3 });
   } catch {
-    // The fallback must surface a failure: silently swallowing both Docker
-    // failures makes the gateway treat a still-running browser as removed.
-    await container.remove({ force: true });
+    // The container may have already exited and been AutoRemoved before a
+    // delayed DELETE/idle retry. Still try forced removal first: a stop 404
+    // alone is not reliable evidence that teardown completed.
+    try {
+      await container.remove({ force: true });
+    } catch (removeError) {
+      if (removeError?.statusCode === 404) {
+        // Both operations may race Docker's AutoRemove. Reinspect the exact
+        // container ID before freeing the browser slot. A confirmed Docker
+        // 404 means it no longer exists; any other result remains fail-closed.
+        try {
+          await container.inspect();
+        } catch (inspectError) {
+          if (inspectError?.statusCode === 404) return;
+        }
+      }
+      // Preserve the tracked bearer, owner and admission capacity on any
+      // uncertain teardown error or Docker daemon outage.
+      throw removeError;
+    }
   }
 }
 
