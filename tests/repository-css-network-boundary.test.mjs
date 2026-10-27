@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { assertVpsOwnerGuardedJob } from "./workflow-runner-policy.mjs";
+import { assertVpsOwnerGuardedJob } from "../tools/workflow-runner-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tracked = execFileSync("git", ["ls-files", "-z"], {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { assertVpsOwnerGuardedJob } from './workflow-runner-policy.mjs';
+import { assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const packageJson = JSON.parse(
   fs.readFileSync(new URL('../zbrowse/gateway/package.json', import.meta.url), 'utf8')

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertVpsOwnerGuardedJob } from "./workflow-runner-policy.mjs";
+import { assertVpsOwnerGuardedJob } from "../tools/workflow-runner-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const load = (location) => JSON.parse(fs.readFileSync(path.join(root, location), "utf8"));

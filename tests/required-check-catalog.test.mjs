@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OWNER_PR_GUARD, VPS_RUNS_ON } from './workflow-runner-policy.mjs';
+import { OWNER_PR_GUARD, VPS_RUNS_ON } from '../tools/workflow-runner-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, '.github', 'required-checks.json');
