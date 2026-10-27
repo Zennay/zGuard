@@ -428,6 +428,9 @@ function browserProxyOptions(req) {
     target: `https://${req.zbrowseSession.containerName}:3001`,
     secure: false,
     changeOrigin: true,
+    // Bound a stalled upstream HTTP Upgrade handshake. This does not impose
+    // a lifetime on the established TV viewer WebSocket stream.
+    upgradeTimeout: 15_000,
     auth: `viewer:${req.zbrowseSession.password}`
   };
 }
