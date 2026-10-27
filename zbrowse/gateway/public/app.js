@@ -774,14 +774,36 @@ window.addEventListener("pageshow", (event) => {
   }
 });
 
-// TV sleep/resume or a recovered network may not coincide with the 20s
-// background interval. Recheck promptly, while keeping stale or frozen pages
-// unable to authorize a new browser before the refreshed health response.
-window.addEventListener("online", () => {
-  if (pageActive) refreshHealth();
+// Connectivity changes must revoke an old successful capacity poll
+// synchronously. Otherwise the TV can still send a browser-start POST using
+// the last green poll while an online/visibility recovery probe is pending.
+// Invalidate older in-flight responses before scheduling the new probe.
+function revokeCachedReadiness(label) {
+  healthRequestSequence++;
+  gatewayCanStart = false;
+  syncStartButton();
+  if (!state.session && !pendingReleaseToken) {
+    $("capacityText").parentElement.className = "status";
+    $("capacityText").textContent = label;
+  }
+}
+
+function recheckAfterResume() {
+  if (!pageActive) return;
+  revokeCachedReadiness("Checking browser connection");
+  refreshHealth();
+}
+
+// A disconnected TV must not advertise the last green gateway as usable for
+// up to another 20 seconds. Any in-flight old health response is now stale.
+window.addEventListener("offline", () => {
+  revokeCachedReadiness("Browser engine offline");
 });
+// TV sleep/resume or a recovered network may not coincide with the 20s
+// background interval. Recheck promptly and reopen only after fresh health.
+window.addEventListener("online", recheckAfterResume);
 document.addEventListener("visibilitychange", () => {
-  if (pageActive && document.visibilityState === "visible") refreshHealth();
+  if (pageActive && document.visibilityState === "visible") recheckAfterResume();
 });
 
 document.addEventListener("keydown", (event) => {
