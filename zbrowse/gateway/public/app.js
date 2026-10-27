@@ -259,7 +259,7 @@ function syncStartButton() {
   // rejects any scripted submit while state.session exists, independently of
   // button state. Pending teardown must still lock the control visibly.
   startButton.disabled = sessionStarting || sessionEnding || !!pendingReleaseToken ||
-    !gatewayCanStart || !siteCatalogueReady;
+    !gatewayCanStart || !siteCatalogueReady || !pageActive;
 }
 
 async function ensureSiteCatalogue() {
@@ -334,6 +334,10 @@ async function ensureSiteCatalogue() {
 }
 
 async function refreshHealth(retryPendingRelease = true) {
+  // Frozen / abandoned pages may not trust old readiness or dispatch a new
+  // capacity poll. pageshow / online / visibility recovery performs a fresh
+  // bounded check before admitting another browser.
+  if (!pageActive) return;
   // A failed DELETE retains browser capacity and the old bearer. Retry that
   // teardown *before* catalogue discovery, whose 7-second timeout must not
   // delay releasing an existing browser or hold its recovery behind an outage.
@@ -447,7 +451,7 @@ async function startSession(url) {
   // A disabled button does not prevent a second form submit or scripted event.
   // Never allocate two gateway sessions for the same portal while one is starting.
   if (sessionStarting || sessionEnding || pendingReleaseToken || state.session ||
-      !gatewayCanStart || !siteCatalogueReady) return;
+      !gatewayCanStart || !siteCatalogueReady || !pageActive) return;
   const requestGeneration = pageExitGeneration;
   sessionStarting = true;
   setMessage();
@@ -733,6 +737,12 @@ $("fullscreenButton").addEventListener("click", async () => {
 window.addEventListener("pagehide", () => {
   pageActive = false;
   pageExitGeneration++;
+  // BFCache can freeze a TV between a health request and its response. Invalidate
+  // that response and revoke the last readiness immediately, even if there is
+  // no active browser token to release. A restored page must revalidate first.
+  healthRequestSequence++;
+  gatewayCanStart = false;
+  syncStartButton();
   const token = state.session?.token || pendingReleaseToken;
   if (token) {
     // The previous release may have failed or remained in-flight. Dispatch a
@@ -755,6 +765,16 @@ window.addEventListener("pageshow", (event) => {
   } else {
     refreshHealth();
   }
+});
+
+// TV sleep/resume or a recovered network may not coincide with the 20s
+// background interval. Recheck promptly, while keeping stale or frozen pages
+// unable to authorize a new browser before the refreshed health response.
+window.addEventListener("online", () => {
+  if (pageActive) refreshHealth();
+});
+document.addEventListener("visibilitychange", () => {
+  if (pageActive && document.visibilityState === "visible") refreshHealth();
 });
 
 document.addEventListener("keydown", (event) => {
