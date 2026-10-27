@@ -534,8 +534,6 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
-
- 
 // Catch unexpected Express middleware and static-file exceptions after the
 // reviewed JSON/proxy/session handlers. Express' default error renderer may
 // otherwise print request-related exception messages, paths or stack traces
