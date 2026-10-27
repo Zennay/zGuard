@@ -779,6 +779,11 @@ window.addEventListener("pageshow", (event) => {
 // the last green poll while an online/visibility recovery probe is pending.
 // Invalidate older in-flight responses before scheduling the new probe.
 function revokeCachedReadiness(label) {
+  // A POST already awaiting its bearer must also be reconciled as abandoned:
+  // after an offline/restore event, mounting that stale session would bypass
+  // the newly required gateway check. startSession's generation guard performs
+  // an idempotent DELETE as soon as its late response supplies the token.
+  pageExitGeneration++;
   healthRequestSequence++;
   gatewayCanStart = false;
   syncStartButton();
