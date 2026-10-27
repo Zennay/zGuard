@@ -337,21 +337,23 @@ async function dockerIsAvailable() {
   }
 }
 
-app.get("/api/health", async (req, res) => {
+app.get("/api/health", (req, res) => {
   // Capacity changes on every session start/teardown. Proxy or browser caches
   // must never replay yesterday's "ready" or "busy" response on a TV.
   // This also applies to Express-generated conditional GET/HEAD responses.
   res.setHeader("Cache-Control", "no-store");
-  // An alive Express process is not a usable browser engine when Docker is
-  // unreachable. Check the same Docker socket used by session creation before
-  // telling a remote TV it is ready. Keep transient daemon errors private.
-  // Source-bound public API fixtures have no Docker object; production always
-  // initializes the client above and treats a failed ping as unavailable.
-  if (typeof docker !== "undefined" && typeof docker.ping === "function" &&
-      !(await dockerIsAvailable())) {
-    return res.status(503).json({ status: "unavailable" });
+  const respond = available => {
+    if (!available) return res.status(503).json({ status: "unavailable" });
+    return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  };
+  // The real gateway probes its Docker socket before advertising TV readiness.
+  // Source-bound public API fixtures deliberately have no Docker object.
+  if (typeof docker !== "undefined" && typeof docker.ping === "function") {
+    // Keep the synchronous route registration contract used by other shipped
+    // admission/recovery handlers, while bounding Docker errors to generic 503.
+    return dockerIsAvailable().then(respond, () => respond(false));
   }
-  return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
+  return respond(true);
 });
 
 app.get("/api/sites", (req, res) => {
