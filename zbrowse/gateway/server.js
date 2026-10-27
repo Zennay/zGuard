@@ -517,6 +517,25 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
+
+ 
+// Catch unexpected Express middleware and static-file exceptions after the
+// reviewed JSON/proxy/session handlers. Express' default error renderer may
+// otherwise print request-related exception messages, paths or stack traces
+// to a TV client in non-production deployments. Never serialize the error.
+app.use((_error, _req, res, _next) => {
+  console.error("Gateway request failed", "UNEXPECTED_REQUEST_FAILURE");
+  if (res.headersSent) {
+    // Streaming/proxied replies cannot be rewritten as JSON. Terminate the
+    // partially delivered response instead of leaking a mixed error body.
+    try { res.destroy(); } catch { /* The peer already disconnected. */ }
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.status(500).json({ error: "The browser gateway could not complete this request." });
+});
+
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of sessions.values()) {
