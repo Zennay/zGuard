@@ -340,11 +340,14 @@ async function refreshHealth(retryPendingRelease = true) {
   if (retryPendingRelease && pendingReleaseToken) {
     await releasePendingSession();
   }
-  // Catalogue discovery and gateway readiness are independent read-only
-  // operations. Start both now: an offline gateway should report offline at
-  // once, rather than waiting seven seconds for an unrelated stalled site
-  // catalogue first. The Open control still requires *both* valid results.
-  const catalogueRefresh = ensureSiteCatalogue();
+  // The first TV bootstrap must validate its catalogue before polling
+  // capacity. That keeps startup deterministic, with one bounded read at a
+  // time. After a valid catalogue has been observed, later revalidation and
+  // Docker health are independent: begin both without serial timeout delays.
+  // In either mode Open still requires BOTH valid, current responses.
+  const catalogueRefresh = siteCatalogueValidatedAt > 0
+    ? ensureSiteCatalogue() : null;
+  if (!catalogueRefresh) await ensureSiteCatalogue();
   const sequence = ++healthRequestSequence;
   const status = $("capacityText").parentElement;
   try {
@@ -356,8 +359,10 @@ async function refreshHealth(retryPendingRelease = true) {
     if (sequence !== healthRequestSequence) return;
     // A healthy gateway alone cannot authorize browser creation until the
     // curated HTTPS catalogue has completed its independent validation.
-    await catalogueRefresh;
-    if (sequence !== healthRequestSequence) return;
+    if (catalogueRefresh) {
+      await catalogueRefresh;
+      if (sequence !== healthRequestSequence) return;
+    }
     // A gateway in shutdown/drain mode must never be shown as available,
     // even if no browser containers are currently running.
     if (health?.status === "draining") {
