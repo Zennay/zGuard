@@ -666,7 +666,13 @@ async function reconcileBrowserLiveness(session) {
   const check = (async () => {
     let exited = false;
     try {
-      const details = await session.container.inspect();
+      // Docker can stop responding without rejecting a container inspect. An
+      // unbounded inspection would pin livenessPromise forever, hiding a later
+      // stopped container even after the daemon recovers. Abort only this
+      // read-only inspection; a timeout is unknown, never proof of shutdown.
+      const details = await session.container.inspect({
+        abortSignal: AbortSignal.timeout(5_000)
+      });
       exited = details?.State?.Running === false;
     } catch (error) {
       exited = error?.statusCode === 404;
