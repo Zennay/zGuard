@@ -350,6 +350,9 @@ app.get("/api/health", (req, res) => {
   // This also applies to Express-generated conditional GET/HEAD responses.
   res.setHeader("Cache-Control", "no-store");
   const respond = available => {
+    // The Docker socket can answer after a TV/client has aborted its poll.
+    // Never write a delayed readiness body into a closed or finished stream.
+    if (res.destroyed || res.writableEnded) return;
     if (!available) return res.status(503).json({ status: "unavailable" });
     return res.json({ status: "ok", activeSessions: sessions.size, startingSessions: sessionAdmission.pendingCount, capacity: config.maxSessions });
   };
