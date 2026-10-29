@@ -354,6 +354,10 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
       return res.json(publicSession(existingSession));
     }
     await destroySession(existingToken);
+    // An expired-session teardown yields to SIGTERM. Recheck the drain state
+    // before allocating a replacement; the earlier request-entry guard is
+    // no longer sufficient after any awaited Docker cleanup.
+    if (shuttingDown) return res.status(503).json({ error: "Browser service is shutting down." });
   }
 
   const admission = sessionAdmission.tryReserve(ip, sessions.size);
