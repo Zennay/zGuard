@@ -48,6 +48,7 @@ workflows = Dir[workflow_dir.join("*.{yml,yaml}")].sort
 abort "No GitHub Actions workflows found" if workflows.empty?
 
 workflow_names = {}
+OWNER_PR_GUARD = "((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))"
 job_display_names = {}
 concurrency_groups = {}
 
@@ -112,8 +113,8 @@ workflows.each do |workflow|
     if job.key?("continue-on-error")
       abort "#{relative}: job #{job_name.inspect} must not use continue-on-error; validation failures must remain terminal"
     end
-    if job.key?("if")
-      abort "#{relative}: job #{job_name.inspect} must not be conditionally skipped"
+    unless job["if"] == OWNER_PR_GUARD
+      abort "#{relative}: job #{job_name.inspect} must have the exact reviewed same-repository owner PR guard"
     end
 
     steps = job["steps"]
@@ -155,4 +156,4 @@ workflows.each do |workflow|
   end
 end
 
-puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, terminal-failure, unconditional-execution, and multiline-shell contract passed for #{workflows.length} workflows"
+puts "Workflow YAML, duplicate-key, check-identity, concurrency-isolation, terminal-failure, exact-owner-guard, and multiline-shell contract passed for #{workflows.length} workflows"
