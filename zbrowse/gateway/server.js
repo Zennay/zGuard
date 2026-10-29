@@ -511,6 +511,9 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 server.on("upgrade", (req, socket, head) => {
+  // A draining gateway must reject fresh stream handshakes before owner lookup.
+  // Teardown owns existing sessions, not new WebSocket proxy admission.
+  if (shuttingDown) return socket.destroy();
   const session = findSession(req);
   if (
     !session ||

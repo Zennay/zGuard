@@ -40,6 +40,7 @@ const server = http.createServer((_req, res) => {
 const seen = [];
 const sandbox = {
   server, sessions, requestIp, requestPath, trustProxyHops: 0,
+  shuttingDown: false,
   config: { idleMs: 300_000 },
   isSessionExpired(value) { return Boolean(value.expired); },
   console: { error(...args) { throw new Error('unexpected proxy error: ' + args.join(' ')); } },
@@ -323,6 +324,20 @@ try {
   }
   console.log('Real TCP WebSocket caller-authorization non-substitution: ' +
     callerCredentialHeaders.length + ' negative and positive pairs verified');
+
+  // Shutdown closes new upgrades immediately, even for a legitimate session.
+  // Existing viewer streams are handled by Docker teardown; a new handshake
+  // during drain must never reopen a browser being shut down.
+  const beforeDrain = seen.length;
+  sandbox.shuttingDown = true;
+  const duringDrain = await open('/s/' + token + '/websockify',
+    'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\n' +
+    'Sec-Fetch-Site: same-origin\r\n');
+  assert.doesNotMatch(duringDrain, /^HTTP\/1\.1 101/m,
+    'a draining gateway must deny even valid owner WebSocket upgrades');
+  assert.equal(seen.length, beforeDrain,
+    'draining gateway must not invoke any upstream WebSocket proxy');
+  console.log('Real TCP WebSocket upgrade during shutdown is fail-closed');
 
 } finally {
   await new Promise((resolve, reject) =>
