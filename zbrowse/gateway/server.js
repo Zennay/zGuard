@@ -495,6 +495,9 @@ async function shutdown() {
     shuttingDown = true;
   }
   clearInterval(cleanupTimer);
+  // Arm the supervisor deadline BEFORE awaiting any Docker start or cleanup.
+  // A hung start/wait must not prevent scheduling the fail-closed forced exit.
+  setTimeout(() => process.exit(1), 8000).unref();
   const pending = typeof inFlightSessionStarts !== "undefined"
     ? [...inFlightSessionStarts] : [];
   await Promise.allSettled(pending);
@@ -502,7 +505,6 @@ async function shutdown() {
   // A container that Docker refused to remove is never a successful stop.
   const failed = outcomes.some(result => result.status === "rejected") || sessions.size > 0;
   server.close(() => process.exit(failed ? 1 : 0));
-  setTimeout(() => process.exit(1), 8000).unref();
 }
 
 process.on("SIGTERM", shutdown);

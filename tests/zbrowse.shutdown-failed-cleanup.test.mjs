@@ -14,7 +14,7 @@ assert.ok(start >= 0 && end > start,
   'real gateway shutdown must remain extractable from the source');
 const code = source.slice(start, end) + '\nshutdown()';
 
-async function scenario({ failTokens = [], tokens = ['synthetic-a', 'synthetic-b'] } = {}) {
+async function scenario({ failTokens = [], tokens = ['synthetic-a', 'synthetic-b'], stallStart = false } = {}) {
   const sessions = new Map(tokens.map(token => [token, { token }]));
   const removed = [];
   const failures = new Set(failTokens);
@@ -22,14 +22,16 @@ async function scenario({ failTokens = [], tokens = ['synthetic-a', 'synthetic-b
   let clears = 0;
   let closeCalls = 0;
   let safetyTimers = 0;
+  let forcedExit;
   const context = {
     cleanupTimer: {},
   shuttingDown: false,
-  inFlightSessionStarts: new Set(),
+  inFlightSessionStarts: new Set(stallStart ? [new Promise(() => {})] : []),
     sessions,
     clearInterval() { clears++; },
-    setTimeout(_callback, ms) {
+    setTimeout(callback, ms) {
       assert.equal(ms, 8000, 'shutdown must preserve bounded cleanup safety timeout');
+      forcedExit = callback;
       safetyTimers++;
       return { unref() {} };
     },
@@ -48,15 +50,28 @@ async function scenario({ failTokens = [], tokens = ['synthetic-a', 'synthetic-b
       exit(code) { exitCodes.push(code); }
     }
   };
-  await vm.runInNewContext(code, context, {
+  const shutdownWork = vm.runInNewContext(code, context, {
     filename: 'zbrowse/gateway/server.js', timeout: 1000
   });
+  if (stallStart) {
+    // A browser start or Docker wait can remain pending forever; its safety
+    // deadline must already be registered before shutdown awaits the start.
+    assert.equal(safetyTimers, 1, 'stuck browser start must not prevent installing forced-exit watchdog');
+    assert.equal(closeCalls, 0, 'shutdown must not close before start reconciliation');
+    assert.deepEqual(exitCodes, [], 'watchdog must be a deadline, not an immediate exit');
+    forcedExit();
+  } else {
+    await shutdownWork;
+  }
   return {
     remaining: sessions.size,
     removed, exitCodes, clears, closeCalls, safetyTimers
   };
 }
 
+const stalled = await scenario({ stallStart: true, tokens: ['synthetic-orphan'] });
+assert.deepEqual(stalled.exitCodes, [1], 'unresolved Docker start must force supervisor failure at deadline');
+assert.equal(stalled.remaining, 1, 'unresolved start must not be falsely acknowledged as cleaned');
 const normal = await scenario();
 assert.deepEqual(normal.removed, ['synthetic-a', 'synthetic-b'],
   'shutdown must attempt every active container');
