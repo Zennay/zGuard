@@ -357,7 +357,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     // An expired-session teardown yields to SIGTERM. Recheck the drain state
     // before allocating a replacement; the earlier request-entry guard is
     // no longer sufficient after any awaited Docker cleanup.
-    if (shuttingDown) return res.status(503).json({ error: "Browser service is shutting down." });
+    if (typeof shuttingDown !== "undefined" && shuttingDown) {
+      return res.status(503).json({ error: "Browser service is shutting down." });
+    }
   }
 
   const admission = sessionAdmission.tryReserve(ip, sessions.size);
@@ -376,7 +378,9 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     // A start accepted before SIGTERM can finish while shutdown is draining.
     // The shutdown owner will reconcile its tracked container; never mint a
     // new client-visible session lease once the process is terminating.
-    if (shuttingDown) return res.status(503).json({ error: "Browser service is shutting down." });
+    if (typeof shuttingDown !== "undefined" && shuttingDown) {
+      return res.status(503).json({ error: "Browser service is shutting down." });
+    }
     return res.status(201).json(publicSession(session));
   } catch (error) {
     console.error("Session creation failed", error);
@@ -521,7 +525,7 @@ process.on("SIGINT", shutdown);
 server.on("upgrade", (req, socket, head) => {
   // A draining gateway must reject fresh stream handshakes before owner lookup.
   // Teardown owns existing sessions, not new WebSocket proxy admission.
-  if (shuttingDown) return socket.destroy();
+  if (typeof shuttingDown !== "undefined" && shuttingDown) return socket.destroy();
   const session = findSession(req);
   if (
     !session ||
