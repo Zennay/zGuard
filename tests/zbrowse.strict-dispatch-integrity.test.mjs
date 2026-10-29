@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VPS_RUNS_ON, OWNER_PR_GUARD, assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, '.github/workflows');
@@ -168,10 +169,11 @@ function testWorkflow(name, gates, yaml) {
   assert.match(yaml, /^  workflow_dispatch:\s*$/m, name + ': opt-ins must be dispatchable');
   assert.match(yaml, /^permissions:\s*\n  contents: read\s*$/m,
     name + ': workflow token must be read-only');
-  assert.match(yaml, /runs-on: ubuntu-(?:latest|24\.04)/,
-    name + ': remediation evidence must run on ephemeral hosted runner');
-  assert.doesNotMatch(yaml, /runs-on:.*self-hosted/,
-    name + ': never execute untrusted PR code on persistent runner');
+  assertVpsOwnerGuardedJob(yaml, name);
+  assert.equal((yaml.match(/^    if:/gm) || []).length, 1,
+    name + ': only the reviewed owner PR guard may control this job');
+  assert.equal((yaml.match(/^    runs-on:/gm) || []).length, 1,
+    name + ': exactly one VPS runner selection is required');
   // A workflow may contain every expected strict command yet still be
   // skipped or reported green by Actions if someone adds a job/step if:false
   // or turns failures into tolerated outcomes. These gates are release
@@ -301,11 +303,17 @@ for (const [label, injected] of [
   ['job cannot be disabled', '    if: false'],
   ['expression cannot disable gate', '    if: ${{ false }}']
 ]) {
-  const changed = fixture.replace('    runs-on: ubuntu-24.04',
-    '    runs-on: ubuntu-24.04\n' + injected);
+  const changed = fixture.replace('    ' + VPS_RUNS_ON,
+    '    ' + VPS_RUNS_ON + '\n' + injected);
   assert.notEqual(changed, fixture, label + ': test mutation must change workflow');
   assert.throws(() => testWorkflow(sample, sampleGates, changed),
     undefined, label + ': strict CI cannot report false-green skipped work');
+}
+
+// A broadened or absent owner guard must not permit fork PR code on the VPS.
+for (const replacement of ['    if: true', '    if: github.event_name == \"pull_request\"']) {
+  tamper(fixture, fixture.replace('    ' + OWNER_PR_GUARD, replacement),
+    'VPS runner must reject weakened owner and repository restrictions');
 }
 
 tamper(fixture, fixture.replace('default: false', 'default: true'),
@@ -360,7 +368,7 @@ for (const [workflow, gates] of matrix) {
     fs.readFileSync(path.join(workflowDir, workflow), 'utf8'));
 }
 console.log('Strict remediation workflow/CLI integrity passed: ' +
-  matrix.length + ' hosted workflows, ' +
+  matrix.length + ' owner-guarded VPS workflows, ' +
   matrix.reduce((count, [, gates]) => count + gates.length, 0) +
   ' explicitly opt-in gates, ' + strictCommands +
   ' strict source-bound test commands, 5 CLI wiring mutations and 1 unmapped-workflow discovery proof');
