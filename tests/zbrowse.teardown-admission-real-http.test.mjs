@@ -29,7 +29,7 @@ const sourceCode = [
   section('app.post("/api/session",', 'app.post("/api/session/:token/heartbeat"')
 ].join('\n');
 
-async function scenario({ stopFails, removeFails }) {
+async function scenario({ stopFails, removeFails, drainDuringStop = false }) {
   const ip = '127.0.0.1';
   const expiredToken = 'E'.repeat(32); // synthetic, never a bearer
   const newToken = 'N'.repeat(32);
@@ -37,12 +37,14 @@ async function scenario({ stopFails, removeFails }) {
   let removals = 0;
   let starts = 0;
   let releases = 0;
+  let sandbox;
   const oldSession = {
     token: expiredToken, ip,
     container: {
       async stop(options) {
         stops++;
         assert.equal(options.t, 3, 'actual gateway must keep bounded stop');
+        if (drainDuringStop) sandbox.shuttingDown = true;
         if (stopFails) throw new Error('synthetic stop failure');
       },
       async remove(options) {
@@ -57,8 +59,10 @@ async function scenario({ stopFails, removeFails }) {
   const sessionsByIp = new Map([[ip, expiredToken]]);
   const app = express();
   app.use(express.json({ limit: '8kb' }));
-  const sandbox = {
+  sandbox = {
     app, sessions, sessionsByIp,
+    shuttingDown: false,
+    inFlightSessionStarts: new Set(),
     requestIp, trustProxyHops: 0,
     config: { ttlMs: 900_000, idleMs: 600_000 },
     sessionLimiter(_req, _res, next) { next(); },
@@ -140,6 +144,15 @@ assert.equal(recovered.newOwnerSet, true,
   'forced cleanup replacement must register correct new owner');
 assert.equal(recovered.releases, 1,
   'forced cleanup must release its one successful replacement reservation');
+
+// The request can already be waiting for an expired browser to stop when
+// SIGTERM changes admission state. A successful cleanup may not authorize a
+// brand-new browser after that transition. This is a genuine Express POST.
+const midDrain = await scenario({ stopFails: false, removeFails: false, drainDuringStop: true });
+assert.equal(midDrain.status, 503, 'shutdown during old-session removal must deny replacement');
+assert.equal(midDrain.starts, 0, 'do not launch a new browser after drain begins');
+assert.equal(midDrain.oldTracked, false, 'completed old teardown should still free capacity');
+assert.equal(midDrain.newTracked, false, 'shutdown may not publish a replacement session');
 
 const orphan = await scenario({ stopFails: true, removeFails: true });
 assert.equal(orphan.stops, 1, 'failed teardown must attempt graceful stop');

@@ -51,6 +51,8 @@ const context = {
   app, express, Math, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
   config: { ttlMs: 900_000, idleMs: 600_000, maxSessions: 1 },
   cleanupTimer: {},
+  shuttingDown: false,
+  inFlightSessionStarts: new Set(),
   clearInterval() {},
   setTimeout(_callback, milliseconds) {
     assert.equal(milliseconds, 8000, 'shutdown safety timer must remain bounded');

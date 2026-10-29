@@ -40,6 +40,7 @@ let releases = 0;
 let destroyed = 0;
 let completion;
 let releaseStart;
+let startReleased = false;
 let reportExit;
 const created = new Promise(resolve => { completion = resolve; });
 const shutDown = new Promise(resolve => { reportExit = resolve; });
@@ -48,6 +49,8 @@ const context = {
   app, express, Math, Date, sessions, sessionsByIp, requestIp, trustProxyHops: 0,
   config: { ttlMs: 900_000, idleMs: 600_000 },
   cleanupTimer: {},
+  shuttingDown: false,
+  inFlightSessionStarts: new Set(),
   clearInterval() {},
   setTimeout(_callback, ms) {
     assert.equal(ms, 8000);
@@ -74,6 +77,10 @@ const context = {
     completion();
     return new Promise(resolve => {
       releaseStart = () => {
+        // Cleanup may invoke this a second time after shutdown. The fixture
+        // must not resurrect a synthetic container that was already removed.
+        if (startReleased) return;
+        startReleased = true;
         const session = {
           ip: owner, token,
           expiresAt: Date.now() + 900_000,
@@ -117,10 +124,11 @@ try {
       reject(new Error('in-flight request never entered browser creation')), 2000))
   ]);
   const shutdownWork = shutdown();
-  // The current shutdown uses an immediate empty-session snapshot; allow
-  // that microtask to complete before releasing the in-flight creation.
-  await shutdownWork;
+  // Give shutdown a microtask to enter its drain before the creation
+  // completes; a correct shutdown waits for this start and reconciles it.
+  await Promise.resolve();
   releaseStart();
+  await shutdownWork;
   const reply = await pendingResponse;
   responseStatus = reply.status;
   await reply.arrayBuffer();
@@ -142,6 +150,8 @@ assert.deepEqual(exitCodes, [0], 'fixture must complete graceful shutdown');
 const orphan = sessions.has(token);
 const ownerOrphan = sessionsByIp.get(ip) === token;
 if (strict) {
+  assert.equal(responseStatus, 503,
+    'in-flight browser admitted before shutdown must never deliver a usable bearer after drain begins');
   assert.deepEqual({ orphan, ownerOrphan }, { orphan: false, ownerOrphan: false },
     'browser created during shutdown must be reconciled before exit (issue #7)');
   console.log('Actual gateway reconciled in-flight browser startup at shutdown');
