@@ -369,6 +369,10 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     starting = createSession(ip, startUrl);
     if (typeof inFlightSessionStarts !== "undefined") inFlightSessionStarts.add(starting);
     const session = await starting;
+    // A start accepted before SIGTERM can finish while shutdown is draining.
+    // The shutdown owner will reconcile its tracked container; never mint a
+    // new client-visible session lease once the process is terminating.
+    if (shuttingDown) return res.status(503).json({ error: "Browser service is shutting down." });
     return res.status(201).json(publicSession(session));
   } catch (error) {
     console.error("Session creation failed", error);

@@ -150,6 +150,8 @@ assert.deepEqual(exitCodes, [0], 'fixture must complete graceful shutdown');
 const orphan = sessions.has(token);
 const ownerOrphan = sessionsByIp.get(ip) === token;
 if (strict) {
+  assert.equal(responseStatus, 503,
+    'in-flight browser admitted before shutdown must never deliver a usable bearer after drain begins');
   assert.deepEqual({ orphan, ownerOrphan }, { orphan: false, ownerOrphan: false },
     'browser created during shutdown must be reconciled before exit (issue #7)');
   console.log('Actual gateway reconciled in-flight browser startup at shutdown');
