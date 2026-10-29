@@ -1,0 +1,44 @@
+name: zBrowse live Docker acceptance CLI privacy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-live-docker-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitized-live-cli-contract:
+    name: Read-only Docker inspector CLI privacy contract
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Confirm checked-out commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run synthetic Docker read-only and no-secrets acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tools/zbrowse-live-docker-acceptance.mjs
+          node --check tests/zbrowse.live-docker-acceptance-cli.test.mjs
+          node tests/zbrowse.live-docker-acceptance-cli.test.mjs
+          test -z "$(git status --porcelain)"

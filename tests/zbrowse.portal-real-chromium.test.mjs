@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -44,9 +45,21 @@ for (const [sample, expected] of [
 const syntheticToken = 'T'.repeat(32);
 const approvedStart = sites[0].url;
 let health = 'ready';
+let sitesMode = 'ready';
+let stalledSiteGets = 0;
+let stalledHealthGets = 0;
+let stalledSiteBodies = 0;
+let stalledHealthBodies = 0;
 let healthCacheControl = 'no-store';
+let nextHealthStatus = null;
+let nextSitesStatus = null;
+let nextHealthMediaType = null;
+let nextSitesMediaType = null;
 let starts = 0;
 let viewerResponseMode = 'valid';
+let nextStartFailure = null;
+let nextStartMediaType = null;
+let nextStartStatus = null;
 let deletions = 0;
 let failNextDelete = false;
 let droppedDeleteAttemptsRemaining = 0;
@@ -56,7 +69,11 @@ let notifyHeldDelete = null;
 let viewerRequests = 0;
 let heartbeats = 0;
 let rejectHeartbeat = false;
+let hangNextHeartbeat = false;
+let hungHeartbeatCalls = 0;
+let nextHeartbeatReply = null;
 let deleteAlreadyGone = false;
+let nextDeleteProxyError = null;
 let releaseStart = null;
 let startRequestSeen = false;
 
@@ -78,10 +95,152 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/sites') {
-      sendJson(res, 200, { sites, maxSessionMinutes: 15 });
+      if (sitesMode === 'hang-once') {
+        // Keep exactly one synthetic HTTP read pending until Chrome aborts it.
+        // No public gateway, production token or Docker connection is made.
+        sitesMode = 'ready';
+        stalledSiteGets++;
+        return;
+      }
+      if (sitesMode === 'hang-body-once') {
+        // HTTP 200 and JSON headers arrive, but the first chunk never ends.
+        // Browser must timeout after headers, not only while awaiting fetch.
+        sitesMode = 'ready';
+        stalledSiteBodies++;
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        });
+        res.write(' ');
+        return;
+      }
+      if (sitesMode === 'oversized-error') {
+        sendJson(res, 502, { error: 'Upstream failure', padding: 'x'.repeat(75000) });
+      } else if (sitesMode === 'oversized-stream') {
+        // Node sends chunked HTTP without Content-Length; Chrome must stop
+        // after 64KiB even when the JSON contains a plausible curated list.
+        sendJson(res, 200, { sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000) });
+      } else if (sitesMode === 'compressed-bomb') {
+        const decoded = JSON.stringify({
+          sites, maxSessionMinutes: 15, padding: 'x'.repeat(70000)
+        });
+        const wire = brotliCompressSync(Buffer.from(decoded));
+        assert.ok(wire.byteLength < 65536,
+          'Brotli fixture must advertise fewer wire bytes than catalogue limit');
+        res.writeHead(200, {
+          'content-type': 'application/json', 'content-encoding': 'br',
+          'content-length': String(wire.byteLength), 'cache-control': 'no-store'
+        }).end(wire);
+      } else if (sitesMode === 'offline') {
+        sendJson(res, 503, { error: 'Synthetic catalogue unavailable' });
+      } else if (sitesMode === 'userinfo') {
+        sendJson(res, 200, {
+          sites: [{ name: 'Injected fixture', url: 'https://user:secret@fawesome.tv/' }],
+          maxSessionMinutes: 15
+        });
+      } else if (sitesMode === 'empty') {
+        sendJson(res, 200, { sites: [], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'many') {
+        sendJson(res, 200, {
+          sites: Array.from({ length: 33 }, (_, i) =>
+            ({ name: 'Fake #' + i, url: 'https://site' + i + '.invalid/' })),
+          maxSessionMinutes: 15
+        });
+      } else if (sitesMode === 'long-name') {
+        sendJson(res, 200, { sites: [
+          { name: 'A'.repeat(97), url: sites[0].url }
+        ], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'long-url') {
+        sendJson(res, 200, { sites: [
+          { name: 'Long URL', url: sites[0].url + 'x'.repeat(2050) }
+        ], maxSessionMinutes: 15 });
+      } else if (sitesMode === 'bidi-name') {
+        sendJson(res, 200, { sites: [
+          { name: 'Video\u202Efake.invalid', url: sites[0].url }
+        ], maxSessionMinutes: 15 });
+      } else if (['duplicate-label', 'casefold-label', 'fullwidth-label'].includes(sitesMode)) {
+        const duplicate = {
+          'duplicate-label': 'Fawesome',
+          'casefold-label': 'FAWESOME',
+          'fullwidth-label': '\uFF26\uFF41\uFF57\uFF45\uFF53\uFF4F\uFF4D\uFF45'
+        }[sitesMode];
+        sendJson(res, 200, { sites: [
+          { name: 'Fawesome', url: sites[0].url },
+          { name: duplicate, url: 'https://another-curated.invalid/' }
+        ], maxSessionMinutes: 15 });
+      } else if (['c1-label', 'arabic-mark-label', 'rtl-mark-label',
+        'paragraph-separator-label', 'zero-width-label', 'soft-hyphen-label',
+        'word-joiner-label', 'bom-label'].includes(sitesMode)) {
+        const mark = {
+          'c1-label': '\u0085',
+          'arabic-mark-label': '\u061c',
+          'rtl-mark-label': '\u200f',
+          'paragraph-separator-label': '\u2029',
+          'zero-width-label': '\u200b',
+          'soft-hyphen-label': '\u00ad',
+          'word-joiner-label': '\u2060',
+          'bom-label': '\ufeff'
+        }[sitesMode];
+        sendJson(res, 200, { sites: [
+          { name: 'Video' + mark + 'spoofed.invalid', url: sites[0].url }
+        ], maxSessionMinutes: 15 });
+      } else {
+        const status = nextSitesStatus ?? 200;
+        nextSitesStatus = null;
+        if (nextSitesMediaType !== null) {
+          const media = nextSitesMediaType;
+          nextSitesMediaType = null;
+          res.writeHead(status, {
+            ...(media === 'missing' ? {} : { 'content-type': media }),
+            'cache-control': 'no-store'
+          }).end(JSON.stringify({ sites, maxSessionMinutes: 15 }));
+        } else {
+          sendJson(res, status, { sites, maxSessionMinutes: 15 });
+        }
+      }
       return;
     }
     if (req.method === 'GET' && pathname === '/api/health') {
+      if (health === 'hang-once') {
+        health = 'ready';
+        stalledHealthGets++;
+        return;
+      }
+      if (health === 'hang-body-once') {
+        health = 'ready';
+        stalledHealthBodies++;
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store'
+        });
+        res.write(' ');
+        return;
+      }
+      if (health === 'oversized-error') {
+        sendJson(res, 502, { error: 'Upstream failure', padding: 'x'.repeat(8000) });
+        return;
+      }
+      if (health === 'oversized-stream') {
+        sendJson(res, 200, {
+          status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1,
+          padding: 'x'.repeat(5000)
+        });
+        return;
+      }
+      if (health === 'compressed-bomb') {
+        const decoded = JSON.stringify({
+          status: 'ok', activeSessions: 0, startingSessions: 0, capacity: 1,
+          padding: 'x'.repeat(5000)
+        });
+        const wire = gzipSync(Buffer.from(decoded));
+        assert.ok(wire.byteLength < 4096,
+          'gzip fixture must advertise fewer wire bytes than health limit');
+        res.writeHead(200, {
+          'content-type': 'application/json', 'content-encoding': 'gzip',
+          'content-length': String(wire.byteLength), 'cache-control': 'no-store'
+        }).end(wire);
+        return;
+      }
       if (health === 'offline') {
         sendJson(res, 503, { error: 'Gateway unavailable' });
         return;
@@ -100,10 +259,22 @@ const server = http.createServer(async (req, res) => {
         });
         return;
       }
-      sendJson(res, 200, {
+      const status = nextHealthStatus ?? 200;
+      nextHealthStatus = null;
+      const payload = {
         status: 'ok', activeSessions: health === 'busy' ? 1 : 0,
         startingSessions: 0, capacity: 1
-      }, healthCacheControl);
+      };
+      if (nextHealthMediaType !== null) {
+        const media = nextHealthMediaType;
+        nextHealthMediaType = null;
+        res.writeHead(status, {
+          ...(media === 'missing' ? {} : { 'content-type': media }),
+          'cache-control': 'no-store'
+        }).end(JSON.stringify(payload));
+      } else {
+        sendJson(res, status, payload, healthCacheControl);
+      }
       return;
     }
     if (req.method === 'POST' && pathname === '/api/session') {
@@ -116,17 +287,37 @@ const server = http.createServer(async (req, res) => {
         'real portal must POST the selected approved URL');
       starts++;
       startRequestSeen = true;
+      if (nextStartFailure) {
+        const { status, error } = nextStartFailure;
+        nextStartFailure = null;
+        sendJson(res, status, { error });
+        return;
+      }
       await new Promise(resolve => { releaseStart = resolve; });
       const viewerUrl = viewerResponseMode === 'external' ?
         'https://untrusted.invalid/viewer' :
         viewerResponseMode === 'javascript' ? 'javascript:alert(1)' :
         viewerResponseMode === 'mismatched-token' ? '/s/' + 'U'.repeat(32) + '/' :
         '/s/' + syntheticToken + '/';
-      sendJson(res, 201, {
+      const payload = {
         token: syntheticToken, viewerUrl,
-        maxMinutes: 15, expiresAt: viewerResponseMode === 'expired' ?
-          Date.now() - 1000 : Date.now() + 900_000
-      });
+        maxMinutes: viewerResponseMode === 'duration-mismatch' ? 1 : 15,
+        expiresAt: viewerResponseMode === 'expired' ? Date.now() - 1000 :
+          viewerResponseMode === 'overlong-lease' ? Date.now() + 3_600_000 :
+          Date.now() + 900_000
+      };
+      const successStatus = nextStartStatus ?? 201;
+      nextStartStatus = null;
+      if (nextStartMediaType !== null) {
+        const mediaType = nextStartMediaType;
+        nextStartMediaType = null;
+        res.writeHead(successStatus, {
+          ...(mediaType === 'missing' ? {} : { 'content-type': mediaType }),
+          'cache-control': 'no-store'
+        }).end(JSON.stringify(payload));
+      } else {
+        sendJson(res, successStatus, payload);
+      }
       return;
     }
     if (req.method === 'GET' && pathname === '/s/' + syntheticToken + '/') {
@@ -152,6 +343,33 @@ const server = http.createServer(async (req, res) => {
         res.socket.destroy();
         return;
       }
+      if (nextDeleteProxyError) {
+        // Mimic an ingress route failure: this HTTP reply proves nothing
+        // about whether the gateway's actual browser is still running.
+        const mode = nextDeleteProxyError;
+        nextDeleteProxyError = null;
+        if (mode === 'html-404') {
+          res.writeHead(404, { 'content-type': 'text/html' })
+            .end('<!doctype html><title>Proxy route missing</title>');
+        } else if (mode === 'json-body-html-404') {
+          res.writeHead(404, { 'content-type': 'text/html' })
+            .end(JSON.stringify({ error: 'Session not found.' }));
+        } else if (mode === 'json-410') {
+          sendJson(res, 410, { error: 'Reverse proxy route gone' });
+        } else if (mode === 'json-200') {
+          sendJson(res, 200, { ok: true });
+        } else if (mode === 'html-200') {
+          res.writeHead(200, { 'content-type': 'text/html' })
+            .end('<!doctype html><title>Proxy success, browser still alive</title>');
+        } else if (mode === 'json-202') {
+          sendJson(res, 202, { ok: true });
+        } else if (mode === 'json-206') {
+          sendJson(res, 206, { ok: true });
+        } else {
+          throw new Error('Unknown synthetic proxy error');
+        }
+        return;
+      }
       if (failNextDelete) {
         failNextDelete = false;
         sendJson(res, 503, { error: 'Synthetic teardown failure' });
@@ -168,11 +386,34 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' &&
         pathname === '/api/session/' + syntheticToken + '/heartbeat') {
       heartbeats++;
+      if (hangNextHeartbeat) {
+        hangNextHeartbeat = false;
+        hungHeartbeatCalls++;
+        // Hold the real loopback HTTP response until the browser's own
+        // 10-second lease deadline aborts it. No Docker or VPS involved.
+        return;
+      }
+      if (nextHeartbeatReply) {
+        const reply = nextHeartbeatReply;
+        nextHeartbeatReply = null;
+        if (reply.status === 204) {
+          res.writeHead(204, { 'cache-control': 'no-store' }).end();
+        } else if (reply.mediaType) {
+          res.writeHead(reply.status, {
+            'content-type': reply.mediaType,
+            'cache-control': 'no-store'
+          }).end(JSON.stringify(reply.body));
+        } else {
+          sendJson(res, reply.status, reply.body);
+        }
+        return;
+      }
       if (rejectHeartbeat) {
         // Shipped gateway rejects DELETE with 404 after lease expiry.
         // A second DELETE cannot make an already expired token more dead.
         deleteAlreadyGone = true;
-        sendJson(res, 410, { error: 'Synthetic session expired.' });
+        // Oversized error diagnostics must not be parsed by the kiosk.
+        sendJson(res, 410, { error: 'Synthetic session expired.' + 'x'.repeat(80000) });
       } else {
         sendJson(res, 200, { ok: true, expiresAt: Date.now() + 900_000 });
       }
@@ -264,8 +505,8 @@ try {
       'real TV browser JS must not raise an exception in: ' + expression.slice(0, 100));
     return result.result?.value;
   }
-  async function until(predicate, label) {
-    for (let i = 0; i < 100; i++) {
+  async function until(predicate, label, attempts = 100) {
+    for (let i = 0; i < attempts; i++) {
       if (await predicate()) return;
       await sleep(50);
     }
@@ -296,7 +537,152 @@ try {
       if (delay === 30000) window.__qaHeartbeat = callback;
       return originalSetInterval(callback, delay, ...args);
     };
+    const originalSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => {
+      if (delay === 30000) window.__qaViewerWatchdog = callback;
+      return originalSetTimeout(callback, delay, ...args);
+    };
   })(); true`);
+
+  // End-to-end browser fetch over real chunked HTTP: a proxy can return
+  // a syntactically valid but oversized JSON 200 without Content-Length.
+  // This is the shipped TV's parser, not only the independent release probe.
+  health = 'oversized-stream';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline', 'oversized chunked health must fail closed in real Chromium');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized health cannot enable a new browser');
+  assert.equal(starts, 0, 'oversized health must never allocate a browser');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid gateway health should restore browsing after oversized HTTP');
+  sitesMode = 'oversized-stream';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized chunked catalogue must lock browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+    'oversized catalogue must not render any untrusted choices');
+  assert.equal(starts, 0, 'oversized catalogue may not create browsers');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'canonical bounded catalogue must restore browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'reviewed site suggestions return only after bounded JSON read');
+
+  // CDNs can return tiny compressed transfers that inflate far beyond
+  // reviewed 4KiB/64KiB JSON budgets. This must be proven in actual Chrome,
+  // not just against Node's independent release-readiness endpoint.
+  health = 'compressed-bomb';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline',
+    'real Chrome must reject decoded gzip health beyond 4KiB');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'gzip expansion must never advertise healthy browser capacity');
+  assert.equal(starts, 0,
+    'gzip expansion must not start a browser');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'uncompressed valid health must recover after gzip expansion rejection');
+
+  sitesMode = 'compressed-bomb';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'real Chrome must reject decoded Brotli catalogue beyond 64KiB');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+    'Brotli expansion must never show unreviewed site choices');
+  assert.equal(starts, 0,
+    'Brotli expansion must not start a viewer');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'reviewed site catalogue must recover after Brotli expansion rejection');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'reviewed choices must recover after Brotli expansion');
+
+  // Untrusted large HTTP error bodies should fail closed without being
+  // parsed by the TV. Test actual browser fetch and origin HTTP, then prove
+  // a healthy GET restores Open rather than poisoning future navigation.
+  health = 'oversized-error';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Browser engine offline', 'chunked 502 health must not claim readiness');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'failed health must disable real Open');
+  health = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid recovery GET must restore Open after large health error');
+  sitesMode = 'oversized-error';
+  await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'oversized 502 site error must lock browser admission');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    0, 'failed catalogue must never render spoofed choices');
+  assert.equal(starts, 0, 'failed read-only gateway responses cannot allocate browsers');
+  sitesMode = 'ready';
+  await evaluate('ensureSiteCatalogue()');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'canonical site JSON restores reviewed browser admission');
+
+  // Real Chromium/loopback GETs: misleading proxy 202/206 JSON may carry
+  // superficially valid health or curated sites, but cannot unlock Open.
+  // Recovery on documented HTTP 200 is an equally mandatory positive control.
+  for (const status of [202, 206]) {
+    nextHealthStatus = status;
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+      'Browser engine offline', status + ': non-200 health must fail closed in Chrome');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, status + ': unsafe health status must disable real Open button');
+    assert.equal(starts, 0, 'unsafe HTTP health must not mint a browser');
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, status + ': canonical HTTP 200 health must recover Open');
+    nextSitesStatus = status;
+    await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      0, status + ': unsafe catalogue cannot render unreviewed suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, status + ': unsafe catalogue must lock browser start');
+    assert.equal(starts, 0, 'unsafe catalogue must not allocate a browser');
+    await evaluate('ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      sites.length, status + ': canonical 200 catalogue should restore suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, status + ': canonical 200 catalogue must restore Open');
+  }
+
+  // Actual Chrome fetch parses these JSON bodies, but their declared
+  // Content-Type is wrong. Do not trust them for browser admission. A later
+  // canonical gateway application/json response must restore normal use.
+  for (const media of ['text/html', 'application/problem+json', 'missing']) {
+    nextHealthMediaType = media;
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+      'Browser engine offline', media + ': real HTTP mislabeled health must fail closed');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, media + ': mislabeled health must not enable Open');
+    assert.equal(starts, 0, media + ': invalid health must not start browsers');
+    await evaluate('refreshHealth()');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, media + ': canonical JSON health should restore browsing');
+    nextSitesMediaType = media;
+    await evaluate('siteCatalogueReady = false; ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      0, media + ': untrusted catalogue cannot show suggestions');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      true, media + ': untrusted catalogue cannot unlock Open');
+    await evaluate('ensureSiteCatalogue()');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+      sites.length, media + ': valid JSON catalogue restores reviewed list');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'),
+      false, media + ': valid JSON catalogue restores normal Open');
+  }
 
   // Simulate an erroneously cacheable 200/OK gateway-health response.
   // Even if origin/CDN policy drifts, the TV client must fetch fresh capacity
@@ -453,11 +839,32 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("browserView").hidden'
   ), 'viewer visible after gateway start');
+  assert.equal(await evaluate(
+    'document.activeElement?.id === "fullscreenButton"'
+  ), true, 'real Chromium must focus visible TV toolbar after hiding the Open form');
+  assert.equal(await evaluate(
+    'document.activeElement?.closest("#homeView") === null'
+  ), true, 'real Chromium focus must never remain inside hidden home controls');
   assert.equal(await evaluate('new URL(document.getElementById("browserFrame").src).pathname'),
     '/s/' + syntheticToken + '/', 'viewer iframe must mount only the issued bearer path');
   await until(async () => await evaluate(
     'document.getElementById("browserLoading").hidden'
   ), 'viewer loading indicator clears after local iframe load');
+  // A queued timeout callback can still fire after clearTimeout(), e.g.
+  // near the precise instant a real viewer load event is dispatched.
+  // Exercise the captured *shipped* callback inside real Chrome, not a
+  // duplicate handler, and prove it cannot DELETE an already loaded viewer.
+  assert.equal(await evaluate('typeof window.__qaViewerWatchdog'), 'function',
+    'real viewer must have installed a 30-second loading watchdog');
+  assert.equal(await evaluate('state.viewerLoadTimeout'), null,
+    'real iframe load must disarm the watchdog');
+  const beforeStaleWatchdogDeletes = deletions;
+  await evaluate('window.__qaViewerWatchdog(); true');
+  await sleep(50);
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), false,
+    'stale real-Chromium watchdog callback must not close loaded viewer');
+  assert.equal(deletions, beforeStaleWatchdogDeletes,
+    'loaded viewer must never be DELETEd by a stale callback');
 
   // Test the actual TV viewer toolbar at narrow remote-control viewports.
   // A fullscreen control outside the viewport can still pass DOM presence
@@ -619,7 +1026,8 @@ try {
   // navigation to a malicious viewer, javascript: URL or another token.
   // These use the actual shipped DOM and iframe in real Chromium, rather
   // than calling checkedSessionPayload() in a VM with no browser.
-  const unsafeViewerModes = ['external', 'javascript', 'mismatched-token'];
+  const unsafeViewerModes = ['external', 'javascript', 'mismatched-token',
+    'overlong-lease', 'duration-mismatch'];
   for (const mode of unsafeViewerModes) {
     viewerResponseMode = mode;
     const before = starts;
@@ -647,6 +1055,11 @@ try {
       mode + ': invalid viewer must only clean up its own minted token');
   }
 
+  // Take the cleanup baseline after all unsafe viewer cases. A new
+  // rejected fixture must not invalidate unrelated page-exit/lease checks.
+  const deletesAfterUnsafeViewerCases = deletions;
+  const startsAfterUnsafeViewerCases = starts;
+
   // Reproduce a pagehide event *while* the real browser's session POST is
   // waiting on the local gateway. This keeps the QA tab alive so the late
   // response can resolve; it does not claim navigation-away guarantees for
@@ -659,10 +1072,10 @@ try {
     'in-flight browser start at pagehide');
   assert.ok(releaseStart, 'synthetic gateway must still be allocating a browser');
   await evaluate('window.dispatchEvent(new Event("pagehide")); true');
-  assert.equal(deletions, 4, 'pagehide must not delete an as-yet unknown token');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases, 'pagehide must not delete an as-yet unknown token');
   releaseStart();
   releaseStart = null;
-  await until(() => deletions === 5,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 1,
     'late gateway response must release its newly issued token');
   assert.equal(viewerRequests, viewerGetsBeforeAbandon,
     'abandoned in-flight start must never initiate viewer GET');
@@ -673,7 +1086,7 @@ try {
   ), true, 'abandoned start must never arm session-owned timers');
   await evaluate('window.dispatchEvent(new Event("pagehide")); true');
   await sleep(120);
-  assert.equal(deletions, 5,
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 1,
     'repeated pagehide after late release must not duplicate teardown');
 
   // A response can be structurally valid yet already expired by the time
@@ -688,7 +1101,7 @@ try {
   assert.ok(releaseStart, 'synthetic expiry must be returned through real HTTP');
   releaseStart();
   releaseStart = null;
-  await until(() => deletions === 6,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 2,
     'expired response must immediately release the issued browser token');
   await sleep(200);
   assert.equal(viewerRequests, viewersBeforeExpiry,
@@ -725,12 +1138,12 @@ try {
   await until(() => heartbeats === 1, 'successful real HTTP heartbeat');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     false, 'successful heartbeat must not close a working browser');
-  assert.equal(deletions, 6, 'successful lease renewal must not release a session');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 2, 'successful lease renewal must not release a session');
 
   rejectHeartbeat = true;
   await evaluate('window.__qaHeartbeat(); true');
   await until(() => heartbeats === 2, 'rejected real HTTP heartbeat');
-  await until(() => deletions === 7, 'rejected lease must trigger capacity release');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 3, 'rejected lease must trigger capacity release');
   assert.equal(await evaluate('document.getElementById("browserView").hidden'),
     true, 'rejected lease must immediately return user to home');
   assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
@@ -740,7 +1153,7 @@ try {
   ), true, 'rejected lease must clear session and all lease timers');
   rejectHeartbeat = false;
   await sleep(150);
-  assert.equal(deletions, 7, 'rejected heartbeat must not double-delete');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 3, 'rejected heartbeat must not double-delete');
   assert.equal(deleteAlreadyGone, false,
     '410 heartbeat should be followed by exactly one already-gone DELETE');
   await until(async () => await evaluate(
@@ -767,9 +1180,9 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'BFCache synthetic viewer loaded');
   await evaluate('window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })); true');
-  await until(() => deletions === 8, 'BFCache pagehide keepalive release');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 4, 'BFCache pagehide keepalive release');
   await evaluate('window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); true');
-  await until(() => deletions === 9, 'BFCache pageshow cleanup retry');
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 5, 'BFCache pageshow cleanup retry');
   assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
     'about:blank', 'BFCache resume must clear revoked bearer viewer');
   assert.equal(await evaluate(
@@ -786,8 +1199,8 @@ try {
   // validates genuine Chromium unload networking, not a VM-simulated event.
   viewerResponseMode = 'valid';
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 9, 'valid retry after BFCache teardown');
-  assert.equal(deletions, 9, 'a pending fresh browser must not double-delete released sessions');
+  await until(() => starts === startsAfterUnsafeViewerCases + 5, 'valid retry after BFCache teardown');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 5, 'a pending fresh browser must not double-delete released sessions');
   assert.ok(releaseStart, 'second synthetic browser launch must be held at the backend');
   releaseStart();
   releaseStart = null;
@@ -798,11 +1211,11 @@ try {
     'document.getElementById("browserLoading").hidden'
   ), 'second local viewer completes iframe load');
   await cdp('Page.navigate', { url: 'about:blank' });
-  await until(() => deletions === 10,
+  await until(() => deletions === deletesAfterUnsafeViewerCases + 6,
     'real Chromium pagehide sends keepalive session release after navigation');
   await sleep(150);
-  assert.equal(deletions, 10, 'browser pagehide must release the final browser exactly once');
-  assert.equal(starts, 9, 'only explicitly requested browser attempts should be sent');
+  assert.equal(deletions, deletesAfterUnsafeViewerCases + 6, 'browser pagehide must release the final browser exactly once');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 5, 'only explicitly requested browser attempts should be sent');
 
   // Drive a *native Chromium history Back*, not a synthetic pageshow event.
   // Chrome may BFCache the previous document or reload it; either way a
@@ -830,13 +1243,14 @@ try {
     'document.getElementById("browserFrame").getAttribute("src")'
   ), '/s/' + syntheticToken + '/',
   'history restoration may not resurrect the revoked viewer iframe');
-  assert.equal(starts, 9, 'history return must not silently allocate a new browser');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 5, 'history return must not silently allocate a new browser');
   const afterHistoryDeletions = deletions;
-  assert.ok(afterHistoryDeletions >= 10 && afterHistoryDeletions <= 11,
+  assert.ok(afterHistoryDeletions >= deletesAfterUnsafeViewerCases + 6 &&
+    afterHistoryDeletions <= deletesAfterUnsafeViewerCases + 7,
     'history return may retry the abandoned DELETE only if page is restored from BFCache');
 
   await evaluate('document.getElementById("browserForm").requestSubmit(); true');
-  await until(() => starts === 10, 'fresh browser start after native history Back');
+  await until(() => starts === startsAfterUnsafeViewerCases + 6, 'fresh browser start after native history Back');
   assert.ok(releaseStart, 'real history return should use the shipped POST path');
   releaseStart();
   releaseStart = null;
@@ -846,7 +1260,7 @@ try {
   await evaluate('document.getElementById("endButton").click(); true');
   await until(() => deletions === afterHistoryDeletions + 1,
     'new post-history browser must be releasable through the actual End button');
-  assert.equal(starts, 10, 'no duplicate starts across browser history recovery');
+  assert.equal(starts, startsAfterUnsafeViewerCases + 6, 'no duplicate starts across browser history recovery');
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'prior history-recovery End must complete before starting a separate race fixture');
@@ -966,6 +1380,50 @@ try {
   await until(async () => await evaluate(
     '!document.getElementById("startButton").disabled'
   ), 'previous successful teardown must finish before transport-drop fixture');
+
+  // A proxy/router can return a fake success (200/202/206), HTTP 404 HTML
+  // or unrelated JSON 410 while the real gateway browser is still alive.
+  // Only an actual 204 or the reviewed idempotent-gone JSON may unlock Open.
+  // Exercise real Chromium fetch and localhost HTTP, not mocked Promises.
+  for (const mode of ['json-200', 'html-200', 'json-202', 'json-206',
+    'html-404', 'json-body-html-404', 'json-410']) {
+    const startBefore = starts;
+    const deleteBefore = deletions;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startBefore + 1,
+      mode + ': browser must be started over real localhost HTTP');
+    assert.ok(releaseStart, mode + ': fixture must hold the local start');
+    releaseStart();
+    releaseStart = null;
+    await until(async () => await evaluate(
+      '!document.getElementById("browserView").hidden'
+    ), mode + ': browser viewer must mount before teardown');
+    nextDeleteProxyError = mode;
+    await evaluate('document.getElementById("endButton").click(); true');
+    await until(() => deletions === deleteBefore + 1,
+      mode + ': actual DELETE reaches local proxy-error fixture');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+    ), mode + ': untrusted response must show pending release');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      mode + ': viewer must unmount despite uncertain release');
+    assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+      'about:blank', mode + ': bearer iframe must be discarded');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+      mode + ': generic proxy status must not unlock Open');
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await sleep(100);
+    assert.equal(starts, startBefore + 1,
+      mode + ': no second gateway browser while cleanup is unconfirmed');
+    await evaluate('refreshHealth(); true');
+    await until(() => deletions === deleteBefore + 2,
+      mode + ': normal health poll must retry DELETE after proxy error');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), mode + ': successful actual HTTP retry restores Open');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+      mode + ': confirmed cleanup clears warning');
+  }
 
   // The browser should also fail closed if the connection is cut *without*
   // any HTTP error response at all. This exercises a genuine broken TCP
@@ -1214,6 +1672,489 @@ try {
   assert.equal(starts, beforeFullscreenEndStarts,
     'fullscreen teardown must not allocate another browser session');
   await cdp('Emulation.clearDeviceMetricsOverride');
+
+  // A live health API response cannot certify readiness if the curated
+  // /api/sites endpoint is offline or sends untrusted credentials. Reopen the
+  // ACTUAL bundled portal in Chrome for every case (not a VM DOM fake) and
+  // verify the page itself cannot issue a new browser POST.
+  const beforeCatalogueProbes = starts;
+  for (const mode of ['offline', 'userinfo', 'empty',
+    'many', 'long-name', 'long-url', 'bidi-name',
+    'c1-label', 'arabic-mark-label', 'rtl-mark-label', 'paragraph-separator-label',
+    'zero-width-label', 'soft-hyphen-label', 'word-joiner-label', 'bom-label',
+    'duplicate-label', 'casefold-label', 'fullwidth-label']) {
+    sitesMode = mode;
+    await cdp('Page.navigate', { url: origin + '/?catalogue=' + mode });
+    await until(async () => await evaluate(
+      'document.readyState === "complete" && ' +
+      'document.getElementById("capacityText")?.textContent === "Site catalogue unavailable"'
+    ), 'real Chromium must show unavailable catalogue: ' + mode);
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+      mode + ': healthy gateway must not unlock browser start without a valid catalogue');
+    assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'), 0,
+      mode + ': unsafe site suggestions may not reach the real browser DOM');
+    assert.equal(await evaluate('document.getElementById("urlInput").value'), '',
+      mode + ': a browser should not prefill an unreviewed site');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes("Reload to retry")'),
+      true, mode + ': TV user must see a usable retry message');
+    await evaluate(`(() => {
+      const input = document.getElementById('urlInput');
+      input.value = 'https://fawesome.tv/';
+      return document.getElementById('browserForm').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+    })()`);
+    await sleep(100);
+    assert.equal(starts, beforeCatalogueProbes,
+      mode + ': scripted submit must not allocate a browser when sites are unavailable');
+  }
+  sitesMode = 'ready';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=restored' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chromium must regain valid catalogue readiness on reload');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified catalogue must restore normal Open-button admission');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'restored portal must again prefill its actual reviewed start URL');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'restored real browser must show every curated site');
+
+  // Real browser acceptance of the TV URL gate: input type=url alone
+  // cannot reject credential-bearing HTTPS or a deceptive reviewed-origin
+  // prefix, and scripts can bypass native form validity entirely.
+  const beforeRejectedManualStarts = starts;
+  const invalidManualInputs = [
+    ['credentials', 'https://viewer:password@fawesome.tv/watch'],
+    ['encoded-credentials', 'https://us%65r@fawesome.tv/watch'],
+    ['deceptive authority', 'https://fawesome.tv@outside.invalid/watch'],
+    ['lookalike suffix', 'https://fawesome.tv.outside.invalid/watch'],
+    ['non-HTTPS', 'http://fawesome.tv/watch']
+  ];
+  for (const [label, url] of invalidManualInputs) {
+    await evaluate(`(() => {
+      const input = document.getElementById('urlInput');
+      input.value = ${JSON.stringify(url)};
+      return document.getElementById('browserForm').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true })
+      );
+    })()`);
+    assert.equal(await evaluate(
+      'document.getElementById("formMessage").textContent.includes("approved HTTPS website without credentials")'),
+      true, label + ': real Chrome must show reviewed URL admission feedback');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+      label + ': rejected manual URL must not lock legitimate future navigation');
+    await sleep(75);
+    assert.equal(starts, beforeRejectedManualStarts,
+      label + ': real browser must not POST an unreviewed or credential-bearing start URL');
+  }
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+    'rejected manual URLs must never mount an authenticated viewer');
+  const rejectedFrameSource = await evaluate(
+    'document.getElementById("browserFrame").getAttribute("src")');
+  assert.ok(rejectedFrameSource === null || rejectedFrameSource === 'about:blank',
+    'rejected manual URL must never assign a bearer-bearing iframe');
+  await evaluate(`(() => {
+    const input = document.getElementById('urlInput');
+    input.value = ${JSON.stringify(approvedStart)};
+    return true;
+  })()`);
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'real browser still accepts its reviewed input after invalid attempts');
+
+  // After a transient /api/sites 503, the shipped portal's regular health
+  // callback must re-fetch the catalogue and recover WITHOUT a page reload.
+  // Call the same refreshHealth function registered with the 20-second timer,
+  // avoiding a wall-clock wait while still executing real Chrome fetch/DOM.
+  const beforeAutoCatalogueRecovery = starts;
+  sitesMode = 'offline';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=transient' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Site catalogue unavailable"'
+  ), 'actual TV must show transient catalogue outage');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'transient site API failure may not permit a browser start');
+  sitesMode = 'ready';
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'TV health callback must restore catalogue readiness without reload');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified catalogue recovery must re-enable Open in the same loaded page');
+  assert.equal(await evaluate('document.querySelectorAll("#siteSuggestions option").length'),
+    sites.length, 'TV must refill reviewed suggestions after transient outage');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart,
+    'recovered TV must prefill the genuine reviewed start URL');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+    'successful recovery must clear old failure guidance');
+  assert.equal(starts, beforeAutoCatalogueRecovery,
+    'recovering the catalogue is read-only and must not start a browser');
+
+  // Native Chromium acceptance of the bounded 7-second READ-only requests:
+  // one local HTTP socket deliberately never returns an API response. Chrome
+  // itself must abort it and fail closed, then recover on the next healthy
+  // response without any viewer session POST.
+  const beforeStalledReadStarts = starts;
+  health = 'hang-once';
+  await evaluate('refreshHealth(); true');
+  await until(async () => await evaluate(
+    'document.getElementById("capacityText").textContent === "Browser engine offline"'
+  ), 'real Chrome must abort hung readiness GET', 230);
+  assert.equal(stalledHealthGets, 1,
+    'native browser must actually reach the hanging local health endpoint');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'timed-out native health request must revoke stale ready admission');
+  assert.equal(starts, beforeStalledReadStarts,
+    'hung health cannot allocate a viewer browser');
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'healthy native GET must recover after aborted health');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false);
+
+  sitesMode = 'hang-once';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=stalled-first-response' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chrome must abort hung catalogue and restore normal bootstrap', 240);
+  assert.equal(stalledSiteGets, 1,
+    'actual browser must exercise a stuck local curated-site HTTP request');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'verified site retry and health must restore Open after aborted catalogue');
+  assert.equal(await evaluate('document.getElementById("urlInput").value'), approvedStart);
+  assert.equal(starts, beforeStalledReadStarts,
+    'aborting either read endpoint must not send a remote browser start');
+
+  // Unlike the earlier pre-header hang, a proxy can supply perfectly valid
+  // HTTP 200/JSON headers and ONE body chunk, then stop forever. Exercise the
+  // actual Chrome ReadableStream path protected by the shared 7s abort signal.
+  const beforeStalledBodyStarts = starts;
+  health = 'hang-body-once';
+  await evaluate('refreshHealth(); true');
+  await until(async () => await evaluate(
+    'document.getElementById("capacityText").textContent === "Browser engine offline"'
+  ), 'real Chrome must abort stalled health body after HTTP 200', 230);
+  assert.equal(stalledHealthBodies, 1,
+    'real browser must consume an actual partially streamed health response');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'stalled health body cannot keep old capacity as available');
+  assert.equal(starts, beforeStalledBodyStarts,
+    'post-header stalled health must not allocate viewer sessions');
+  await evaluate('refreshHealth()');
+  assert.equal(await evaluate('document.getElementById("capacityText").textContent'),
+    'Ready to browse', 'real Chrome must recover after stalled health body');
+
+  sitesMode = 'hang-body-once';
+  await cdp('Page.navigate', { url: origin + '/?catalogue=postheader-stalled-json' });
+  await until(async () => await evaluate(
+    'document.readyState === "complete" && ' +
+    'document.getElementById("capacityText")?.textContent === "Ready to browse"'
+  ), 'real Chrome must recover from stalled streamed catalogue after 200', 240);
+  assert.equal(stalledSiteBodies, 1,
+    'real browser must consume an actual partially streamed catalogue response');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+    'valid re-fetched site catalogue must restore Open after body timeout');
+  assert.equal(starts, beforeStalledBodyStarts,
+    'post-header stalled catalogue cannot allocate viewer sessions');
+
+  // Native Chromium proof for the bounded foreground DELETE: an actual
+  // localhost HTTP request can hang forever while the UI must still reclaim
+  // its retry state without accepting a second browser session.
+  const beforeDeleteTimeoutStarts = starts;
+  const beforeDeleteTimeoutCount = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === beforeDeleteTimeoutStarts + 1,
+    'real browser start for hanging-DELETE acceptance');
+  assert.ok(releaseStart, 'local browser start must wait for fixture release');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'real Chrome must mount viewer before DELETE timeout scenario');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'local viewer must fully load before attempting teardown');
+  holdNextDelete = true;
+  const heldDeleteArrived = new Promise(resolve => { notifyHeldDelete = resolve; });
+  await evaluate('document.getElementById("endButton").click(); true');
+  await Promise.race([heldDeleteArrived,
+    sleep(4000).then(() => { throw new Error('timed-out DELETE never reached fixture'); })]);
+  assert.equal(deletions, beforeDeleteTimeoutCount + 1,
+    'native End must send one intentionally hanging DELETE');
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'a stuck DELETE must keep browser admission locked');
+  await until(async () => await evaluate(
+    'document.getElementById("formMessage").textContent.includes("Retrying automatically")'
+  ), 'real Chrome must time out dangling DELETE and show retry feedback', 240);
+  assert.equal(await evaluate('document.getElementById("startButton").disabled'), true,
+    'DELETE abort must never claim confirmed browser removal');
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await sleep(130);
+  assert.equal(starts, beforeDeleteTimeoutStarts + 1,
+    'timed-out foreground release must not allow another browser POST');
+  releaseHeldDelete?.();
+  releaseHeldDelete = null;
+  notifyHeldDelete = null;
+  await evaluate('refreshHealth()');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'confirmed retry of original DELETE must unlock new session admission');
+  assert.equal(deletions, beforeDeleteTimeoutCount + 2,
+    'after the timeout, exactly one health-tick retry must release the same token');
+  assert.equal(await evaluate('document.getElementById("formMessage").textContent'), '',
+    'confirmed real HTTP teardown must clear retry feedback');
+
+  // Keep a viewer mounted while a *real* localhost heartbeat POST never
+  // responds. The shipped app must use its own AbortSignal deadline to tear
+  // down the uncertain session, not leave a live frame or runaway timers.
+  await evaluate(`(() => {
+    const original = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay === 30000) window.__qaHeartbeat = callback;
+      return original(callback, delay, ...args);
+    };
+    return true;
+  })()`);
+  const startsBeforeHeartbeatTimeout = starts;
+  const deletionsBeforeHeartbeatTimeout = deletions;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeHeartbeatTimeout + 1,
+    'native heartbeat timeout fixture must start a synthetic browser');
+  assert.ok(releaseStart, 'native heartbeat fixture must control browser POST response');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'browser must mount before interrupted lease renewal');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'native heartbeat fixture viewer should load');
+  assert.equal(await evaluate('typeof window.__qaHeartbeat'), 'function',
+    'native TV must register a real heartbeat interval');
+  hangNextHeartbeat = true;
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => hungHeartbeatCalls === 1,
+    'real Chrome heartbeat must reach the intentionally stalled HTTP endpoint');
+  assert.equal(await evaluate('document.getElementById("browserView").hidden'), false,
+    'hung but not-yet-timed-out heartbeat must not close viewer prematurely');
+  await until(async () => await evaluate(
+    'document.getElementById("browserView").hidden && ' +
+    'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+  ), '10-second real-browser heartbeat timeout must discard viewer', 270);
+  await until(() => deletions === deletionsBeforeHeartbeatTimeout + 1,
+    'heartbeat timeout must dispatch one idempotent session DELETE');
+  assert.equal(starts, startsBeforeHeartbeatTimeout + 1,
+    'heartbeat failure must not trigger a second gateway browser start');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'confirmed cleanup after timed-out heartbeat must restore normal start');
+
+  // Browser-real guard against false successful lease renewals. All three
+  // responses succeed at the HTTP transport layer, but none confirms a
+  // usable viewer session. Exercise the actual app.js heartbeat interval,
+  // loopback fetch, viewer unmount and one DELETE per invalid reply.
+  for (const [label, reply] of [
+    ['html-typed-valid-json', { status: 200, mediaType: 'text/html',
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
+    ['accepted-202-but-not-renewed', { status: 202,
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
+    ['partial-206-not-authoritative', { status: 206,
+      body: { ok: true, expiresAt: Date.now() + 900_000 } }],
+    ['no-content', { status: 204 }],
+    ['negative-json', { status: 200, body: { ok: false, expiresAt: Date.now() + 900_000 } }],
+    ['expired-json', { status: 200, body: { ok: true, expiresAt: Date.now() - 1000 } }]
+  ]) {
+    const startBefore = starts;
+    const deleteBefore = deletions;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startBefore + 1,
+      label + ': start new synthetic browser through localhost POST');
+    assert.ok(releaseStart, label + ': test fixture should hold browser start');
+    releaseStart();
+    releaseStart = null;
+    await until(async () => await evaluate(
+      '!document.getElementById("browserView").hidden'
+    ), label + ': real viewer must mount before heartbeat');
+    await until(async () => await evaluate(
+      'document.getElementById("browserLoading").hidden'
+    ), label + ': viewer must finish loading');
+    assert.equal(await evaluate('typeof window.__qaHeartbeat'), 'function',
+      label + ': test must invoke actual registered heartbeat callback');
+    nextHeartbeatReply = reply;
+    await evaluate('window.__qaHeartbeat(); true');
+    await until(async () => await evaluate(
+      'document.getElementById("browserView").hidden && ' +
+      'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+    ), label + ': successful HTTP with invalid lease must drop iframe');
+    await until(() => deletions === deleteBefore + 1,
+      label + ': invalid lease must send one cleanup DELETE');
+    assert.equal(starts, startBefore + 1,
+      label + ': invalid renewal must not create another browser');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), label + ': completed genuine cleanup permits deliberate retry');
+  }
+
+  // A valid heartbeat can shorten the hard session deadline. The shipped
+  // browser's one-second countdown must honor it without another 30-second
+  // heartbeat or a reload. Exercise real Chromium / localhost HTTP.
+  const startsBeforeShortLease = starts;
+  const deletesBeforeShortLease = deletions;
+  const beatsBeforeShortLease = heartbeats;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === startsBeforeShortLease + 1,
+    'shortened-lease acceptance must create one local browser');
+  assert.ok(releaseStart, 'shortened-lease start response must be controlled');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'shortened-lease browser must mount');
+  await until(async () => await evaluate(
+    'document.getElementById("browserLoading").hidden'
+  ), 'shortened-lease viewer must fully load');
+  nextHeartbeatReply = {
+    status: 200,
+    body: { ok: true, expiresAt: Date.now() + 1900 }
+  };
+  await evaluate('window.__qaHeartbeat(); true');
+  await until(() => heartbeats === beatsBeforeShortLease + 1,
+    'shorter lease must be acknowledged over local HTTP');
+  await until(async () => await evaluate(
+    'document.getElementById("timer").textContent.startsWith("00:0")'
+  ), 'real TV must display shorter lease countdown immediately');
+  await until(async () => await evaluate(
+    'document.getElementById("browserView").hidden && ' +
+    'document.getElementById("browserFrame").getAttribute("src") === "about:blank"'
+  ), 'real one-second countdown must close shorter lease promptly', 140);
+  await until(() => deletions === deletesBeforeShortLease + 1,
+    'expired shortened browser must dispatch one session DELETE');
+  assert.equal(starts, startsBeforeShortLease + 1,
+    'countdown expiry cannot create a second browser');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'successful shortened-lease cleanup must restore manual Open');
+
+  // Real Chrome/loopback: a proxy that mislabels an otherwise valid 201
+  // browser-start JSON must not mount the bearer iframe. Because the gateway
+  // may already have minted that token, the real UI must still issue a
+  // canonical DELETE before restoring admission.
+  for (const mediaType of ['text/html', 'missing', 'application/problem+json']) {
+    const startsBefore = starts;
+    const viewersBefore = viewerRequests;
+    const deletesBefore = deletions;
+    nextStartMediaType = mediaType;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === startsBefore + 1,
+      mediaType + ': real browser start should reach local fixture');
+    assert.ok(releaseStart, mediaType + ': fixture must control browser creation');
+    releaseStart();
+    releaseStart = null;
+    await until(() => deletions === deletesBefore + 1,
+      mediaType + ': invalid successful reply must still release the minted token');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === "Invalid browser session response."'
+    ), mediaType + ': rejected response must show safe message');
+    assert.equal(viewerRequests, viewersBefore,
+      mediaType + ': no actual authenticated iframe GET for untrusted media type');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      mediaType + ': no viewer mounted');
+    assert.equal(await evaluate('document.getElementById("browserFrame").getAttribute("src")'),
+      'about:blank', mediaType + ': old bearer iframe must remain cleared');
+    assert.equal(starts, startsBefore + 1,
+      mediaType + ': no hidden second browser start');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), mediaType + ': confirmed cleanup permits retry');
+  }
+
+  // Actual Chromium / localhost acceptance for unexpected successful
+  // POST statuses, distinct from malformed Content-Type. These responses
+  // deliberately contain fully valid bearer JSON to show why accepting
+  // arbitrary 2xx would mount an unconfirmed viewer. The same-owner 200
+  // reuse status remains supported; new sessions use 201 by default.
+  for (const status of [202, 203, 206]) {
+    const priorStarts = starts;
+    const priorDeletions = deletions;
+    const priorViewers = viewerRequests;
+    nextStartStatus = status;
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === priorStarts + 1,
+      status + ': unexpected status fixture must receive real browser POST');
+    assert.ok(releaseStart, status + ': fixture must control the 2xx response');
+    releaseStart();
+    releaseStart = null;
+    await until(() => deletions === priorDeletions + 1,
+      status + ': rejected but minted bearer must be DELETEd');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === "Invalid browser session response."'
+    ), status + ': user sees reviewed error for unexpected status');
+    assert.equal(viewerRequests, priorViewers,
+      status + ': unreviewed 2xx must not fetch authenticated iframe URL');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      status + ': unreviewed 2xx must leave viewer hidden');
+    assert.equal(starts, priorStarts + 1,
+      status + ': invalid response must never start a replacement implicitly');
+    await until(async () => await evaluate(
+      '!document.getElementById("startButton").disabled'
+    ), status + ': confirmed DELETE must restore deliberate retry');
+  }
+
+  // Explicitly accept the gateway's 200 OK same-owner reuse contract.
+  const beforeReuseStart = starts;
+  const beforeReuseDelete = deletions;
+  nextStartStatus = 200;
+  await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+  await until(() => starts === beforeReuseStart + 1,
+    'real 200 reuse must reach local browser fixture');
+  assert.ok(releaseStart, 'real reuse fixture must hold start');
+  releaseStart();
+  releaseStart = null;
+  await until(async () => await evaluate(
+    '!document.getElementById("browserView").hidden'
+  ), 'HTTP 200 reuse with valid body must mount viewer');
+  await evaluate('document.getElementById("endButton").click(); true');
+  await until(() => deletions === beforeReuseDelete + 1,
+    'reused viewer must still send idempotent cleanup');
+  await until(async () => await evaluate(
+    '!document.getElementById("startButton").disabled'
+  ), 'reused viewer must return to ready home after successful DELETE');
+
+  // Real Chromium must never render raw error JSON from a failed browser
+  // POST. A reverse proxy might echo a bearer route or credentials into its
+  // failure body; only intentionally reviewed status-based guidance is safe.
+  const forgedBearer = '/s/' + syntheticToken + '/?secret=fixture';
+  for (const [status, expected] of [
+    [502, 'Could not start browser. Try again.'],
+    [503, 'Browser engine unavailable. Try again shortly.'],
+    [409, 'Browser currently in use. Try again shortly.']
+  ]) {
+    const beforeUnsafeStart = starts;
+    const beforeUnsafeViewer = viewerRequests;
+    nextStartFailure = {
+      status,
+      error: 'Proxy diagnostic for ' + forgedBearer +
+        ' https://user:password@upstream.invalid/login' + 'x'.repeat(80000)
+    };
+    await evaluate('document.getElementById("browserForm").requestSubmit(); true');
+    await until(() => starts === beforeUnsafeStart + 1,
+      status + ': real POST must reach the local upstream-error fixture');
+    await until(async () => await evaluate(
+      'document.getElementById("formMessage").textContent === ' + JSON.stringify(expected)
+    ), status + ': native TV must render only the reviewed safe error');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes("password")'),
+      false, status + ': proxy URL credentials must not appear in UI');
+    assert.equal(await evaluate('document.getElementById("formMessage").textContent.includes(' +
+      JSON.stringify(forgedBearer) + ')'), false,
+      status + ': proxy-issued bearer-like path must not appear in UI');
+    assert.equal(viewerRequests, beforeUnsafeViewer,
+      status + ': rejected browser must not load a viewer');
+    assert.equal(await evaluate('document.getElementById("browserView").hidden'), true,
+      status + ': failed POST may not show a viewer');
+    assert.equal(await evaluate('document.getElementById("startButton").disabled'), false,
+      status + ': failed POST should permit deliberate later retry');
+  }
 
   assert.equal(fixtureError, null, 'local fixture must not encounter unhandled errors');
   console.log('Real Chromium shipped TV portal acceptance passed: available/busy/offline/' +

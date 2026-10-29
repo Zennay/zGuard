@@ -9,7 +9,13 @@ import { requestIp } from '../zbrowse/gateway/request-ip.js';
 import { requestPath } from '../zbrowse/gateway/request-path.js';
 import { parseStrictAcceptanceArgs } from '../tools/gateway-strict-acceptance-flags.mjs';
 
-const strictOrigin = parseStrictAcceptanceArgs(process.argv.slice(2), '--require-websocket-origin');
+// The Host boundary can be verified independently of the still-open
+// cross-site WebSocket Origin policy. Unknown/combined flags fail closed.
+const selectedGate = process.argv[2] === '--require-websocket-host'
+  ? '--require-websocket-host' : '--require-websocket-origin';
+const strictEnabled = parseStrictAcceptanceArgs(process.argv.slice(2), selectedGate);
+const strictOrigin = strictEnabled && selectedGate === '--require-websocket-origin';
+const strictHost = strictEnabled && selectedGate === '--require-websocket-host';
 
 const source = fs.readFileSync(new URL('../zbrowse/gateway/server.js', import.meta.url), 'utf8');
 function segment(begin, end) {
@@ -68,7 +74,8 @@ await new Promise((resolve, reject) => {
   server.listen(0, ip, resolve);
 });
 const port = server.address().port;
-const open = async (requestPathValue, extraHeaders = '') => new Promise((resolve, reject) => {
+const open = async (requestPathValue, extraHeaders = '', hostHeader = '127.0.0.1:' + port) =>
+  new Promise((resolve, reject) => {
   const socket = net.createConnection({ host: ip, port });
   let received = '';
   let settled = false;
@@ -82,7 +89,7 @@ const open = async (requestPathValue, extraHeaders = '') => new Promise((resolve
   socket.setTimeout(4000, () => complete(new Error('local WebSocket fixture timed out')));
   socket.once('connect', () => {
     socket.write('GET ' + requestPathValue + ' HTTP/1.1\r\n' +
-      'Host: 127.0.0.1:' + port + '\r\n' +
+      'Host: ' + hostHeader + '\r\n' +
       'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
       'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' +
       'Sec-WebSocket-Version: 13\r\n' + extraHeaders + '\r\n');
@@ -171,6 +178,48 @@ try {
   assert.equal(seen.length, 3,
     'reviewed Origin must forward exactly one authenticated browser upgrade');
   const beforeForeign = seen.length;
+  // Host authority and Origin are independent trust boundaries. Ingress
+  // must not allow an unknown Host to proxy a bearer stream just because
+  // the request claims the reviewed TV Origin (or omits browser metadata).
+  // All calls use real loopback TCP; no public ingress is queried.
+  const foreignHost = 'unreviewed.invalid';
+  const canonicalHost = ip + ':' + port;
+  const reviewedTvHeaders =
+    'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\nSec-Fetch-Site: same-origin\r\n';
+  const unsafeHostCases = [
+    ['unreviewed Host + reviewed TV Origin', reviewedTvHeaders, foreignHost],
+    ['unreviewed Host + spoofed matching Origin',
+      'Origin: http://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n', foreignHost],
+    ['unreviewed Host + no browser metadata', '', foreignHost],
+    ['unreviewed Host with forwarded canonical host + TV Origin',
+      reviewedTvHeaders + 'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Proto: https\r\n', foreignHost],
+    ['unreviewed Host with forwarded canonical host + matching forged Origin',
+      'Origin: https://unreviewed.invalid\r\nSec-Fetch-Site: same-origin\r\n' +
+        'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Proto: https\r\n', foreignHost],
+    ['unreviewed Host with conflicting forwarded hosts',
+      reviewedTvHeaders + 'X-Forwarded-Host: ' + canonicalHost + '\r\n' +
+        'X-Forwarded-Host: unreviewed.invalid\r\n', foreignHost],
+    // Raw TCP intentionally preserves duplicate Host fields. A reverse
+    // proxy and Node can disagree about which authority a request names.
+    ['canonical then foreign Host', reviewedTvHeaders,
+      canonicalHost + '\r\nHost: ' + foreignHost],
+    ['foreign then canonical Host', reviewedTvHeaders,
+      foreignHost + '\r\nHost: ' + canonicalHost],
+    ['duplicate canonical Host', reviewedTvHeaders,
+      canonicalHost + '\r\nHost: ' + canonicalHost],
+    ['alternate port Host', reviewedTvHeaders,
+      ip + ':' + (port === 65535 ? 1 : port + 1)],
+    ['empty Host', reviewedTvHeaders, '']
+  ];
+  const unsafeHostUpgrades = [];
+  const forwardedBeforeHost = seen.length;
+  for (const [name, headers, hostValue] of unsafeHostCases) {
+    const response = await open(target, headers, hostValue);
+    unsafeHostUpgrades.push([name, /^HTTP\/1\.1 101/m.test(response)]);
+  }
+  const unreviewedHostForwards = seen.length - forwardedBeforeHost;
   const foreign = await open(target,
     'Origin: https://attacker.invalid\r\nSec-Fetch-Site: cross-site\r\n');
   const sandboxed = await open(target,
@@ -208,13 +257,21 @@ try {
   const foreignAccepted = /^HTTP\/1\.1 101/m.test(foreign);
   const sandboxedAccepted = /^HTTP\/1\.1 101/m.test(sandboxed);
   const metadataAccepted = /^HTTP\/1\.1 101/m.test(metadataOnly);
-  if (strictOrigin) {
+  if (strictHost) {
+    assert.deepEqual(unsafeHostUpgrades.filter(([, accepted]) => accepted), [],
+      'ambiguous, unreviewed or alternate-port Host must not upgrade a bearer stream');
+    assert.equal(unreviewedHostForwards, 0,
+      'unreviewed Host must be rejected before any browser upstream proxy');
+    console.log('Shipped real TCP WebSocket Host authority isolation PASS');
+  } else if (strictOrigin) {
     assert.deepEqual({ foreignAccepted, sandboxedAccepted, metadataAccepted, newUpgrades },
       { foreignAccepted: false, sandboxedAccepted: false,
         metadataAccepted: false, newUpgrades: 0 },
       'cross-site WebSocket upgrades must be rejected before reaching browser proxy (issue #342)');
     assert.deepEqual(disguised.filter(([, accepted]) => accepted), [],
       'lookalike/downgraded or metadata-spoofed Origins must not bypass strict WebSocket isolation');
+    assert.deepEqual(unsafeHostUpgrades.filter(([, accepted]) => accepted), [],
+      'unreviewed Host must not reach authenticated browser WebSocket proxy under any Origin metadata');
     console.log('Shipped real TCP WebSocket cross-site Origin isolation passed');
   } else {
     console.log('Shipped real TCP WebSocket owner/isolation controls passed; ' +
@@ -224,8 +281,49 @@ try {
       ', untrusted browser proxy forwards=' + newUpgrades +
       ', lookalike Origins upgraded=' + disguised.filter(([, accepted]) => accepted).length +
       '/' + disguised.length +
+      ', unreviewed Host upgrades=' + unsafeHostUpgrades.filter(([, accepted]) => accepted).length +
+      '/' + unsafeHostUpgrades.length + ', proxy forwards=' + unreviewedHostForwards +
       ' (strict --require-websocket-origin is not a runtime fix)');
   }
+
+  // Caller-provided HTTP credentials are NOT a substitute for the reviewed
+  // /s/:token/ bearer, and must not replace the gateway's stored upstream
+  // Basic auth. This is the shipped upgrade handler plus a synthetic proxy,
+  // not a real container or public reverse-proxy e2e.
+  const callerCredentialHeaders = [
+    ['Basic authorization and cookie',
+      'Authorization: Basic YXR0YWNrZXI6cGFzcw==\r\n' +
+      'Cookie: viewer=attacker-only\r\n'],
+    ['Bearer and proxy-authorization',
+      'Authorization: Bearer untrusted-only\r\n' +
+      'Proxy-Authorization: Basic YXR0YWNrZXI6cGFzcw==\r\n']
+  ];
+  for (const [label, injected] of callerCredentialHeaders) {
+    const before = seen.length;
+    const hostile = await open('/s/' + 'U'.repeat(32) + '/websockify',
+      injected);
+    assert.doesNotMatch(hostile, /^HTTP\/1\.1 101/m,
+      label + ': client credentials cannot replace a valid path bearer');
+    assert.equal(seen.length, before,
+      label + ': unknown session must never reach the upstream proxy');
+
+    const legitimate = await open('/s/' + token + '/websockify',
+      'Origin: https://zbrowse-tv.lizellay.chatgpt.site\r\n' +
+      'Sec-Fetch-Site: same-origin\r\n' + injected);
+    assert.match(legitimate, /^HTTP\/1\.1 101/m,
+      label + ': genuine reviewed TV owner must retain its browser stream');
+    assert.equal(seen.length, before + 1,
+      label + ': exactly one owner-bound upstream call must occur');
+    assert.equal(seen.at(-1).session, session,
+      label + ': cannot substitute a caller-claimed session');
+    assert.equal(seen.at(-1).auth, 'viewer:synthetic-only',
+      label + ': upstream auth must derive only from stored session credentials');
+    assert.equal(seen.at(-1).target, 'https://test-browser:3001',
+      label + ': untrusted headers must never redirect to another container');
+  }
+  console.log('Real TCP WebSocket caller-authorization non-substitution: ' +
+    callerCredentialHeaders.length + ' negative and positive pairs verified');
+
 } finally {
   await new Promise((resolve, reject) =>
     server.close(error => error ? reject(error) : resolve()));

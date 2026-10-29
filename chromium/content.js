@@ -49,6 +49,61 @@
     return '';
   }
 
+
+  // Named browsing contexts can create a new tab/window when absent.
+  // Reserve same-context navigation for the HTML special target keywords.
+  function opensSeparateContext(target) {
+    const name = String(target || '').toLowerCase();
+    return Boolean(name) && !['_self', '_parent', '_top', '_unfencedtop'].includes(name);
+  }
+
+  // Content scripts cannot rely on a one-time storage snapshot: settings
+  // changes from the popup must take effect in already-open tabs. Subscribe
+  // before hydrating storage, so events racing the async read are not lost.
+  const liveSettings = { ...DEFAULTS };
+  const changedDuringHydration = new Set();
+  function validSetting(name, value) {
+    if (name === 'enabled') return typeof value === 'boolean';
+    return name === 'mode' && (value === 'balanced' || value === 'strict');
+  }
+  function applyStoredSettings(raw) {
+    const stored = raw && typeof raw === 'object' ? raw : {};
+    for (const name of ['enabled', 'mode']) {
+      if (changedDuringHydration.has(name)) continue;
+      if (validSetting(name, stored[name])) liveSettings[name] = stored[name];
+    }
+  }
+  // One-way, capability-free bridge to the separate MAIN-world script.
+  // Only public boolean/mode values cross the page boundary. Never accept
+  // page events as commands or forward them to privileged extension APIs.
+  function announcePagePolicy() {
+    try {
+      document.dispatchEvent(new CustomEvent('zguard:policy-v1', {
+        detail: JSON.stringify({
+          enabled: liveSettings.enabled, mode: liveSettings.mode
+        })
+      }));
+    } catch (_) {
+      // The page can be unloading or the DOM environment may be unavailable.
+    }
+  }
+
+  try {
+    api.storage.onChanged?.addListener?.((changes, namespace) => {
+      if (namespace !== 'local' || !changes || typeof changes !== 'object') return;
+      for (const name of ['enabled', 'mode']) {
+        if (!Object.prototype.hasOwnProperty.call(changes, name)) continue;
+        const value = changes[name]?.newValue;
+        if (!validSetting(name, value)) continue;
+        changedDuringHydration.add(name);
+        liveSettings[name] = value;
+      }
+      announcePagePolicy();
+    });
+  } catch (_) {
+    // A disabled extension context may lose its storage event API.
+  }
+
   function currentSettings() {
     return new Promise((resolve) => {
       try {
@@ -59,13 +114,14 @@
     });
   }
 
-  currentSettings().then(({ enabled, mode }) => {
-    if (!enabled) return;
+  currentSettings().then((stored) => {
+    applyStoredSettings(stored);
+    announcePagePolicy();
 
     const originalOpen = window.open;
     window.open = function zGuardWindowOpen(url, target, features) {
-      if (shouldBlock(url || '', mode)) {
-        send('window-open', { url: String(url || ''), mode });
+      if (liveSettings.enabled && shouldBlock(url || '', liveSettings.mode)) {
+        send('window-open', { url: String(url || ''), mode: liveSettings.mode });
         return null;
       }
       return originalOpen.call(window, url, target, features);
@@ -86,11 +142,11 @@
       const href = linkValue(anchor, 'href');
       const target = linkValue(anchor, 'target');
       if (!href) return;
-      const newTab = target === '_blank' || event.ctrlKey || event.metaKey || event.button === 1;
-      if (!newTab || !shouldBlock(href, mode)) return;
+      const newTab = opensSeparateContext(target) || event.ctrlKey || event.metaKey || event.button === 1;
+      if (!newTab || !liveSettings.enabled || !shouldBlock(href, liveSettings.mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      send('external-link', { url: href, mode });
+      send('external-link', { url: href, mode: liveSettings.mode });
     };
     document.addEventListener('click', interceptPopupLink, true);
     // Native middle-button release dispatches auxclick, not click.
@@ -106,10 +162,11 @@
         typeof submitter.hasAttribute === 'function' && submitter.hasAttribute(name));
       const target = override('formtarget') ? submitter.formTarget : form.target;
       const action = override('formaction') ? submitter.formAction : form.action;
-      if (String(target).toLowerCase() !== '_blank' || !shouldBlock(action || '', mode)) return;
+      if (!opensSeparateContext(target) || !liveSettings.enabled ||
+          !shouldBlock(action || '', liveSettings.mode)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      send('external-link', { url: String(action || ''), mode });
+      send('external-link', { url: String(action || ''), mode: liveSettings.mode });
     }, true);
   });
 })();

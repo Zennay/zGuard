@@ -1,0 +1,57 @@
+name: zBrowse trusted-Host origin boundary QA
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_canonical_host:
+        description: "Require an unreviewed Host not to establish a trusted same-origin browser start"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-trusted-host-origin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-origin:
+    name: Gateway Host and Origin trust boundary
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_CANONICAL_HOST: ${{ inputs.require_canonical_host || 'false' }}
+    steps:
+      - name: Checkout exact PR source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install locked gateway dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+      - name: Prove actual HTTP Host and Origin behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
+          node tests/zbrowse.host-origin-proof-integrity.test.mjs
+          node tests/zbrowse.host-origin-isolation-real-http.test.mjs
+          if [ "$REQUIRE_CANONICAL_HOST" = "true" ]; then
+            node tests/zbrowse.host-origin-isolation-real-http.test.mjs --require-canonical-host
+          fi

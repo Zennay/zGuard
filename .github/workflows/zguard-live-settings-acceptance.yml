@@ -22,7 +22,8 @@ concurrency:
 jobs:
   content-storage:
     name: zGuard live extension content settings contract
-    runs-on: ubuntu-24.04
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
     timeout-minutes: 5
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -45,6 +46,9 @@ jobs:
           set -euo pipefail
           node tests/zguard.live-settings-cli.test.mjs
           node tests/zguard.content-live-settings.test.mjs
+          # Live setting changes are now a mandatory release regression,
+          # never an observational-only success path on PR or main.
+          node tests/zguard.content-live-settings.test.mjs --require-live-settings
           if [ "$REQUIRE_LIVE_SETTINGS" = "true" ]; then
             node tests/zguard.content-live-settings.test.mjs --require-live-settings
           fi

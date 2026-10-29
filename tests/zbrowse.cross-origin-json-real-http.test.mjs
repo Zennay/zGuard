@@ -178,7 +178,7 @@ try {
   // Fetch normalizes one Origin header; use real Node HTTP socket semantics
   // to test **duplicated** Origin headers, which an intermediary could pass
   // to Express as either the first value or a comma-joined value.
-  async function duplicateOriginPost(preserve = false) {
+  async function duplicateOriginPost(origins, preserve = false) {
     if (!preserve) {
       sessions.clear();
       sessionsByIp.clear();
@@ -192,8 +192,8 @@ try {
         method: 'POST',
         headers: [
           'Content-Type', 'application/json',
-          'Origin', publicTvOrigin,
-          'Origin', 'https://attacker.invalid',
+          'Content-Length', String(Buffer.byteLength(body)),
+          ...origins.flatMap(value => ['Origin', value]),
           'Sec-Fetch-Site', 'same-origin'
         ]
       }, response => {
@@ -216,11 +216,23 @@ try {
       returnedBearer: /"token"\s*:|"viewerUrl"\s*:/.test(result.body)
     };
   }
-  deceptiveResults['duplicate-Origin-new'] = await duplicateOriginPost();
-  const duplicateSeed = await post({ origin: publicTvOrigin, fetchSite: 'same-origin' });
-  assert.equal(duplicateSeed.status, 201,
-    'reviewed Origin control must still establish a browser before duplicate reuse');
-  deceptiveResults['duplicate-Origin-reuse'] = await duplicateOriginPost(true);
+  const duplicateCases = [
+    ['TV-then-foreign', [publicTvOrigin, 'https://attacker.invalid']],
+    ['foreign-then-TV', ['https://attacker.invalid', publicTvOrigin]],
+    ['TV-then-TV', [publicTvOrigin, publicTvOrigin]],
+    ['foreign-then-foreign', ['https://attacker.invalid', 'https://attacker.invalid']]
+  ];
+  for (const [label, origins] of duplicateCases) {
+    deceptiveResults['duplicate-' + label + '-new'] =
+      await duplicateOriginPost(origins);
+    const duplicateSeed = await post({
+      origin: publicTvOrigin, fetchSite: 'same-origin'
+    });
+    assert.equal(duplicateSeed.status, 201,
+      label + ': reviewed Origin must create a positive control session');
+    deceptiveResults['duplicate-' + label + '-reuse'] =
+      await duplicateOriginPost(origins, true);
+  }
 
   // Non-browser clients without browser metadata may legitimately be supported;
   // do not assert a product policy for these existing gateway consumers.
@@ -248,7 +260,7 @@ try {
       preflightResults.filter(Boolean).length + '/' + preflightResults.length +
       '; deceptive Origin requests denied=' +
       Object.values(deceptiveResults).filter(denied).length + '/' +
-      deceptiveOrigins.length +
+      Object.keys(deceptiveResults).length +
       '; raw shipped JSON cross-site HTTP isolation: ' + JSON.stringify(
       Object.fromEntries(Object.entries(unsafe).map(([name, outcome]) =>
         [name, {status: outcome.status, started: outcome.started,

@@ -48,9 +48,23 @@ function validate(manifest, browser) {
   }
 
   assert.ok(Array.isArray(manifest.content_scripts), label + ": content_scripts required");
-  assert.equal(manifest.content_scripts.length, 1,
-    label + ": content scripts require an explicit review before adding entries");
-  const content = manifest.content_scripts[0];
+  assert.equal(manifest.content_scripts.length, chromiumVariant ? 2 : 1,
+    label + ": only the reviewed privileged and optional MAIN-world entries are allowed");
+  if (chromiumVariant) {
+    const page = manifest.content_scripts[0];
+    assert.deepEqual(asSortedSet(page.matches, label + " MAIN matches"), ["<all_urls>"]);
+    assert.deepEqual(asSortedSet(page.js, label + " MAIN scripts"), ["page-interceptor.js"]);
+    assert.equal(page.world, "MAIN", label + ": page interceptor must run in MAIN world");
+    assert.equal(page.run_at, "document_start", label + ": page interceptor must start early");
+    assert.equal(page.all_frames, true, label + ": MAIN must protect every frame");
+    for (const field of ["exclude_matches", "include_globs", "exclude_globs", "match_about_blank", "css"]) {
+      assert.equal(Object.hasOwn(page, field), false,
+        label + ": MAIN-world entry must not gain unreviewed routing or CSS " + field);
+    }
+  }
+  const content = manifest.content_scripts[chromiumVariant ? 1 : 0];
+  assert.equal(content.world, undefined,
+    label + ": privileged content must retain the default ISOLATED world");
   assert.deepEqual(asSortedSet(content.matches, label + " URL matches"), ["<all_urls>"]);
   assert.deepEqual(asSortedSet(content.js, label + " content JS"), ["content.js"]);
   assert.equal(content.run_at, "document_start", label + ": early protection must be preserved");

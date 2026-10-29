@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
 
 // The API must represent the audited sites shipped with this exact checkout,
 // not just *any* HTTPS website claiming to be a curated entry.
@@ -33,7 +35,48 @@ function requireCount(value, name, minimum = 0) {
   );
 }
 
+// Cache-Status is a Structured Fields member list. An intermediary can
+// report a hit as a bare flag, hit=?1, or another truthy/unknown value.
+// Only an explicit false marker is not evidence of cached health.
+function reportsCacheHit(value) {
+  return value.split(/[;,]/).some(part => {
+    const match = /^hit(?:\s*=\s*(.*))?$/i.exec(part.trim());
+    if (!match) return false;
+    return match[1] === undefined ||
+      !['?0', '0', 'false'].includes(match[1].trim().toLowerCase());
+  });
+}
+
+// A broken upstream can stall cancellation after the response already failed.
+// Attempt teardown, but never allow cleanup to outlive the release verdict.
+async function cancelQuietly(cancel) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, 250); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Some fetch implementations resolve headers before a body that then stalls.
+// Race each stream read against the same overall fetch signal; relying only
+// on fetch() to propagate abort into an already-created reader can hang.
+function readWithSignal(reader, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  let abort;
+  const aborted = new Promise((_, reject) => {
+    abort = () => reject(signal.reason || new Error('Readiness deadline exceeded'));
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  return Promise.race([reader.read(), aborted]).finally(() =>
+    signal.removeEventListener('abort', abort));
+}
+
 async function getJson(origin, route, fetcher) {
+  const timeoutSignal = AbortSignal.timeout(7000);
   const url = new URL(route, origin);
   assert.equal(url.origin, origin.origin, 'readiness must never leave the public origin');
   // No redirects: a static hosting redirect must not be mistaken for a real
@@ -45,55 +88,71 @@ async function getJson(origin, route, fetcher) {
     referrerPolicy: 'no-referrer',
     cache: 'no-store',
     headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(7000)
+    signal: timeoutSignal
   });
-  // The production gateway's two public JSON GETs return exactly 200.
-  // Merely checking Response.ok would also accept a 202 placeholder or a
-  // 206 partial response from an incorrect CDN/proxy route as live readiness.
-  assert.equal(response.status, 200,
-    route + ': API must return exactly HTTP 200, got HTTP ' + response.status);
-  assert.match(
-    response.headers.get('content-type') || '',
-    /^application\/json(?:\s*;|$)/i,
-    route + ': API must return JSON, not a static-site HTML fallback'
-  );
-  if (route === '/api/health') {
-    // Request cache: no-store is only a client preference, not proof of
-    // server/reverse-proxy policy. This is a live-capacity status endpoint:
-    // stale cached "ok" must never certify production browser readiness.
-    const directives = (response.headers.get('cache-control') || '')
-      .split(',').map(directive => directive.trim().toLowerCase());
-    assert.ok(directives.includes('no-store'),
-      '/api/health: server must declare Cache-Control: no-store');
-    assert.equal(directives.includes('public'), false,
-      '/api/health: must not allow public response caching');
-    // no-store on an origin response is necessary, but not enough to prove an
-    // intermediary did not actually replay a cached capacity observation.
-    const age = response.headers.get('age');
-    if (age !== null) {
-      assert.match(age, /^[0-9]+$/, '/api/health: malformed cache Age header');
-      assert.equal(BigInt(age), 0n,
-        '/api/health: cached Age must be zero for live browser capacity');
+  // Even a refused HTTP status, HTML fallback or cached capacity snapshot
+  // may have a still-open response stream: stop it before failing readiness.
+  try {
+    // The production gateway's two public JSON GETs return exactly 200.
+    // Merely checking Response.ok would also accept a 202 placeholder or a
+    // 206 partial response from an incorrect CDN/proxy route as live readiness.
+    assert.equal(response.status, 200,
+      route + ': API must return exactly HTTP 200, got HTTP ' + response.status);
+    assert.match(
+      response.headers.get('content-type') || '',
+      /^application\/json(?:\s*;|$)/i,
+      route + ': API must return JSON, not a static-site HTML fallback'
+    );
+    if (route === '/api/health') {
+      // Request cache: no-store is only a client preference, not proof of
+      // server/reverse-proxy policy. This is a live-capacity status endpoint:
+      // stale cached "ok" must never certify production browser readiness.
+      const directives = (response.headers.get('cache-control') || '')
+        .split(',').map(directive => directive.trim().toLowerCase());
+      assert.ok(directives.includes('no-store'),
+        '/api/health: server must declare Cache-Control: no-store');
+      assert.equal(directives.includes('public'), false,
+        '/api/health: must not allow public response caching');
+      // no-store on an origin response is necessary, but not enough to prove an
+      // intermediary did not actually replay a cached capacity observation.
+      const age = response.headers.get('age');
+      if (age !== null) {
+        assert.match(age, /^[0-9]+$/, '/api/health: malformed cache Age header');
+        assert.equal(BigInt(age), 0n,
+          '/api/health: cached Age must be zero for live browser capacity');
+      }
+      const cacheStatus = response.headers.get('cache-status') || '';
+      assert.equal(reportsCacheHit(cacheStatus), false,
+        '/api/health: intermediary Cache-Status reports a cache hit');
+      const cloudflareStatus = response.headers.get('cf-cache-status') || '';
+      assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
+        '/api/health: intermediary CF-Cache-Status reports cached content');
+      const xCache = response.headers.get('x-cache') || '';
+      // Vendor markers include TCP_HIT, RefreshHit and HIT; matching only
+      // whitespace-delimited "HIT" misses common cached responses.
+      assert.doesNotMatch(xCache, /hit/i,
+        '/api/health: intermediary X-Cache reports a cache hit');
     }
-    const cacheStatus = response.headers.get('cache-status') || '';
-    assert.doesNotMatch(cacheStatus, /(?:^|[;,])\s*hit(?:\s*[;,]|$)/i,
-      '/api/health: intermediary Cache-Status reports a cache hit');
-    const cloudflareStatus = response.headers.get('cf-cache-status') || '';
-    assert.doesNotMatch(cloudflareStatus, /^(?:hit|stale|updating|revalidated)$/i,
-      '/api/health: intermediary CF-Cache-Status reports cached content');
-    const xCache = response.headers.get('x-cache') || '';
-    assert.doesNotMatch(xCache, /(?:^|[\s,])hit(?:$|[\s,])/i,
-      '/api/health: intermediary X-Cache reports a cache hit');
+  } catch (error) {
+    await cancelQuietly(() => response.body?.cancel());
+    throw error;
   }
   // A misrouted public endpoint can stream arbitrarily large JSON or stall
   // while drip-feeding bytes. Bound the decoded response, not just headers.
   // AbortSignal.timeout above also applies while consuming the actual body.
   const maximumBytes = route === '/api/health' ? 4096 : 65536;
   const length = response.headers.get('content-length');
-  if (length !== null) {
-    assert.match(length, /^[0-9]+$/, route + ': invalid Content-Length header');
-    assert.ok(BigInt(length) <= BigInt(maximumBytes),
-      route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
+  try {
+    if (length !== null) {
+      assert.match(length, /^[0-9]+$/, route + ': invalid Content-Length header');
+      assert.ok(BigInt(length) <= BigInt(maximumBytes),
+        route + ': advertised JSON body exceeds ' + maximumBytes + ' bytes');
+    }
+  } catch (error) {
+    // Reject on advertised size before reading a single byte. Cancel the
+    // source as well so a misrouted public gateway cannot keep downloading.
+    await cancelQuietly(() => response.body?.cancel());
+    throw error;
   }
   assert.ok(response.body, route + ': gateway JSON response body is missing');
   const reader = response.body.getReader();
@@ -102,18 +161,24 @@ async function getJson(origin, route, fetcher) {
   let received = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithSignal(reader, timeoutSignal);
       if (done) break;
       received += value.byteLength;
       if (received > maximumBytes) {
-        await reader.cancel();
         throw new Error(route + ': JSON body exceeds ' + maximumBytes + ' bytes');
       }
       decoded += decoder.decode(value, { stream: true });
     }
     decoded += decoder.decode();
+  } catch (error) {
+    // Oversized chunks, invalid UTF-8 and stream failures must stop the
+    // transfer before releasing the lock. Cancellation may itself reject.
+    await cancelQuietly(() => reader.cancel());
+    throw error;
   } finally {
-    reader.releaseLock();
+    // A signal can win the race while reader.read() is still outstanding.
+    // Releasing its lock is best-effort and must not mask the abort reason.
+    try { reader.releaseLock(); } catch { /* Pending read is being cancelled. */ }
   }
   let data;
   try {
@@ -193,6 +258,209 @@ function response(value, status = 200, contentType = 'application/json; charset=
   });
 }
 
+// Real TCP loopback evidence: a rejected response must close the underlying
+// transfer, not merely reject an in-memory Response or release a reader lock.
+// The fetcher rewrites ONLY test requests to 127.0.0.1; no public HTTP, real
+// session, /s/ token, browser allocation or production interaction occurs.
+async function testRealLoopbackCancellation() {
+  let scenario = null;
+  const observedRoutes = [];
+  const server = http.createServer((req, res) => {
+    observedRoutes.push({ method: req.method, url: req.url });
+    if (req.method !== 'GET' || !['/api/health', '/api/sites'].includes(req.url)) {
+      res.writeHead(405, { 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
+    if (scenario && req.url === scenario.path) {
+      const active = scenario;
+      res.once('close', () => { active.closed = true; });
+      if (active.noHeaders) {
+        // A stalled gateway may accept TCP but never produce HTTP headers.
+        // Only client cancellation can end this intentionally silent socket.
+        req.socket.once('close', () => { active.closed = true; });
+        return;
+      }
+      if (active.compressed) {
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'content-encoding': active.compressed,
+          'content-length': String(active.bytes.length),
+          'cache-control': 'no-store'
+        });
+        res.end(active.bytes);
+        return;
+      }
+      res.writeHead(active.status, {
+        'content-type': active.contentType,
+        'cache-control': 'no-store',
+        ...active.headers
+      });
+      res.write(active.bytes);
+      // Intentionally never end the invalid stream. Only client-side abort
+      // can release this connection before the safety timeout.
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    });
+    res.end(JSON.stringify(req.url === '/api/health' ? sampleHealth : sampleSites));
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const loopback = 'http://127.0.0.1:' + server.address().port;
+  const loopbackFetch = (raw, options) => {
+    const url = new URL(raw);
+    assert.equal(url.origin, new URL(PUBLIC_ORIGIN).origin,
+      'only the reviewed public origin may be mapped to this loopback fixture');
+    assert.ok(['/api/health', '/api/sites'].includes(url.pathname),
+      'only the two read-only readiness endpoints may be tested over loopback');
+    assert.equal(options.method, 'GET', 'real TCP acceptance must never create a session');
+    assert.equal(options.credentials, 'omit', 'real TCP acceptance cannot send credentials');
+    return fetch(loopback + url.pathname, options);
+  };
+  try {
+    for (const [name, path, status, contentType, headers, bytes, error] of [
+      ['oversized declared health', '/api/health', 200, 'application/json',
+        { 'content-length': '999999' }, '{"status":"ok"}',
+        /advertised JSON body exceeds 4096 bytes/],
+      ['malformed UTF-8 health', '/api/health', 200, 'application/json', {},
+        Buffer.from([0xc3, 0x28]), /encoded data was not valid|UTF-8|not valid/i],
+      ['rejected sites status', '/api/sites', 503, 'application/json', {},
+        '{"error":"unavailable"}', /exactly HTTP 200/],
+      ['HTML sites fallback', '/api/sites', 200, 'text/html', {},
+        '<html>static fallback</html>', /must return JSON/],
+      ['streamed oversized sites', '/api/sites', 200, 'application/json', {},
+        Buffer.alloc(65537, 32), /JSON body exceeds 65536 bytes/]
+    ]) {
+      scenario = { name, path, status, contentType, headers, bytes, closed: false };
+      const active = scenario;
+      await assert.rejects(checkPublicReadiness(loopbackFetch), error,
+        name + ': real TCP response must fail the release gate');
+      // Wait only for transport teardown observed by the server, not a fake
+      // JavaScript cancellation counter.
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        name + ': abort must close the real HTTP response within 3 seconds');
+    }
+    // A server that sends valid headers and one JSON whitespace byte but
+    // never finishes must not leave a readiness probe hanging indefinitely.
+    // Use a separate 11s test watchdog: it detects regressions but cannot
+    // masquerade as the shipped 7s AbortSignal.timeout from getJson().
+    for (const path of ['/api/health', '/api/sites']) {
+      scenario = {
+        name: 'stalled real TCP response', path, status: 200,
+        contentType: 'application/json', headers: {}, bytes: ' ', closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const began = Date.now();
+      try {
+        const bounded = Promise.race([
+          checkPublicReadiness(loopbackFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without client abort')), 11000);
+          })
+        ]);
+        await assert.rejects(bounded, /aborted|time(?:d)? ?out/i,
+          path + ': a stalled real TCP JSON body must expire via client signal');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      const elapsed = Date.now() - began;
+      assert.ok(elapsed >= 5500 && elapsed < 10500,
+        path + ': stalled response must expire near the 7s client deadline, got ' + elapsed);
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        path + ': timed-out client must close the real HTTP stream');
+    }
+    // Prove the same 7-second deadline when a gateway accepts HTTP
+    // connections but never sends even the status line/response headers.
+    for (const path of ['/api/health', '/api/sites']) {
+      scenario = {
+        name: 'silent pre-header gateway', path, status: 200,
+        contentType: 'application/json', headers: {}, bytes: '',
+        noHeaders: true, closed: false
+      };
+      const active = scenario;
+      let watchdog;
+      const began = Date.now();
+      try {
+        await assert.rejects(Promise.race([
+          checkPublicReadiness(loopbackFetch),
+          new Promise((_, reject) => {
+            watchdog = setTimeout(() =>
+              reject(new Error('test watchdog expired without header timeout')), 11000);
+          })
+        ]), /aborted|time(?:d)? ?out/i,
+        path + ': silent HTTP headers must expire using the real client deadline');
+      } finally {
+        clearTimeout(watchdog);
+      }
+      assert.ok(Date.now() - began >= 5500 && Date.now() - began < 10500,
+        path + ': missing HTTP headers must expire near the seven-second deadline');
+      for (let tries = 0; tries < 60 && !active.closed; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(active.closed, true,
+        path + ': silent real HTTP connection must close after timeout');
+    }
+    // CDN gzip/Brotli may advertise a tiny compressed wire length while
+    // delivering a huge decoded JSON body. Bounds must apply *after* HTTP
+    // decompression, not only against Content-Length or transfer bytes.
+    for (const [algorithm, compressor] of [
+      ['gzip', gzipSync],
+      ['br', brotliCompressSync]
+    ]) {
+      for (const [path, budget] of [
+        ['/api/health', 4096],
+        ['/api/sites', 65536]
+      ]) {
+        const oversizedDecoded = Buffer.from(' '.repeat(budget + 1024));
+        const compressed = compressor(oversizedDecoded);
+        assert.ok(compressed.length < budget,
+          algorithm + ' test must use a compressed wire body below the byte budget');
+        scenario = {
+          path, compressed: algorithm, bytes: compressed, closed: false
+        };
+        await assert.rejects(checkPublicReadiness(loopbackFetch),
+          new RegExp('JSON body exceeds ' + budget + ' bytes'),
+          algorithm + ' ' + path + ': decoded-body bomb must be refused');
+        // Compression itself is not suspect. Valid gzip/Brotli responses
+        // matching the reviewed gateway schema must still be accepted.
+        const json = JSON.stringify(path === '/api/health' ? sampleHealth : sampleSites);
+        scenario = {
+          path, compressed: algorithm, bytes: compressor(Buffer.from(json)),
+          closed: false
+        };
+        const valid = await checkPublicReadiness(loopbackFetch);
+        assert.equal(valid.connected, true,
+          algorithm + ' ' + path + ': reviewed compressed API must recover');
+      }
+    }
+    scenario = null;
+    const recovered = await checkPublicReadiness(loopbackFetch);
+    assert.equal(recovered.connected, true,
+      'ordinary uncached real HTTP readiness must recover after rejected transfers');
+    assert.equal(recovered.available, true);
+    assert.ok(observedRoutes.length >= 7);
+    assert.ok(observedRoutes.every(({ method, url }) =>
+      method === 'GET' && ['/api/health', '/api/sites'].includes(url)),
+    'loopback proof must never send POST, session tokens or other API routes');
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+}
+
 async function selfTest() {
   const requested = [];
   const healthy = async (url, options) => {
@@ -247,6 +515,125 @@ async function selfTest() {
       : httpJson(JSON.stringify({ ...sampleSites, filler: 'X'.repeat(66000) }))),
   /JSON body exceeds 65536 bytes/);
 
+  // Reject invalid metadata before consuming even one body byte, for BOTH
+  // health and catalog readiness. Proxy HTML/errors/cache hits often stream
+  // substantial bodies and must not continue after a failed release gate.
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const [kind, status, contentType, cacheControl, extraHeaders, expected] of [
+      ['HTTP failure', 503, 'application/json', 'no-store', {}, /exactly HTTP 200/],
+      ['noncanonical 2xx', 202, 'application/json', 'no-store', {}, /exactly HTTP 200/],
+      ['HTML fallback', 200, 'text/html', 'no-store', {}, /must return JSON/],
+      ...(route === '/api/health' ? [
+        ['missing no-store', 200, 'application/json', null, {},
+          /must declare Cache-Control: no-store/],
+        ['cached response', 200, 'application/json', 'no-store',
+          { 'cache-status': 'edge; hit' }, /Cache-Status reports a cache hit/]
+      ] : [])
+    ]) {
+      let reads = 0;
+      let cancellations = 0;
+      const bad = new Response(new ReadableStream({
+        pull() { reads++; throw new Error('invalid metadata must not read body'); },
+        cancel() { cancellations++; }
+      }, { highWaterMark: 0 }), {
+        status,
+        headers: {
+          'content-type': contentType,
+          ...(cacheControl === null ? {} : { 'cache-control': cacheControl }),
+          ...extraHeaders
+        }
+      });
+      await assert.rejects(checkPublicReadiness(async url =>
+        url.endsWith(route) ? bad : response(sampleHealth)), expected,
+      route + ' ' + kind + ' must reject unsafe response metadata');
+      assert.equal(reads, 0, route + ' ' + kind + ' must reject before reading');
+      assert.equal(cancellations, 1, route + ' ' + kind + ' must cancel the stream');
+    }
+  }
+  // Prove early cancellation for both public readiness GETs. This must
+  // stop an untrusted stream (not merely fail the readiness JSON assertion).
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const [kind, bodyBytes, headers, expected] of [
+      ['declared oversized', '{"status":"ok"}', { 'content-length': '999999' },
+        /advertised JSON body exceeds/],
+      ['invalid declared length', '{"status":"ok"}', { 'content-length': 'NaN' },
+        /invalid Content-Length/],
+      ['received oversized', ' '.repeat(route === '/api/health' ? 4097 : 65537),
+        {}, /JSON body exceeds/],
+      ['malformed UTF-8', new Uint8Array([0xc3, 0x28]), {},
+        /encoded data was not valid|UTF-8|not valid/i]
+    ]) {
+      let cancellations = 0;
+      let readAttempts = 0;
+      const bad = new Response(new ReadableStream({
+        pull(controller) {
+          readAttempts++;
+          if (readAttempts === 1) {
+            controller.enqueue(typeof bodyBytes === 'string'
+              ? new TextEncoder().encode(bodyBytes) : bodyBytes);
+          } else {
+            // The intentionally unending remainder must never be consumed.
+            throw new Error('follow-on stream unexpectedly consumed');
+          }
+        },
+        cancel() { cancellations++; }
+      }, { highWaterMark: 0 }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers } });
+      const fetcher = async url => url.endsWith(route) ? bad : response(sampleHealth);
+      await assert.rejects(checkPublicReadiness(fetcher), expected,
+        route + ' ' + kind + ' must fail closed');
+      assert.equal(cancellations, 1, route + ' ' + kind + ' must cancel the response body');
+      assert.equal(readAttempts, kind.includes('declared') ? 0 : 1,
+        route + ' ' + kind + ' must not read unexpected follow-on bytes');
+    }
+  }
+  // Cancellation errors cannot hide the genuine oversized-header rejection.
+  const rejectsCancel = new Response(new ReadableStream({
+    cancel() { throw new Error('synthetic cancellation exception'); }
+  }), { headers: { 'content-type': 'application/json',
+    'cache-control': 'no-store', 'content-length': '999999' } });
+  await assert.rejects(checkPublicReadiness(async () => rejectsCancel),
+    /advertised JSON body exceeds 4096 bytes/);
+
+  // A broken server/stream implementation may NEVER resolve cancellation.
+  // The rejection and safe public-readiness verdict must not wait forever on
+  // cleanup for either route, including both preflight and streamed rejects.
+  for (const route of ['/api/health', '/api/sites']) {
+    for (const phase of ['preflight', 'stream']) {
+      let attemptedCancels = 0;
+      let reads = 0;
+      const budget = route === '/api/health' ? 4096 : 65536;
+      const unresolved = new Response(new ReadableStream({
+        pull(controller) {
+          reads++;
+          controller.enqueue(new Uint8Array(budget + 1).fill(32));
+        },
+        cancel() {
+          attemptedCancels++;
+          return new Promise(() => {}); // Intentional never-settling upstream.
+        }
+      }, { highWaterMark: 0 }), {
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+          ...(phase === 'preflight' ? { 'content-length': String(budget + 1) } : {})
+        }
+      });
+      const began = Date.now();
+      const fetcher = async url =>
+        url.endsWith(route) ? unresolved :
+          response(url.endsWith('/api/health') ? sampleHealth : sampleSites);
+      await assert.rejects(checkPublicReadiness(fetcher),
+        phase === 'preflight' ? /advertised JSON body exceeds/ : /JSON body exceeds/,
+        route + ' ' + phase + ': cleanup cannot override the invalid-body rejection');
+      assert.ok(Date.now() - began < 1500,
+        route + ' ' + phase + ': a hung stream.cancel() must be bounded');
+      assert.equal(attemptedCancels, 1,
+        route + ' ' + phase + ': transport cancellation must be attempted');
+      assert.equal(reads, phase === 'preflight' ? 0 : 1,
+        route + ' ' + phase + ': avoid unnecessary body reads after refusal');
+    }
+  }
+
   const streamedOversize = async url => url.endsWith('/api/health')
     ? response(sampleHealth)
     : new Response(new ReadableStream({
@@ -297,11 +684,21 @@ async function selfTest() {
     ['invalid Age', { age: 'NaN' }, /malformed cache Age header/],
     ['standard Cache-Status hit', { 'cache-status': 'edge; hit; ttl=30' },
       /Cache-Status reports a cache hit/],
+    ['Cache-Status boolean hit', { 'cache-status': 'edge; hit=?1; ttl=30' },
+      /Cache-Status reports a cache hit/],
+    ['Cache-Status truthy hit assignment', { 'cache-status': 'edge; hit=true' },
+      /Cache-Status reports a cache hit/],
+    ['Cache-Status ambiguous hit assignment', { 'cache-status': 'edge; hit=unknown' },
+      /Cache-Status reports a cache hit/],
     ['CDN stale', { 'cf-cache-status': 'STALE' },
       /CF-Cache-Status reports cached content/],
     ['CDN hit', { 'cf-cache-status': 'HIT' },
       /CF-Cache-Status reports cached content/],
     ['intermediary hit', { 'x-cache': 'TCP_HIT, HIT' },
+      /X-Cache reports a cache hit/],
+    ['intermediary standalone TCP_HIT', { 'x-cache': 'TCP_HIT' },
+      /X-Cache reports a cache hit/],
+    ['intermediary refresh-hit marker', { 'x-cache': 'RefreshHit' },
       /X-Cache reports a cache hit/]
   ]) {
     let sitesRead = false;
@@ -319,7 +716,7 @@ async function selfTest() {
   assert.equal((await checkPublicReadiness(async url =>
     url.endsWith('/api/health')
       ? response(sampleHealth, 200, 'application/json; charset=utf-8', 'no-store', {
-        age: '0', 'cache-status': 'edge; fwd=miss',
+        age: '0', 'cache-status': 'edge; hit=?0; fwd=miss',
         'cf-cache-status': 'DYNAMIC', 'x-cache': 'MISS'
       })
       : response(sampleSites))).connected, true,
@@ -392,6 +789,7 @@ async function selfTest() {
   await assert.rejects(checkPublicReadiness(healthy,
     'https://zbrowse-tv.lizellay.chatgpt.site/?token=secret'), /reviewed public TV origin/);
 
+  await testRealLoopbackCancellation();
   console.log('zBrowse public-origin read-only readiness contract passed');
 }
 

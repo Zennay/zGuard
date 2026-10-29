@@ -1,0 +1,88 @@
+name: zGuard real Firefox acceptance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      require_pageworld:
+        description: "Strict Firefox MAIN-world window.open acceptance (issue #3; expected to fail until fixed)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-real-firefox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firefox-acceptance:
+    name: Real Firefox MV2 link and form acceptance
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
+    timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REQUIRE_PAGEWORLD: ${{ inputs.require_pageworld || 'false' }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install verified Firefox 144.0.2 and geckodriver 0.36.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 160 \
+            "https://ftp.mozilla.org/pub/firefox/releases/144.0.2/linux-x86_64/en-US/firefox-144.0.2.tar.xz" \
+            -o "$RUNNER_TEMP/firefox.tar.xz"
+          test "$(stat -c%s "$RUNNER_TEMP/firefox.tar.xz")" -eq 79200136
+          printf '%s  %s\n' '22d16f03eec7f259f87edb4a4ddf59414e55bc923b274390a94cfc25368f96c0d37e916394201a65b09753efecaf7fe21925ba04a9df23410b8f4492ab93cfcf' "$RUNNER_TEMP/firefox.tar.xz" | sha512sum --check --status
+          curl --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 120 \
+            "https://github.com/mozilla/geckodriver/releases/download/v0.36.0/geckodriver-v0.36.0-linux64.tar.gz" \
+            -o "$RUNNER_TEMP/geckodriver.tar.gz"
+          printf '%s  %s\n' '0bde38707eb0a686a20c6bd50f4adcc7d60d4f73c60eb83ee9e0db8f65823e04' "$RUNNER_TEMP/geckodriver.tar.gz" | sha256sum --check --status
+          tar -xJf "$RUNNER_TEMP/firefox.tar.xz" -C "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP/geckodriver.tar.gz" -C "$RUNNER_TEMP" geckodriver
+          test -x "$RUNNER_TEMP/firefox/firefox"
+          test -x "$RUNNER_TEMP/geckodriver"
+          echo "$RUNNER_TEMP/firefox:$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Require strict Firefox page-world proof on reviewed PR heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "REQUIRE_PAGEWORLD=true" >> "$GITHUB_ENV"
+          fi
+      - name: Run real Firefox MV2 acceptance against loopback only
+        shell: bash
+        env:
+          ZGUARD_FIREFOX_XPI: ${{ runner.temp }}/zguard-firefox.xpi
+        run: |
+          set -euo pipefail
+          firefox --version
+          geckodriver --version
+          node --check tests/zguard.firefox-real-browser.test.mjs
+          node --check firefox/content.js
+          node tests/zguard.firefox-pageworld-export-contract.test.mjs
+          node tests/zguard.firefox-pageworld-proof-integrity.test.mjs
+          (
+            cd firefox
+            zip -q -r "$ZGUARD_FIREFOX_XPI"               manifest.json background.js content.js popup.html popup.css popup.js popup-a11y.js
+          )
+          test -s "$ZGUARD_FIREFOX_XPI"
+          node tests/zguard.firefox-real-browser.test.mjs
+          if [ "$REQUIRE_PAGEWORLD" = "true" ]; then
+            node tests/zguard.firefox-real-browser.test.mjs --require-pageworld
+          fi

@@ -35,7 +35,20 @@ const config = {
   nanoCpus: Math.max(0.25, positiveNumber(process.env.BROWSER_CPU, 1)) * 1e9,
   image: process.env.BROWSER_IMAGE || "zbrowse-browser:1.0.0",
   network: process.env.BROWSER_NETWORK || "zbrowse_net",
-  startUrl: process.env.START_URL || "https://fawesome.tv/"
+  startUrl: process.env.START_URL || "https://fawesome.tv/",
+  publicOrigin: (() => {
+    const value = (process.env.ZBROWSE_PUBLIC_ORIGIN || "").trim();
+    if (!value) return "";
+    let parsed;
+    try { parsed = new URL(value); }
+    catch { throw new Error("Invalid ZBROWSE_PUBLIC_ORIGIN; a canonical HTTPS origin is required."); }
+    if (parsed.protocol !== "https:" || parsed.origin !== value ||
+        parsed.username || parsed.password || parsed.search || parsed.hash ||
+        parsed.pathname !== "/") {
+      throw new Error("ZBROWSE_PUBLIC_ORIGIN must be an exact canonical HTTPS origin.");
+    }
+    return parsed.origin;
+  })()
 };
 
 const sessionAdmission = createSessionAdmission(config.maxSessions);
@@ -126,6 +139,9 @@ async function createSession(ip, startUrl) {
   const containerName = `zbrowse-${token.slice(0, 12).toLowerCase()}`;
   const subfolder = `/s/${token}/`;
 
+  // LinuxServer Selkies TV-kiosk: deny shell, desktop launchers, local file
+  // transfers and client peripherals while retaining video/audio streaming.
+  // Env is deliberately literal/inspectable by existing source contracts.
   const container = await docker.createContainer({
     Image: config.image,
     name: containerName,
@@ -138,8 +154,29 @@ async function createSession(ip, startUrl) {
       "PIXELFLUX_WAYLAND=true",
       "DISABLE_IPV6=true",
       "NO_DECOR=true",
-      "SELKIES_ENABLE_FILE_TRANSFER=false",
-      "SELKIES_ENABLE_CLIPBOARD=false"
+      "HARDEN_DESKTOP=true",
+      "HARDEN_OPENBOX=true",
+      "DISABLE_OPEN_TOOLS=true",
+      "DISABLE_SUDO=true",
+      "DISABLE_TERMINALS=true",
+      "RESTART_APP=true",
+      "START_DOCKER=false",
+      "NO_WEBCAM=true",
+      "NO_GAMEPAD=true",
+      "SELKIES_COMMAND_ENABLED=false|locked",
+      "SELKIES_FILE_TRANSFERS=none",
+      "SELKIES_ENABLE_CLIPBOARD=false|locked",
+      "SELKIES_ENABLE_BINARY_CLIPBOARD=false|locked",
+      "SELKIES_CLIPBOARD_SEAMLESS=false|locked",
+      "SELKIES_MICROPHONE_ENABLED=false|locked",
+      "SELKIES_PRINTING_ENABLED=false|locked",
+      "SELKIES_ENABLE_SHARING=false|locked",
+      "SELKIES_ENABLE_COLLAB=false|locked",
+      "SELKIES_ENABLE_SHARED=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_CLIPBOARD=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_FILES=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_APPS=false|locked",
+      "SELKIES_UI_SIDEBAR_SHOW_SHARING=false|locked"
     ],
     Labels: {
       "zbrowse.managed": "true",
@@ -232,6 +269,24 @@ app.get("/api/sites", (req, res) => {
   res.json({ sites, maxSessionMinutes: Math.round(config.ttlMs / 60_000) });
 });
 
+// Express's native req.ip can accept an incomplete or malformed forwarded
+// chain even when the reviewed browser owner resolver rejects it. Bind the
+// canonical client identity *before* the unchanged rate limiter runs; its
+// built-in IPv6 aggregation remains intact. This applies only to creation,
+// never to unrelated API routes or the authenticated viewer.
+app.use("/api/session", (req, _res, next) => {
+  // Only bind a new-browser POST. Token-specific /heartbeat and /DELETE
+  // requests retain their original Express request representation.
+  if (req.method === "POST" && req.path === "/") {
+    Object.defineProperty(req, "ip", {
+      configurable: true,
+      enumerable: true,
+      value: requestIp(req, trustProxyHops)
+    });
+  }
+  next();
+});
+
 app.post("/api/session", sessionLimiter, async (req, res) => {
   // Responses can contain browser bearer tokens or their viewer URLs.
   res.setHeader("Cache-Control", "no-store");
@@ -255,10 +310,29 @@ app.post("/api/session", sessionLimiter, async (req, res) => {
     const fetchSite = req.headers["sec-fetch-site"];
     const receivedOrigins = req.headersDistinct?.origin;
     const repeatedOrigin = Array.isArray(receivedOrigins) && receivedOrigins.length !== 1;
-    const ownOrigin = req.protocol + "://" + req.get("host");
-    const approvedOrigins = new Set([ownOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
+    const rawHost = req.headers.host;
+    const repeatedHost = Array.isArray(req.headersDistinct?.host) &&
+      req.headersDistinct.host.length !== 1;
+    let trustedOrigin;
+    if (typeof rawHost === "string" && !repeatedHost) {
+      const localHost = /^(127\.0\.0\.1|localhost):([1-9][0-9]{0,4})$/.exec(rawHost.toLowerCase());
+      // Local clients use the *actual* listening socket port, not a port
+      // chosen by the requester. This works for ephemeral local dev ports.
+      if (localHost && ["http", "https"].includes(req.protocol) &&
+          Number(localHost[2]) === req.socket?.localPort) {
+        trustedOrigin = req.protocol + "://" + rawHost.toLowerCase();
+      }
+      const canonicalPublic = config.publicOrigin || "";
+      if (canonicalPublic && req.protocol === "https" &&
+          rawHost.toLowerCase() === new URL(canonicalPublic).host) {
+        trustedOrigin = canonicalPublic;
+      }
+    }
+    // Neither a forged Host/Origin pair nor X-Forwarded-Host authorizes a
+    // gateway; the public authority only comes from configured origin.
+    const approvedOrigins = new Set([trustedOrigin, "https://zbrowse-tv.lizellay.chatgpt.site"]);
     const invalidFetchSite = fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite);
-    if (repeatedOrigin || invalidFetchSite ||
+    if (!trustedOrigin || repeatedOrigin || invalidFetchSite ||
         (origin !== undefined && !approvedOrigins.has(origin))) {
       return res.status(403).json({ error: "Browser session request not allowed." });
     }

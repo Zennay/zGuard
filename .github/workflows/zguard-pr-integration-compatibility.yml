@@ -1,0 +1,57 @@
+name: zGuard PR and main integration compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zguard-pr-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Validate zGuard against current main integration
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
+    timeout-minutes: 7
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact PR head or push revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify proposed source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run cross-browser contracts on integration candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # A detached shallow checkout cannot merge an independently
+            # advanced base branch. Restore its ancestry before combining.
+            if test -f "$(git rev-parse --git-path shallow)"; then
+              git fetch --unshallow --no-tags origin
+            fi
+            # Always test the currently observed canonical target branch,
+            # not only the possibly stale base SHA from the PR event.
+            # The merge remains in this disposable runner; NEVER push it.
+            git fetch --no-tags https://github.com/Zennay/zGuard.git refs/heads/main
+            git -c user.name="QA Integration" \
+              -c user.email="qa@users.noreply.github.com" \
+              merge --no-commit --no-ff FETCH_HEAD
+          fi
+          node tests/zguard.cross-browser-parity.test.mjs
+          node tests/content-mode.test.js
+          node tests/zguard.bundle-parity.test.mjs

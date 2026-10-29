@@ -29,12 +29,14 @@ assert.ok(browser, 'A real Chrome/Chromium executable is required; do not skip b
 const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
 <!-- Test targets are synthetic clicks only; CDP target listeners cancel ordinary navigation. -->
 <a id="hostile" href="https://ads.al5sm.com/popup" target="_blank">Hostile</a>
+<a id="ordinaryStartup" href="https://example.org/video" target="_blank">Startup-safe link</a>
 <script>
   // Parser-time gesture precedes CDP attachment. The fixture's target
   // listener cancels navigation if zGuard has not already intercepted it.
   // This never opens an external URL even when extension injection races.
   (() => {
     const anchor = document.getElementById('hostile');
+    const ordinaryAnchor = document.getElementById('ordinaryStartup');
     function probeStartupGesture() {
       let reachedTarget = false;
       const cancelFixtureNavigation = (event) => {
@@ -47,7 +49,22 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"></head><body>
       });
       anchor.dispatchEvent(event);
       anchor.removeEventListener('click', cancelFixtureNavigation);
-      return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
+      // A blocker that suppresses *every* click is not a functioning popup
+      // policy. Probe a harmless link at the same lifecycle stage, with its
+      // own target handler preventing any external navigation.
+      let ordinaryReached = false;
+      const cancelOrdinaryNavigation = (safeEvent) => {
+        ordinaryReached = true;
+        safeEvent.preventDefault();
+      };
+      ordinaryAnchor.addEventListener('click', cancelOrdinaryNavigation, { once: true });
+      const ordinaryEvent = new MouseEvent('click', {
+        bubbles: true, cancelable: true, ctrlKey: true
+      });
+      ordinaryAnchor.dispatchEvent(ordinaryEvent);
+      ordinaryAnchor.removeEventListener('click', cancelOrdinaryNavigation);
+      return { blocked: !reachedTarget, cancelled: event.defaultPrevented,
+        ordinaryAllowed: ordinaryReached, ordinaryCancelled: ordinaryEvent.defaultPrevented };
     }
     // Three distinct page lifecycle opportunities let QA distinguish whether
     // extension arming lags only initial parsing or remains late through load.
@@ -319,6 +336,51 @@ async function runBrowser(extensionPath, profilePath, url) {
       await sleep(200);
     } while (true);
     if (!coldStart) {
+      // Real browser proof for both popup-target bypass repairs. The real
+      // MV3 content script receives DOM events before target listeners.
+      // A target-side safety listener prevents every allowed external URL
+      // from navigating; no external network or user session is involved.
+      const targetResult = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function probe(url, target) {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.target = target;
+            anchor.textContent = 'Local popup target QA';
+            document.body.append(anchor);
+            let reachedTarget = false;
+            const cancelAllowed = (event) => {
+              reachedTarget = true;
+              event.preventDefault();
+            };
+            anchor.addEventListener('click', cancelAllowed);
+            try {
+              const event = new MouseEvent('click', {
+                bubbles: true, cancelable: true
+              });
+              anchor.dispatchEvent(event);
+              return { blocked: !reachedTarget, cancelled: event.defaultPrevented };
+            } finally {
+              anchor.removeEventListener('click', cancelAllowed);
+              anchor.remove();
+            }
+          }
+          const targets = { mixedCase: '_BlAnK', named: 'adPopupWindow' };
+          const matrix = {};
+          for (const [label, target] of Object.entries(targets)) {
+            matrix[label] = {
+              hostile: probe('https://ads.al5sm.com/popup', target),
+              ordinary: probe('https://example.org/video', target),
+              sameOrigin: probe('/same-origin', target)
+            };
+          }
+          return matrix;
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(targetResult.exceptionDetails, undefined,
+        'Real Chromium named/mixed-case popup fixture must evaluate');
+      observed.popupTargets = targetResult.result?.value;
       // Keyboard Enter is a distinct trusted activation path: Chromium
       // synthesizes a click (detail=0) on the focused HTML anchor. Testing
       // it in the actual loaded MV3 extension protects keyboard users.
@@ -656,6 +718,56 @@ async function runBrowser(extensionPath, profilePath, url) {
         hostile: await imageMapProbe('hostile', 'https://ads.al5sm.com/popup'),
         ordinary: await imageMapProbe('ordinary', 'https://example.org/watch')
       };
+    }
+    if (!coldStart) {
+      // Independently cover actual Chromium form.requestSubmit() with a
+      // submitter that overrides the parent form's same-context destination.
+      // Named and mixed-case new contexts must use the same reviewed guard
+      // as anchors; target listeners prevent all network navigation.
+      const evaluatedTargets = await cdp('Runtime.evaluate', {
+        expression: '(' + (() => {
+          function probe(action, target) {
+            const form = document.createElement('form');
+            form.method = 'GET';
+            form.action = '/same-origin';
+            form.target = '_self';
+            const submitter = document.createElement('button');
+            submitter.type = 'submit';
+            submitter.setAttribute('formaction', action);
+            submitter.setAttribute('formtarget', target);
+            form.append(submitter);
+            document.body.append(form);
+            let targetReached = false;
+            const cancelAllowed = (event) => {
+              targetReached = true;
+              event.preventDefault();
+            };
+            form.addEventListener('submit', cancelAllowed);
+            try {
+              form.requestSubmit(submitter);
+              return { blocked: !targetReached };
+            } finally {
+              form.removeEventListener('submit', cancelAllowed);
+              form.remove();
+            }
+          }
+          const matrix = {};
+          for (const [name, target] of Object.entries({
+            mixedCase: '_BlAnK', named: 'reportPanel'
+          })) {
+            matrix[name] = {
+              hostile: probe('https://ads.al5sm.com/form', target),
+              ordinary: probe('https://example.org/form', target),
+              sameOrigin: probe('/same-origin', target)
+            };
+          }
+          return matrix;
+        }).toString() + ')()',
+        returnByValue: true
+      });
+      assert.equal(evaluatedTargets.exceptionDetails, undefined,
+        'Real Chromium form-target override fixture must execute');
+      observed.formTargetMatrix = evaluatedTargets.result?.value;
     }
     if (requireFormSubmit) {
       // Real DOM form.requestSubmit creates an HTML submit event; unlike an
@@ -1093,10 +1205,13 @@ try {
       if (coldStart) {
         for (const stage of ['parser', 'domContentLoaded', 'load']) {
           const gesture = observed.startupStages?.[stage];
-          if (gesture?.blocked !== true || gesture?.cancelled !== true) {
+          if (gesture?.blocked !== true || gesture?.cancelled !== true ||
+              gesture?.ordinaryAllowed !== true || gesture?.ordinaryCancelled !== true) {
             coldStartFailures.push(variant + ' #' + attempt + ' ' + stage +
-              ': blocked=' + String(gesture?.blocked) +
-              ', cancelled=' + String(gesture?.cancelled));
+              ': hostileBlocked=' + String(gesture?.blocked) +
+              ', hostileCancelled=' + String(gesture?.cancelled) +
+              ', ordinaryAllowed=' + String(gesture?.ordinaryAllowed) +
+              ', ordinaryCancelled=' + String(gesture?.ordinaryCancelled));
           }
         }
         if (observed.firstObservedTopFrameProtected !== true) {
@@ -1108,6 +1223,21 @@ try {
         variant + ': actual injected extension must cancel hostile Ctrl-click');
       assert.equal(observed.hostileClickCancelled, true,
         variant + ': hostile top-frame gesture must cancel default navigation');
+      // Require actual renderer event dispatch, not only Node VM mocks:
+      // hostile new contexts are blocked, ordinary and same-origin targets
+      // reach the element, while the fixture cancels their navigation.
+      if (!coldStart) {
+        for (const label of ['mixedCase', 'named']) {
+          const matrix = observed.popupTargets?.[label];
+          assert.deepEqual(matrix?.hostile, { blocked: true, cancelled: true },
+            variant + ': real Chrome must reject hostile ' + label + ' target');
+          for (const safe of ['ordinary', 'sameOrigin']) {
+            assert.deepEqual(matrix?.[safe], { blocked: false, cancelled: true },
+              variant + ': real Chrome must preserve ' + safe +
+              ' ' + label + ' navigation before fixture cancellation');
+          }
+        }
+      }
       assert.equal(observed.ordinaryClickBlocked, false,
         variant + ': actual injected extension must preserve ordinary external links');
       assert.equal(observed.ordinaryClickCancelled, true,
@@ -1218,6 +1348,19 @@ try {
           variant + ': keyboard image-map Enter click must carry detail=0');
         assert.equal(observed.imageMap.hostile.keyboard.reachedArea, false,
           variant + ': hostile image-map keyboard activation escaped popup guard');
+      }
+      if (!coldStart) {
+        for (const label of ['mixedCase', 'named']) {
+          const matrix = observed.formTargetMatrix?.[label];
+          assert.deepEqual(matrix?.hostile, { blocked: true },
+            variant + ': actual Chromium formtarget ' + label +
+            ' must reject hostile submitter override');
+          for (const safe of ['ordinary', 'sameOrigin']) {
+            assert.deepEqual(matrix?.[safe], { blocked: false },
+              variant + ': real formtarget ' + label +
+              ' must preserve ' + safe + ' submitter override');
+          }
+        }
       }
       if (requireFormSubmit) {
         assert.equal(observed.formSubmit?.ordinary?.seenOnDocument, true,

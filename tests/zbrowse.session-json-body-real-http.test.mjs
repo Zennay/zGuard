@@ -2,8 +2,10 @@
 // parser boundary. Oversized/malformed bodies must fail before Docker startup.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import vm from 'node:vm';
-import { gzipSync, deflateSync } from 'node:zlib';
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 import { requestIp } from '../zbrowse/gateway/request-ip.js';
 
@@ -159,7 +161,7 @@ try {
   });
   const compressedOutcomes = [];
   for (const [encoding, compress] of [
-    ['gzip', gzipSync], ['deflate', deflateSync]
+    ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]
   ]) {
     const acceptedCompressed = await submit(compress(normalCompressed), {
       'content-type': 'application/json',
@@ -182,6 +184,177 @@ try {
     compressedOutcomes.push(rejectedCompressed);
   }
 
+  // A malformed compressed payload must fail *at the real shipped JSON
+  // parser*, not consume a browser slot or create an owner. Broken compressed
+  // bytes previously lacked a route-level assertion despite codec coverage.
+  const malformedCompression = [];
+  for (const encoding of ['gzip', 'deflate', 'br']) {
+    const rejected = await submit(Buffer.from('not-compressed-json'), {
+      'content-type': 'application/json',
+      'content-encoding': encoding
+    });
+    assert.equal(rejected.status, 400,
+      encoding + ': malformed compressed bytes must return HTTP 400');
+    assert.equal(rejected.newStarts, 0,
+      encoding + ': invalid compressed body cannot start a browser');
+    assert.equal(rejected.newReservations, 0,
+      encoding + ': invalid compressed body cannot reserve capacity');
+    malformedCompression.push(rejected);
+  }
+  const unsupportedEncoding = await submit(normalCompressed, {
+    'content-type': 'application/json',
+    'content-encoding': 'compress'
+  });
+  assert.equal(unsupportedEncoding.status, 415,
+    'unreviewed compression algorithm must return HTTP 415');
+  assert.equal(unsupportedEncoding.newStarts, 0,
+    'unsupported compression cannot start a browser');
+  assert.equal(unsupportedEncoding.newReservations, 0,
+    'unsupported compression cannot reserve browser capacity');
+
+  // Validate the real /api/session route with Transfer-Encoding: chunked
+  // instead of just an isolated parser/echo handler. A chunked compression
+  // bomb must be rejected before reserving a slot or creating a browser.
+  async function submitChunked(body, encoding) {
+    sessions.clear();
+    sessionsByIp.clear();
+    const previousStarts = started;
+    const previousReservations = reservations;
+    const data = Buffer.from(body);
+    const response = await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: ip, port: server.address().port,
+        method: 'POST', path: '/api/session',
+        headers: {
+          'content-type': 'application/json',
+          'content-encoding': encoding,
+          'transfer-encoding': 'chunked'
+        }
+      }, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          bodyText: Buffer.concat(chunks).toString('utf8')
+        }));
+        res.once('error', reject);
+      });
+      req.setTimeout(4000, () =>
+        req.destroy(new Error('localhost chunked admission timed out')));
+      req.once('error', reject);
+      const split = Math.max(1, Math.floor(data.length / 3));
+      req.write(data.subarray(0, split));
+      req.write(data.subarray(split, 2 * split));
+      req.end(data.subarray(2 * split));
+    });
+    return {
+      ...response,
+      newStarts: started - previousStarts,
+      newReservations: reservations - previousReservations
+    };
+  }
+  const validChunked = await submitChunked(
+    gzipSync(normalCompressed), 'gzip');
+  assert.equal(validChunked.status, 201,
+    'chunked valid gzip session request must still admit a browser');
+  assert.equal(validChunked.newStarts, 1);
+  assert.equal(validChunked.newReservations, 1);
+
+  const inflatedChunked = await submitChunked(
+    brotliCompressSync(oversizedCompressed), 'br');
+  assert.equal(inflatedChunked.status, 413,
+    'chunked Brotli inflation beyond 8kb must reject session creation');
+  assert.equal(inflatedChunked.newStarts, 0,
+    'chunked compression bomb cannot start a Docker browser');
+  assert.equal(inflatedChunked.newReservations, 0,
+    'chunked compression bomb cannot reserve session capacity');
+
+  const malformedChunked = await submitChunked(
+    Buffer.from('not-compressed-json'), 'deflate');
+  assert.equal(malformedChunked.status, 400,
+    'chunked invalid deflate must reject at the body parsing boundary');
+  assert.equal(malformedChunked.newStarts, 0,
+    'chunked invalid deflate cannot create a browser');
+  assert.equal(malformedChunked.newReservations, 0,
+    'chunked invalid deflate cannot reserve browser capacity');
+
+
+  // Raw HTTP/1.1 framing acceptance, using the SAME source-bound Express
+  // session route. Ambiguous message lengths are not allowed to reach Docker
+  // admission or return a browser bearer. This proves Node's loopback parser
+  // behavior only; reverse-proxy request-smuggling posture is separate.
+  async function submitRawFraming(extraHeaders, wireBody) {
+    sessions.clear();
+    sessionsByIp.clear();
+    const beforeStarts = started;
+    const beforeReserves = reservations;
+    const message = [
+      'POST /api/session HTTP/1.1',
+      'Host: ' + ip + ':' + server.address().port,
+      'Connection: close',
+      'Content-Type: application/json',
+      ...extraHeaders,
+      '',
+      wireBody
+    ].join('\r\n');
+    const raw = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({
+        host: ip, port: server.address().port
+      });
+      const chunks = [];
+      socket.setTimeout(4000, () =>
+        socket.destroy(new Error('localhost malformed framing timed out')));
+      socket.on('connect', () => socket.write(message));
+      socket.on('data', chunk => chunks.push(chunk));
+      socket.once('end', () =>
+        resolve(Buffer.concat(chunks).toString('latin1')));
+      socket.once('error', reject);
+    });
+    return {
+      raw,
+      starts: started - beforeStarts,
+      reserves: reservations - beforeReserves
+    };
+  }
+  const shortJson = JSON.stringify({ url: sites[0].url });
+  const ambiguousFraming = [
+    ['duplicate equal lengths', [
+      'Content-Length: ' + Buffer.byteLength(shortJson),
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['conflicting lengths', [
+      'Content-Length: 0',
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['content length alongside chunked', [
+      'Content-Length: ' + Buffer.byteLength(shortJson),
+      'Transfer-Encoding: chunked'
+    ], '0\r\n\r\n'],
+    ['chunked alongside content length', [
+      'Transfer-Encoding: chunked',
+      'Content-Length: ' + Buffer.byteLength(shortJson)
+    ], '0\r\n\r\n'],
+    ['comma-joined lengths', [
+      'Content-Length: 0, ' + Buffer.byteLength(shortJson)
+    ], shortJson],
+    ['signed length', ['Content-Length: +' + Buffer.byteLength(shortJson)], shortJson],
+    ['hex length', ['Content-Length: 0x20'], shortJson],
+    ['negative length', ['Content-Length: -1'], shortJson]
+  ];
+  for (const [label, headers, payload] of ambiguousFraming) {
+    const outcome = await submitRawFraming(headers, payload);
+    assert.ok(outcome.raw.startsWith('HTTP/1.1 400 '),
+      label + ': Node HTTP parser must deny ambiguous message framing');
+    assert.equal(outcome.starts, 0,
+      label + ': denied framing must never launch a browser');
+    assert.equal(outcome.reserves, 0,
+      label + ': denied framing must never reserve a browser slot');
+    assert.ok(!outcome.raw.includes('J'.repeat(32)) &&
+      !outcome.raw.includes('viewerUrl') &&
+      !outcome.raw.includes('/s/J'),
+      label + ': denied framing may not return bearer metadata');
+  }
+
   const badCharset = await submit(JSON.stringify({ url: sites[0].url }),
     { 'content-type': 'application/json; charset=iso-8859-1' });
   assert.equal(badCharset.status, 415, 'unsupported JSON charset must be rejected');
@@ -194,12 +367,14 @@ try {
   assert.equal(reservations, releases, 'every admitted start must release admission reservation');
 
   for (const rejected of [truncated, oneByteOver, tooLarge, badCharset,
-    ...malformedResults, ...compressedOutcomes]) {
+    ...malformedResults, ...compressedOutcomes,
+    ...malformedCompression, unsupportedEncoding,
+    inflatedChunked, malformedChunked]) {
     assert.doesNotMatch(rejected.bodyText, /J{32}|viewerUrl|\/s\/J/,
       'parser errors must not disclose synthetic session bearer metadata');
   }
-  console.log('Shipped gateway exact 8 KiB JSON boundary, two compressed ' +
-    'inflation-limit cases, ' + malformedBodies.length +
+  console.log('Shipped gateway exact 8 KiB JSON boundary, eight raw HTTP framing denials, three compressed ' +
+    'inflation-limit cases, chunked admission, invalid gzip/deflate/Brotli and unsupported encoding, ' + malformedBodies.length +
     ' malformed parser failures and recovery passed');
 } finally {
   await new Promise((resolve, reject) =>

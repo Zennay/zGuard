@@ -5,6 +5,8 @@ on:
     paths:
       - 'zbrowse/gateway/server.js'
       - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - 'tests/zbrowse.security-headers-real-http.test.mjs'
+      - 'tests/zbrowse.compressed-json-limits-real-http.test.mjs'
       - '.github/workflows/security-headers-validation.yml'
   push:
     branches:
@@ -12,6 +14,8 @@ on:
     paths:
       - 'zbrowse/gateway/server.js'
       - 'tests/zbrowse.security-headers-contract.test.mjs'
+      - 'tests/zbrowse.security-headers-real-http.test.mjs'
+      - 'tests/zbrowse.compressed-json-limits-real-http.test.mjs'
       - '.github/workflows/security-headers-validation.yml'
   workflow_dispatch:
 
@@ -25,7 +29,8 @@ concurrency:
 jobs:
   security-headers:
     name: Gateway security header contract
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
     timeout-minutes: 5
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -49,5 +54,13 @@ jobs:
       - name: Syntax-check gateway
         run: node --check zbrowse/gateway/server.js
 
-      - name: Validate security header contract
-        run: node tests/zbrowse.security-headers-contract.test.mjs
+      - name: Install gateway dependencies for HTTP proof
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix zbrowse/gateway
+
+      - name: Validate security header contract and real HTTP behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/zbrowse.security-headers-contract.test.mjs
+          node tests/zbrowse.security-headers-real-http.test.mjs
+          node tests/zbrowse.compressed-json-limits-real-http.test.mjs

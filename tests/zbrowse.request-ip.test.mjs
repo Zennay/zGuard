@@ -258,18 +258,44 @@ for (const metadata of [
   'validated XFF trust boundary must take precedence over alternate headers');
 }
 
-// Node's net.isIP accepts some valid IPv6 zone identifiers. The shipped
-// resolver therefore accepts such a forwarded identity today. Record that
-// as an explicit unresolved canonicalization observation, not as a PASS.
-const scopeCase = requestIp({
+// Every hop in the configured trusted tail must be a canonical IP address.
+// A valid-looking client before an invalid intermediary is not trustworthy.
+const malformedTrustedHops = [
+  ['invalid proxy hostname', 'not-a-proxy'],
+  ['port-tagged trusted IPv4', '10.0.0.2:443'],
+  ['bracketed proxy IPv6', '[2001:db8::2]'],
+  ['quoted trusted IPv4', '"10.0.0.2"'],
+  ['scoped trusted IPv6', 'fe80::2%eth0'],
+  ['bad proxy address', '999.999.999.999']
+];
+for (const [label, hop] of malformedTrustedHops) {
+  assert.equal(requestIp({
+    socket: { remoteAddress: socketAddress },
+    headers: { 'x-forwarded-for': '198.51.100.20, ' + hop }
+  }, 2), socketAddress, label + ': reject incomplete trust proof');
+}
+// Three trusted hops: rejecting only the selected candidate is insufficient.
+// Both *intermediate* right-side entries must be validated as well.
+assert.equal(requestIp({
+  socket: { remoteAddress: socketAddress },
+  headers: {
+    'x-forwarded-for': '198.51.100.20, invalid-hop, 10.0.0.2'
+  }
+}, 3), socketAddress, 'malformed middle trusted hop must reject forwarded client');
+assert.equal(requestIp({
+  socket: { remoteAddress: socketAddress },
+  headers: {
+    'x-forwarded-for': 'invalid-UNTRUSTED, 198.51.100.20, 10.0.0.2'
+  }
+}, 2), '198.51.100.20',
+'untrusted left-side noise must not poison a valid two-hop trusted tail');
+
+// Node's net.isIP accepts some IPv6 scope IDs even when they are not
+// portable address identities. Never accept one from an XFF header.
+assert.equal(requestIp({
   socket: { remoteAddress: '10.0.0.3' },
   headers: { 'x-forwarded-for': '203.0.113.77, fe80::1%eth0, 10.0.0.2' }
-}, 2);
-const scopedAccepted = scopeCase === 'fe80::1%eth0';
-assert.ok(scopedAccepted || scopeCase === '10.0.0.3',
-  'scoped IPv6 forwarding must not silently resolve to a third identity');
-console.log('Noncanonical XFF trust-boundary cases checked=' + checkedBoundary +
-  ', scoped IPv6 zone candidate accepted=' + scopedAccepted +
-  ' (potential rate-limit key canonicalization concern, issue #21)');
-
+}, 2), '10.0.0.3', 'scoped IPv6 cannot become a session owner');
+console.log('Trusted proxy hop canonicality regressions passed: ' +
+  malformedTrustedHops.length + ' invalid forms');
 console.log('zBrowse request IP tests passed');

@@ -80,20 +80,24 @@ try {
       body: JSON.stringify({ url }),
       signal: AbortSignal.timeout(4000)
     });
-    await reply.arrayBuffer();
-    return { status: reply.status, newStarts: starts - before };
+    const body = await reply.text();
+    // A denial that still includes a session bearer is not a denial:
+    // both first admission and existing-owner reuse must stay secret-free.
+    const hasBearer = /"token"\s*:|"viewerUrl"\s*:/.test(body);
+    return { status: reply.status, newStarts: starts - before, hasBearer };
   }
   const approved = await postStartUrl(sites[0].url);
-  assert.deepEqual(approved, { status: 201, newStarts: 1 },
+  assert.deepEqual(approved, { status: 201, newStarts: 1, hasBearer: true },
     'actual HTTP route must still admit a reviewed start URL');
   const authority = new URL(sites[0].url).host;
   // Source-bound regression for the existing-session fast path. An accepted
   // request for an existing client must not bypass userinfo validation and
   // return its bearer-bearing HTTP 200 for a credential-bearing start URL.
   const reusedCredential = await postStartUrl('https://user:pass@' + authority + '/watch', true);
-  const reusedDenied = reusedCredential.status === 400 && reusedCredential.newStarts === 0;
+  const reusedDenied = reusedCredential.status === 400 &&
+    reusedCredential.newStarts === 0 && !reusedCredential.hasBearer;
   const lookalike = await postStartUrl('https://' + authority + '.attacker.invalid/watch');
-  assert.deepEqual(lookalike, { status: 400, newStarts: 0 },
+  assert.deepEqual(lookalike, { status: 400, newStarts: 0, hasBearer: false },
     'actual HTTP route must reject an unreviewed lookalike origin');
 
   const credentialCases = [
@@ -106,24 +110,30 @@ try {
     ['multiple-at', 'https://user@attacker.invalid@' + authority + '/watch'],
     ['encoded-colon-user', 'https://u%3Aser:pass@' + authority + '/watch'],
     ['encoded-slash-password', 'https://user:pa%2Fss@' + authority + '/watch'],
-    ['encoded-null-user', 'https://%00user:pass@' + authority + '/watch']
+    ['encoded-null-user', 'https://%00user:pass@' + authority + '/watch'],
+    ['unicode-username', 'https://%F0%9F%98%80@' + authority + '/watch'],
+    ['encoded-double-at-password', 'https://user:pa%40ss@' + authority + '/watch'],
+    ['double-encoded-user', 'https://%257573er@' + authority + '/watch'],
+    ['encoded-backslash-user', 'https://u%5Cser:pass@' + authority + '/watch']
   ];
   const failures = [];
   for (const [label, candidate] of credentialCases) {
     const outcome = await postStartUrl(candidate);
-    if (outcome.status !== 400 || outcome.newStarts !== 0) failures.push(label);
+    if (outcome.status !== 400 || outcome.newStarts !== 0 ||
+        outcome.hasBearer) failures.push(label);
   }
   // Each userinfo encoding must also be rejected when a valid session
   // already exists for the same peer. The current fast path runs before
   // URL validation; otherwise one bad URL can recover a live bearer 200.
   const active = await postStartUrl(sites[0].url);
-  assert.deepEqual(active, { status: 201, newStarts: 1 },
+  assert.deepEqual(active, { status: 201, newStarts: 1, hasBearer: true },
     'fixture must establish a single existing session for reuse checks');
   const ownerBefore = sessionsByIp.get(ip);
   const reusedFailures = [];
   for (const [label, candidate] of credentialCases) {
     const outcome = await postStartUrl(candidate, true);
-    if (outcome.status !== 400 || outcome.newStarts !== 0) {
+    if (outcome.status !== 400 || outcome.newStarts !== 0 ||
+        outcome.hasBearer) {
       reusedFailures.push(label);
     }
     assert.equal(sessionsByIp.get(ip), ownerBefore,
@@ -133,7 +143,7 @@ try {
   assert.equal(releases, starts, 'every synthetic browser admission must release reservation');
   if (strict) {
     assert.equal(reusedDenied, true,
-      'existing-session fast path must not return token-bearing HTTP 200 for credential URLs (issue #266)');
+      'existing-session credentialed URL must return 400 without any bearer or viewer URL (issue #266)');
     assert.deepEqual(reusedFailures, [],
       'existing-session fast path must reject every encoded userinfo form before returning a bearer');
     assert.deepEqual(failures, [],

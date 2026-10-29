@@ -17,6 +17,9 @@ De publieke startpagina maakt zBrowse niet tot een open proxy:
 - alleen een begrensde `/tmp`-tmpfs blijft schrijfbaar en gatewaylogs worden geroteerd;
 - een Docker-healthcheck controleert de bestaande `/api/health`-route;
 - zGuard blokkeert popups en externe pop-unders.
+- de browsercontainer draait als vergrendelde Selkies-kiosk: desktopgereedschappen, sudo, terminals en window-manager-uitwegen worden uitgeschakeld; sluiten van de kioskapp herstart de browser automatisch;
+- sessiegebruikers kunnen geen Selkies bestanden overdragen, kopiëren/plakken, printen, delen, apps starten of webcam/microfoon/gamepad doorsturen; de TV-video- en audio-uitvoer blijven beschikbaar;
+- geen Docker-in-Docker startup; deze kioskconfiguratie vervangt niet de onafhankelijke Chromium-sandbox, Docker-runtime-isolatie of de browser-gateway-authorisatie.
 
 Voeg alleen websites toe waarvoor je dit soort toegang mag aanbieden. Maak de dienst niet onbeperkt toegankelijk tot ieder willekeurig domein.
 
@@ -64,6 +67,44 @@ location / {
 }
 ```
 
+## Vertrouwde gateway-host voor het starten van browsers
+
+Een HTTP-client mag de `Host`-header kiezen. De gateway accepteert deze
+niet langer als bewijs van een toegestane eigen `Origin`. Stel vóór
+publieke sessiestart in `.env` de **canonieke HTTPS-origin van de eigen
+zBrowse-gateway** in, bijvoorbeeld:
+
+```dotenv
+ZBROWSE_PUBLIC_ORIGIN=https://browser.example.com
+```
+
+Gebruik de echte, door jou beheerde hostnaam in plaats van
+`browser.example.com`. De instelling is **uitsluitend** een origin:
+`https://`, exacte host, eventueel een expliciete poort; géén pad,
+query, fragment, gebruikersnaam, wachtwoord of afsluitende slash.
+Een ontbrekende/lege instelling laat alleen direct lokale toegang via
+`127.0.0.1:PORT` of `localhost:PORT` toe voor sessiestart. Een
+ongeldige niet-lege waarde stopt de gateway bij startup in plaats van
+een willekeurige externe host te vertrouwen.
+
+De reverse proxy moet de originele, goedgekeurde `Host`-header
+doorgeven en de HTTPS-scheme betrouwbaar zetten. Configureer bij Nginx
+`proxy_set_header X-Forwarded-Proto $scheme;` en bij Caddy de normale
+trusted proxy instellingen. Beperk de publieke ingress in de proxy
+zelf tot de goedgekeurde host; de gateway controleert daarnaast
+zelfstandig de HTTP Host en scheme vóór bestaande sessiehergebruik
+of het reserveren van een browsercontainer. Twee aan elkaar
+gelijkgemaakte maar ongeautoriseerde `Host` en `Origin` headers
+zijn nooit voldoende.
+
+De expliciet bestaande TV-frontend-origin blijft als oorsprong van
+browserrequests toegestaan, maar **alleen wanneer de gateway-Host en
+scheme zelf vertrouwd zijn**. Deze wijziging verleent geen algemene
+toegang aan andere sites, zet CORS niet open en autoriseert geen
+browseractie zonder de bestaande IP-, TTL- en URL-beperkingen.
+Een productie-ingress-/devicecontrole blijft afzonderlijk verplicht
+voordat de kwetsbaarheidsissue wordt gesloten.
+
 ## Websites aanpassen
 
 De publieke snelkoppelingen staan in `gateway/config/sites.json`. De browserbeperking staat in `browser/policies/policy.json`. Pas beide aan en voer daarna uit:
@@ -82,7 +123,7 @@ De belangrijkste waarden in `.env`:
 - `IDLE_TTL_MINUTES=5`: opruimen wanneer de portal geen heartbeat meer stuurt;
 - `BROWSER_MEMORY_MB=2048`: RAM per sessie;
 - `BROWSER_CPU=1`: CPU-limiet per sessie;
-- `TRUST_PROXY=1`: gebruiken achter één reverse proxy.
+- `TRUST_PROXY=1`: gebruiken achter één reverse proxy. Het sessie-eigenaarschap **en de POST /api/session-aanvraaglimiet** hanteren nu exact dezelfde conservatieve IP-bepaling: bij een ontbrekende, te korte of ongeldige vertrouwde X-Forwarded-For-keten wordt de TCP-peer gebruikt, nooit een onbewezen doorgestuurd clientadres. IPv6 blijft per prefix begrensd via de bestaande express-rate-limit-voorziening. Zet deze waarde alleen gelijk aan het aantal aantoonbaar vertrouwde proxyhops; `TRUST_PROXY=0` negeert X-Forwarded-For volledig.
 
 Het installatiescript vult `DOCKER_GID` automatisch in zodat de gateway alleen via zijn aanvullende groep toegang krijgt tot de Docker-socket.
 
@@ -109,3 +150,11 @@ docker compose logs -f gateway
 ```
 
 Een geldige healthrespons bevat `"status":"ok"` en het aantal actieve sessies. `docker compose ps gateway` hoort de gateway als `healthy` te tonen.
+
+## Browser-kiosk releasecontrole (#10)
+
+De gateway maakt bij iedere geautoriseerde nieuwe `/api/session` in `gateway/server.js` een browsercontainer met vaste Selkies hardening-variabelen. Deze policy kan niet door de client, het start-URL-veld of externe HTTP-headers worden overschreven. De ingebouwde browser blijft voor eindgebruikers via de normale viewer werken; `RESTART_APP` is bewust aangezet zodat sluiten van Chromium geen onbeheerde desktop geeft.
+
+Bronnen: [Selkies Security and Hardening](https://docs.linuxserver.io/selkies/user-guide/security/) en [Configuration Reference](https://docs.linuxserver.io/selkies/user-guide/configuration/). `SELKIES_FILE_TRANSFERS=none` vervangt het niet-ondersteunde `SELKIES_ENABLE_FILE_TRANSFER`; `|locked` vergrendelt betreffende boolean-instellingen. Privé-data en browser-wachtwoorden horen niet in logs of opleverdocumentatie.
+
+**Vóór productieactivatie** moet de bevoegde eigenaar na de bestaande bron-CI en onafhankelijke review onder een geserialiseerd releasevenster de daadwerkelijke effectieve browsercontainerconfiguratie controleren (`docker inspect` voor Env, privileges, mounts en netwerk), een bruikbare TV-browser openen en aantonen dat terminal, apps, bestanden, sharing en clipboard niet bereikbaar zijn en herstart van Chromium werkt. Doe dit alleen met een geautoriseerde nieuwe lege sessie; geen bestaande actieve sessies, production-DB of worker-taken verstoren. Zolang die acceptatie ontbreekt geldt `fixed_in_source`, niet `deployed` of `runtime_verified`.

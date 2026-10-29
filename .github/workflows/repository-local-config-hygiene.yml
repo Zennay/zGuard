@@ -17,13 +17,25 @@ concurrency:
 jobs:
   validate:
     name: Validate tracked local-config paths
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
     timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Checkout
+      - name: Checkout exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Verify checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
       - name: Validate tracked paths
-        run: node tests/repository-sensitive-path-hygiene.test.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/repository-sensitive-path-hygiene.test.mjs
+          node tests/repository-sensitive-path-git-integration.test.mjs

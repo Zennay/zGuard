@@ -19,12 +19,14 @@ assert.ok(code.includes('console.error("Cleanup failed", error)'),
 
 const orphanToken = 'C'.repeat(32);
 const secondOrphanToken = 'J'.repeat(32);
+const nestedErrorToken = 'K'.repeat(32);
 const successfulToken = 'D'.repeat(32);
 const healthyToken = 'H'.repeat(32);
 const password = 'fake-browser-config-password';
 const sessions = new Map([
   [orphanToken, { token: orphanToken, expired: true }],
   [secondOrphanToken, { token: secondOrphanToken, expired: true }],
+  [nestedErrorToken, { token: nestedErrorToken, expired: true }],
   [successfulToken, { token: successfulToken, expired: true }],
   [healthyToken, { token: healthyToken, expired: false }]
 ]);
@@ -33,6 +35,7 @@ const logs = [];
 let tick = null;
 let intervalMs = 0;
 let timerUnref = 0;
+let nestedFailure = null;
 const sandbox = {
   sessions, config: { idleMs: 300_000 },
   Date,
@@ -58,6 +61,21 @@ const sandbox = {
       throw new Error('synthetic cleanup failure\u001b[2J\u001b[H[OK] forged removal\u2028' +
         ' zbrowse.token=' + token);
     }
+    if (token === nestedErrorToken) {
+      // A bland top-level message may conceal credentials in a nested Error,
+      // as well as enumerated upstream request fields when logged as an object.
+      const failure = new Error('synthetic nested Docker cleanup failure');
+      failure.cause = new Error('upstream /s/' + token +
+        '/websockify\nAuthorization: Basic ' +
+        Buffer.from('viewer:' + password).toString('base64'));
+      failure.request = {
+        url: 'https://qa-user:qa-secret@fixture.invalid/s/' + token,
+        headers: { authorization: 'Bearer ' + token },
+        env: { PASSWORD: password }
+      };
+      nestedFailure = failure;
+      throw failure;
+    }
     sessions.delete(token);
   },
   console: { error(...args) { logs.push(format(...args)); } }
@@ -78,7 +96,8 @@ tick();
 await Promise.resolve();
 await Promise.resolve();
 
-assert.deepEqual(destroys.sort(), [orphanToken, secondOrphanToken, successfulToken].sort(),
+assert.deepEqual(destroys.sort(), [orphanToken, secondOrphanToken,
+  nestedErrorToken, successfulToken].sort(),
   'cleanup must target both expired sessions but never the healthy one');
 assert.equal(sessions.has(successfulToken), false,
   'successful cleanup must clear its synthetic session');
@@ -86,10 +105,25 @@ assert.equal(sessions.has(orphanToken), true,
   'failed teardown fixture must retain the synthetic orphan');
 assert.equal(sessions.has(secondOrphanToken), true,
   'second failed teardown must retain the synthetic orphan for reconciliation');
+assert.equal(sessions.has(nestedErrorToken), true,
+  'nested upstream exception must not silently discard cleanup ownership');
 assert.equal(sessions.has(healthyToken), true,
   'unexpired session must never be removed');
-assert.equal(logs.length, 2,
-  'both failed container cleanups must each emit one diagnostic');
+assert.equal(logs.length, 3,
+  'every failed container cleanup must emit a diagnostic');
+// Negative control: String(Error) silently discards nested causes and
+// enumerated request credentials, unlike native console.error formatting.
+// The fixture must prove the exact disclosure it is intended to catch.
+assert.ok(nestedFailure instanceof Error, 'fixture must actually throw nested Docker error');
+assert.doesNotMatch(String(nestedFailure), /Authorization: Basic|qa-secret|Bearer /,
+  'the top-level message alone must not contain the hidden request credentials');
+const unsafeNativeLog = format('Cleanup failed', nestedFailure);
+for (const canary of [nestedErrorToken, password, 'qa-secret', 'Authorization: Basic']) {
+  assert.ok(unsafeNativeLog.includes(canary),
+    'negative control: native Docker Error logging must expose nested synthetic secret');
+}
+assert.ok(unsafeNativeLog.includes('\\n') || unsafeNativeLog.includes('\n'),
+  'negative control: nested upstream error includes log-line or escaped newline');
 assert.ok(logs[0].includes('Cleanup failed'),
   'safe, actionable diagnostic label must be retained');
 
@@ -98,6 +132,8 @@ assert.ok(logs[0].includes('Cleanup failed'),
 // rather than forwarding raw Docker error data and its stack trace.
 const leaked = logs.filter(line =>
   line.includes(orphanToken) || line.includes(secondOrphanToken) ||
+  line.includes(nestedErrorToken) || line.includes('qa-secret') ||
+  line.includes('Authorization: Basic') || line.includes('Bearer ') ||
   line.includes(password) || /[\r\n\x1b\u2028\u2029]/.test(line));
 if (strict) {
   assert.equal(leaked.length, 0,

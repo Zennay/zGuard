@@ -13,6 +13,22 @@ const workflowDir = path.join(root, '.github/workflows');
 // Entries intentionally include shared dispatch switches that run multiple
 // different acceptances; all must remain wired, not just the first one.
 const matrix = [
+  ['zguard-live-settings-acceptance.yml', [
+    ['require_live_settings', 'REQUIRE_LIVE_SETTINGS',
+      [['zguard.content-live-settings.test.mjs', '--require-live-settings']]]
+  ]],
+  ['zbrowse-chromium-sandbox-posture.yml', [
+    ['require_browser_sandbox', 'REQUIRE_BROWSER_SANDBOX',
+      [['zbrowse.chromium-sandbox-posture.test.mjs', '--require-browser-sandbox']]]
+  ]],
+  ['zbrowse-selkies-hardening-posture.yml', [
+    ['require_selkies_hardening', 'REQUIRE_HARDENING',
+      [['zbrowse.selkies-hardening-posture.test.mjs', '--require-selkies-hardening']]]
+  ]],
+  ['zbrowse-trusted-host-origin-qa.yml', [
+    ['require_canonical_host', 'REQUIRE_CANONICAL_HOST',
+      [['zbrowse.host-origin-isolation-real-http.test.mjs', '--require-canonical-host']]]
+  ]],
   ['zbrowse-disconnected-session-start.yml', [
     ['require_disconnect_reconciliation', 'REQUIRE_DISCONNECT_RECONCILIATION',
       [['zbrowse.disconnected-session-start-real-http.test.mjs',
@@ -78,10 +94,13 @@ const matrix = [
     ['require_no_store', 'REQUIRE_NO_STORE', [
       ['zbrowse.viewer-cache-privacy.test.mjs', '--require-no-store'],
       ['zbrowse.viewer-cache-real-http.test.mjs', '--require-no-store'],
+      ['zbrowse.viewer-cdn-cache-real-http.test.mjs', '--require-no-store'],
       ['zbrowse.viewer-path-recovery-real-http.test.mjs', '--require-no-store']
     ]],
     ['require_websocket_origin', 'REQUIRE_WEBSOCKET_ORIGIN',
-      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-origin']]]
+      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-origin']]],
+    ['require_websocket_host', 'REQUIRE_WEBSOCKET_HOST',
+      [['zbrowse.websocket-upgrade-auth-real-tcp.test.mjs', '--require-websocket-host']]]
   ]],
   ['zbrowse-public-origin-readiness.yml', [
     ['require_valid_readiness', 'REQUIRE_VALID_READINESS',
@@ -94,6 +113,10 @@ const matrix = [
   ['zbrowse-cleanup-error-log-privacy.yml', [
     ['require_redacted_cleanup_errors', 'REQUIRE_REDACTED_CLEANUP_ERRORS',
       [['zbrowse.cleanup-error-log-privacy.test.mjs', '--require-redacted-cleanup-errors']]]
+  ]],
+  ['zguard-real-firefox-acceptance.yml', [
+    ['require_pageworld', 'REQUIRE_PAGEWORLD',
+      [['zguard.firefox-real-browser.test.mjs', '--require-pageworld']]]
   ]],
   ['zguard-real-chromium-acceptance.yml', [
     ['require_mainworld', 'REQUIRE_MAINWORLD',
@@ -113,6 +136,32 @@ const matrix = [
   ]]
 ];
 
+// Audit the entire workflow directory rather than only explicitly known
+// entries. A newly-added strict dispatch switch must never escape review just
+// because its workflow was omitted from the hand-maintained matrix.
+function unmappedStrictWorkflows(files, mapped = matrix) {
+  const actual = files
+    .filter(([name, yaml]) => /\.ya?ml$/i.test(name) &&
+      /^      require_[a-z_]+:\s*$/m.test(yaml))
+    .map(([name]) => name).sort();
+  const expected = mapped.map(([name]) => name).sort();
+  return { actual, expected };
+}
+
+const allWorkflowFiles = fs.readdirSync(workflowDir)
+  .filter(name => /\.ya?ml$/i.test(name))
+  .map(name => [name, fs.readFileSync(path.join(workflowDir, name), 'utf8')]);
+const discovered = unmappedStrictWorkflows(allWorkflowFiles);
+assert.deepEqual(discovered.actual, discovered.expected,
+  'every workflow exposing require_* dispatch inputs must be registered in strict-remediation audit');
+// Deliberately introduce an unmapped gate in memory to prove discovery fails
+// closed for future workflow additions. No disk file or workflow is changed.
+const fakeWorkflow = ['qa-unknown-strict-gate.yml',
+  'on:\n  workflow_dispatch:\n    inputs:\n      require_unreviewed:\n        type: boolean\n'];
+const missingMapping = unmappedStrictWorkflows([...allWorkflowFiles, fakeWorkflow]);
+assert.notDeepEqual(missingMapping.actual, missingMapping.expected,
+  'unmapped strict remediation workflow must be detected by directory discovery');
+
 function testWorkflow(name, gates, yaml) {
   assert.match(yaml, /^  pull_request:\s*$/m, name + ': must run on PRs');
   assert.match(yaml, /^  push:\s*$/m, name + ': must run on main pushes');
@@ -123,6 +172,14 @@ function testWorkflow(name, gates, yaml) {
     name + ': remediation evidence must run on ephemeral hosted runner');
   assert.doesNotMatch(yaml, /runs-on:.*self-hosted/,
     name + ': never execute untrusted PR code on persistent runner');
+  // A workflow may contain every expected strict command yet still be
+  // skipped or reported green by Actions if someone adds a job/step if:false
+  // or turns failures into tolerated outcomes. These gates are release
+  // evidence; a skipped or non-blocking job is not valid acceptance.
+  assert.doesNotMatch(yaml, /^\s*continue-on-error:\s*(?:true|\$\{\{)/mi,
+    name + ': strict evidence cannot ignore job or step failures');
+  assert.doesNotMatch(yaml, /^\s*if:\s*(?:false|\$\{\{\s*false\s*\}\})\s*$/mi,
+    name + ': strict evidence cannot be a disabled job or step');
   assert.ok(yaml.includes('persist-credentials: false'),
     name + ': checkout must not persist token');
   assert.ok(yaml.includes('ref: ' + '$' +
@@ -195,11 +252,62 @@ function testWorkflow(name, gates, yaml) {
 const [sample, sampleGates] = matrix.find(([name]) =>
   name === 'zbrowse-json-origin-isolation.yml');
 const fixture = fs.readFileSync(path.join(workflowDir, sample), 'utf8');
+
+// Issue #342 has been remediated in the shipped gateway: prevent regression
+// by requiring the browser-simple non-JSON admission test UNCONDITIONALLY on
+// every PR and main push, not hidden behind workflow_dispatch inputs.
+// Only exact executable shell lines before the opt-in block qualify as proof.
+const mandatorySimplePost = 'node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only';
+function assertMandatorySimplePost(yaml) {
+  const optIn = yaml.indexOf('if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then');
+  assert.ok(optIn > 0, 'origin workflow must retain its separate manual opt-in');
+  const runStep = yaml.indexOf('      - name: Exercise shipped JSON origin boundary');
+  assert.ok(runStep >= 0 && runStep < optIn,
+    'mandatory admission proof must live in the actual executed origin job');
+  const unconditional = yaml.slice(runStep, optIn).split(/\r?\n/);
+  assert.ok(unconditional.some(line => line.trim() === mandatorySimplePost),
+    'real HTTP browser-simple POST JSON-only acceptance must always run before optional dispatch');
+  assert.equal((yaml.match(/node tests\/zbrowse\.cross-origin-simple-post-real-http\.test\.mjs --require-json-only/g) || []).length, 1,
+    'do not duplicate the gate in an optional path or comment for false green evidence');
+}
+assertMandatorySimplePost(fixture);
+for (const mutated of [
+  fixture.replace(mandatorySimplePost,
+    'node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs'),
+  fixture.replace(mandatorySimplePost,
+    'echo node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only'),
+  fixture.replace(mandatorySimplePost,
+    '# node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only'),
+  fixture.replace(
+    mandatorySimplePost + '\n          if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then',
+    'if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then\n          ' + mandatorySimplePost)
+]) {
+  assert.notEqual(mutated, fixture,
+    'mutation fixture must alter the always-on JSON-only gate');
+  assert.throws(() => assertMandatorySimplePost(mutated),
+    /must always run|do not duplicate|real HTTP browser-simple/,
+    'removing or masking mandatory simple POST proof must fail the source contract');
+}
 const tamper = (original, replacement, reason) => {
   assert.notEqual(original, replacement, reason + ': mutation must change fixture');
   assert.throws(() => testWorkflow(sample, sampleGates, replacement),
     undefined, reason + ': regression must fail closed');
 };
+// Assertions above are not just policy documentation: deliberately inject
+// skipped/non-blocking GitHub Actions jobs and verify all are rejected.
+for (const [label, injected] of [
+  ['job cannot ignore failure', '    continue-on-error: true'],
+  ['step cannot ignore failure', '      continue-on-error: true'],
+  ['job cannot be disabled', '    if: false'],
+  ['expression cannot disable gate', '    if: ${{ false }}']
+]) {
+  const changed = fixture.replace('    runs-on: ubuntu-24.04',
+    '    runs-on: ubuntu-24.04\n' + injected);
+  assert.notEqual(changed, fixture, label + ': test mutation must change workflow');
+  assert.throws(() => testWorkflow(sample, sampleGates, changed),
+    undefined, label + ': strict CI cannot report false-green skipped work');
+}
+
 tamper(fixture, fixture.replace('default: false', 'default: true'),
   'disabled-by-default security gate');
 tamper(fixture, fixture.replace('REQUIRE_ORIGIN_ISOLATION: ' +
@@ -222,6 +330,30 @@ tamper(fixture, fixture.replace('  workflow_dispatch:\n',
   '  workflow_dispatch:\n    inputs:\n      require_new_gate:\n        type: boolean\n        default: false\n'),
 'unknown dispatch input cannot be silently ignored');
 
+// Do not allow the already passing real-TCP WebSocket privacy guard to
+// silently return to opt-in-only mode on a future runtime refactor. The
+// baseline still runs separately to document route/denial behavior.
+function assertAlwaysOnWebSocketLogRedaction(yaml) {
+  const proof =
+    'node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs\n' +
+    '          # Browser WebSocket credential log privacy must stay green on every PR and main push.\n' +
+    '          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors\n' +
+    '          if [ "$REQUIRE_REDACTED_WS_PROXY_ERRORS" = "true" ]; then';
+  assert.ok(yaml.includes(proof),
+    'every PR/main push must run real-TCP WebSocket redaction strictly, before any opt-in branch');
+}
+const wsWorkflow = fs.readFileSync(
+  path.join(workflowDir, 'zbrowse-websocket-proxy-error-log-privacy.yml'), 'utf8');
+assertAlwaysOnWebSocketLogRedaction(wsWorkflow);
+const weakenedWebSocketWorkflow = wsWorkflow.replace(
+  '          # Browser WebSocket credential log privacy must stay green on every PR and main push.\n' +
+  '          node tests/zbrowse.websocket-proxy-error-log-privacy-real-tcp.test.mjs --require-redacted-ws-proxy-errors\n',
+  '');
+assert.notEqual(weakenedWebSocketWorkflow, wsWorkflow,
+  'WebSocket strict evidence mutation must remove a real always-on command');
+assert.throws(() => assertAlwaysOnWebSocketLogRedaction(weakenedWebSocketWorkflow),
+  undefined, 'baseline-only WebSocket privacy checks must never be certified as strict');
+
 let strictCommands = 0;
 for (const [workflow, gates] of matrix) {
   strictCommands += testWorkflow(workflow, gates,
@@ -231,4 +363,4 @@ console.log('Strict remediation workflow/CLI integrity passed: ' +
   matrix.length + ' hosted workflows, ' +
   matrix.reduce((count, [, gates]) => count + gates.length, 0) +
   ' explicitly opt-in gates, ' + strictCommands +
-  ' strict source-bound test commands, and 5 negative mutation proofs');
+  ' strict source-bound test commands, 5 CLI wiring mutations and 1 unmapped-workflow discovery proof');

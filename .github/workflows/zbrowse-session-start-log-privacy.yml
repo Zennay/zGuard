@@ -22,7 +22,8 @@ concurrency:
 jobs:
   browser-start-logs:
     name: Gateway browser-start failure log privacy
-    runs-on: ubuntu-24.04
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
     timeout-minutes: 6
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -48,6 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node tests/zbrowse.gateway-strict-acceptance-cli.test.mjs
           node tests/zbrowse.session-json-body-real-http.test.mjs
           node tests/zbrowse.session-start-log-privacy-real-http.test.mjs
           if [ "$REQUIRE_REDACTED_START_ERRORS" = "true" ]; then

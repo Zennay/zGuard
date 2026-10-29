@@ -5,8 +5,8 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 
-async function loadContentScript(relativePath, mode, enabled = true) {
-  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+async function loadContentScript(relativePath, mode, enabled = true, overrideSource = null) {
+  const source = overrideSource ?? fs.readFileSync(path.join(root, relativePath), 'utf8');
   const events = [];
   let allowedOpenCount = 0;
   let clickHandler;
@@ -219,6 +219,72 @@ async function verifyBrowser(relativePath) {
     4,
     relativePath + ': each blocked click must be recorded once'
   );
+
+  // Browsers treat reserved browsing-context targets such as _blank as
+  // ASCII case-insensitive. A hostile link with target=_BLANK must not
+  // bypass click protection while normal external and same-origin targets
+  // remain available across Chromium, Firefox and the zBrowse bundle.
+  for (const target of ['_BLANK', '_BlAnK']) {
+    for (const options of [{ target }, { target, elementTag: 'area' },
+      { target, shadow: true }]) {
+      assert.deepEqual(
+        balanced.click('https://ads.al5sm.com/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': mixed-case popup target must block hostile links'
+      );
+      assert.deepEqual(
+        strict.click('https://example.org/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': strict mode must block mixed-case new-tab targets'
+      );
+      assert.deepEqual(
+        strict.click('/same-origin', options), [],
+        relativePath + ': same-origin mixed-case target must stay usable'
+      );
+      assert.deepEqual(
+        balanced.click('https://example.org/popup', options), [],
+        relativePath + ': balanced mode must allow ordinary mixed-case targets'
+      );
+    }
+  }
+
+  // A non-reserved named target can open a separate tab/window when no
+  // matching browsing context exists. A hostile site must not escape the
+  // guard merely by replacing _blank with a name; keep the browser's
+  // same-context special keywords and harmless destinations available.
+  for (const target of ['adPopupWindow', 'reportPanel']) {
+    for (const options of [{ target }, { target, elementTag: 'area' },
+      { target, shadow: true }]) {
+      assert.deepEqual(balanced.click('https://ads.al5sm.com/popup', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': named window must not bypass hostile-host protection');
+      assert.deepEqual(strict.click('https://example.org/video', options),
+        ['preventDefault', 'stopImmediatePropagation'],
+        relativePath + ': strict mode must guard named cross-origin contexts');
+      assert.deepEqual(strict.click('/same-origin', options), [],
+        relativePath + ': named same-origin browsing is not blocked');
+      assert.deepEqual(balanced.click('https://example.org/video', options), [],
+        relativePath + ': harmless named browsing is preserved in balanced mode');
+    }
+    assert.deepEqual(balanced.submit('https://ads.al5sm.com/popup', { target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': named hostile form targets must be intercepted');
+    assert.deepEqual(strict.submit('https://example.org/video', { target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': strict named form submission must not create an external window');
+    assert.deepEqual(strict.submit('/same-origin', { target }), [],
+      relativePath + ': named same-origin form remains available');
+    assert.deepEqual(strict.submit('/same-origin', { target: '_self',
+      submitterAction: 'https://example.org/video', submitterTarget: target }),
+      ['preventDefault', 'stopImmediatePropagation'],
+      relativePath + ': named formtarget override must not bypass strict mode');
+  }
+  for (const target of ['', '_self', '_PARENT', '_TOP', '_unfencedTop']) {
+    assert.deepEqual(balanced.click('https://ads.al5sm.com/popup', { target }), [],
+      relativePath + ': same-context special target must not become a popup');
+    assert.deepEqual(strict.submit('https://example.org/video', { target }), [],
+      relativePath + ': same-context form target must remain navigable');
+  }
 
   // Strict mode isolates origins rather than visual URL prefixes.
   for (const local of [
@@ -440,11 +506,53 @@ async function verifyBrowser(relativePath) {
   assert.equal(disabled.events.length, 0);
 }
 
+// Mutate the shipped source in memory and run the SAME content VM harness.
+// If named contexts, form submitters or case-insensitive reserved keywords
+// silently regress, these controls must actually fail observable assertions.
+async function verifyPopupTargetMutationControls(relativePath) {
+  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
+  async function broken(label, original, replacement, mode, verify) {
+    assert.ok(source.includes(original),
+      relativePath + ': expected mutation source missing: ' + label);
+    const altered = source.replace(original, replacement);
+    assert.notEqual(altered, source, label + ': mutation must change source');
+    const script = await loadContentScript(relativePath, mode, true, altered);
+    assert.throws(() => verify(script), { code: 'ERR_ASSERTION' },
+      relativePath + ': ' + label + ' regression must cause a genuine behavioral failure');
+  }
+  await broken('named anchor bypass',
+    'opensSeparateContext(target) || event.ctrlKey',
+    "target.toLowerCase() === '_blank' || event.ctrlKey",
+    'balanced', (app) => assert.deepEqual(
+      app.click('https://ads.al5sm.com/popup', { target: 'adPopupWindow' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+  await broken('named form bypass',
+    '!opensSeparateContext(target)',
+    "String(target).toLowerCase() !== '_blank'",
+    'strict', (app) => assert.deepEqual(
+      app.submit('https://example.org/video', { target: 'reportPanel' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+  await broken('lost case-folding of special targets',
+    "const name = String(target || '').toLowerCase();",
+    "const name = String(target || '');",
+    'balanced', (app) => assert.deepEqual(
+      app.click('https://ads.al5sm.com/popup', { target: '_PARENT' }), []));
+  await broken('named-window classifier narrowed to _blank',
+    "return Boolean(name) && !['_self', '_parent', '_top', '_unfencedtop'].includes(name);",
+    "return name === '_blank';",
+    'strict', (app) => assert.deepEqual(
+      app.submit('https://example.org/video', { target: 'reportPanel' }),
+      ['preventDefault', 'stopImmediatePropagation']));
+}
+
 (async () => {
   await verifyBrowser('chromium/content.js');
   await verifyBrowser('firefox/content.js');
   await verifyBrowser('zbrowse/browser/zguard/content.js');
-  console.log('zGuard content mode behavior tests passed');
+  for (const relativePath of [
+    'chromium/content.js', 'firefox/content.js', 'zbrowse/browser/zguard/content.js'
+  ]) await verifyPopupTargetMutationControls(relativePath);
+  console.log('zGuard content mode behavior and 12 popup-target mutations passed');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

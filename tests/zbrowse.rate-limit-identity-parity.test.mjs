@@ -94,6 +94,27 @@ assert.ok(incomplete[0].identities.sessionIdentity,
 assert.notEqual(incomplete[0].identities.sessionIdentity, '198.51.100.20',
   'incomplete chain must not override session identity with forwarded data');
 
+// Real proxies can forward IP:port forms or malformed right-most hops.
+// requestIp() rejects them to the TCP socket; the limiter MUST not grant a
+// fresh quota each time an attacker changes the header text.
+const ported = await scenario([
+  '198.51.100.20:41001, 10.0.0.2',
+  '198.51.100.20:52999, 10.0.0.2'
+]);
+const malformedRightHop = await scenario([
+  '203.0.113.70, forged.invalid',
+  '203.0.113.71, forged.invalid'
+]);
+for (const [label, result] of [
+  ['port-bearing forwarded client', ported],
+  ['malformed trusted right-side hop', malformedRightHop]
+]) {
+  assert.equal(result[0].status, 200,
+    label + ': first request must establish a reproducible accepted baseline');
+  assert.equal(result[0].identities.sessionIdentity, '127.0.0.1',
+    label + ': requestIp() must fail closed to the socket address');
+}
+
 if (strict) {
   const sameKey = incomplete[0].identities.limiterIdentity ===
     incomplete[0].identities.sessionIdentity;
@@ -102,9 +123,21 @@ if (strict) {
     { sameKey: true, quotaEnforced: true },
     'incomplete forwarded chain must preserve the same session and limiter identity, ' +
     'and must reject the second forged-header request (issue #21)');
+  for (const [label, result] of [
+    ['port-bearing forwarded client', ported],
+    ['malformed trusted right-side hop', malformedRightHop]
+  ]) {
+    assert.equal(result[0].identities.limiterIdentity,
+      result[0].identities.sessionIdentity,
+      label + ': limiter must share the canonical session identity');
+    assert.equal(result[1].status, 429,
+      label + ': second forged-header request must share the same quota');
+  }
   console.log('Live Express rate-limit/session identity parity passed');
 } else {
   console.log('Real Express limiter, completed-chain parity and incomplete-chain ' +
     'fallback exercised; strict key parity requires --require-key-parity. ' +
-    'Incomplete second request status=' + incomplete[1].status);
+    'Incomplete second request status=' + incomplete[1].status +
+    '; forwarded-port second status=' + ported[1].status +
+    '; malformed-right-hop second status=' + malformedRightHop[1].status);
 }

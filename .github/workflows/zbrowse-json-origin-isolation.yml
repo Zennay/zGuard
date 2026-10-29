@@ -22,7 +22,8 @@ concurrency:
 jobs:
   origin:
     name: Gateway JSON cross-origin admission
-    runs-on: ubuntu-24.04
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
     timeout-minutes: 6
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -51,6 +52,10 @@ jobs:
           node tests/zbrowse.cross-origin-json-real-http.test.mjs
           # Enforce authorization before even a successful preflight/JSON body.
           node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
+          # Browser-simple cross-site POST encodings must NEVER create or reuse
+          # a browser. Treat the real-handler JSON-only boundary as mandatory,
+          # not an opt-in workflow_dispatch gate (security issue #342).
+          node tests/zbrowse.cross-origin-simple-post-real-http.test.mjs --require-json-only
           if [ "$REQUIRE_ORIGIN_ISOLATION" = "true" ]; then
             node tests/zbrowse.cross-origin-json-real-http.test.mjs --require-origin-isolation
           fi

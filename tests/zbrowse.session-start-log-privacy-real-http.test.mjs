@@ -44,6 +44,7 @@ const logs = [];
 let createCalls = 0;
 let reservations = 0;
 let releases = 0;
+let nestedSourceError = null;
 const sandbox = {
   app, express, sites, URL, Date, Math,
   sessions, sessionsByIp, requestIp, trustProxyHops: 0,
@@ -71,6 +72,21 @@ const sandbox = {
       // diagnostic line without literal CRLF in a Docker error message.
       throw new Error('synthetic startup failure\u001b[2J\u001b[H[OK] spoofed readiness\u2028' +
         ' Env PASSWORD=' + password);
+    }
+    if (createCalls === 3) {
+      // A harmless top-level message can conceal bearer credentials in the
+      // cause and enumerable Docker request fields printed by util.format().
+      const nested = new Error('synthetic nested browser create failure');
+      nested.cause = new Error('upstream Authorization: Basic ' +
+        Buffer.from('viewer:' + password).toString('base64') +
+        ' on /s/' + token);
+      nested.request = {
+        url: 'https://qa-user:qa-pass@fixture.invalid/s/' + token,
+        headers: { authorization: 'Bearer ' + token },
+        env: { PASSWORD: password }
+      };
+      nestedSourceError = nested;
+      throw nested;
     }
     const fixture = {
       token, ip, expiresAt: Date.now() + 900_000, lastSeenAt: Date.now()
@@ -128,6 +144,20 @@ try {
   assert.equal(sessions.size, 0,
     'second startup error must not expose an unauthorized browser session');
 
+  const nestedFailure = await submit(sites[0].url);
+  assert.equal(nestedFailure.status, 500,
+    'nested upstream exception must return a generic HTTP 500');
+  assert.equal(JSON.parse(nestedFailure.text).error, 'The browser could not be started.',
+    'nested Docker credential metadata must not reach the browser client');
+  assert.doesNotMatch(nestedFailure.text, /qa-pass|synthetic|Authorization|M{32}/i,
+    'nested upstream credentials must not leak into the response');
+  assert.equal(createCalls, 3);
+  assert.equal(reservations, 3);
+  assert.equal(releases, 3,
+    'nested failed startup must release its reservation');
+  assert.equal(sessions.size, 0,
+    'failed nested Docker startup must not publish a session');
+
   const recovered = await submit(sites[0].url);
   assert.equal(recovered.status, 201, 'valid browser creation must recover after repeated failures');
   const payload = JSON.parse(recovered.text);
@@ -136,14 +166,29 @@ try {
   const reused = await submit(sites[0].url);
   assert.equal(reused.status, 200, 'existing session must be reused after recovery');
   assert.equal(JSON.parse(reused.text).token, token);
-  assert.equal(createCalls, 3, 'reused HTTP session must not start another browser');
+  assert.equal(createCalls, 4, 'reused HTTP session must not start another browser');
   assert.equal(reservations, releases, 'every attempted browser start must release capacity');
 
-  assert.equal(logs.length, 2, 'both synthetic Docker exceptions must produce diagnostics');
+  assert.equal(logs.length, 3,
+    'all three synthetic Docker exceptions must produce diagnostics');
+  // Native console.error renders Error.cause and enumerable request objects;
+  // String(error) conceals these exact credentials and is not valid test
+  // capture. Prove the negative canary independently of the gateway logger.
+  assert.ok(nestedSourceError instanceof Error,
+    'the real start route must have thrown the nested Docker error fixture');
+  assert.doesNotMatch(String(nestedSourceError), /Authorization|qa-pass|Bearer /,
+    'top-level Error string must not accidentally contain nested canaries');
+  const unsafeNativeLog = format('Session creation failed', nestedSourceError);
+  for (const canary of [token, password, 'qa-pass', 'Authorization: Basic']) {
+    assert.ok(unsafeNativeLog.includes(canary),
+      'negative control: raw native Node Error logging reveals nested synthetic credentials');
+  }
   assert.ok(logs[0].includes('Session creation failed'),
     'safe generic diagnostic label must be preserved');
   const leaking = logs.filter(line =>
     line.includes(token) || line.includes(password) ||
+    line.includes('qa-pass') || line.includes('Authorization: Basic') ||
+    line.includes('Bearer ') ||
     /[\r\n\x1b\u2028\u2029]/.test(line));
   if (strict) {
     assert.equal(leaking.length, 0,

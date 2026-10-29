@@ -21,6 +21,32 @@ function genericSelfHostedRunsOn(source) {
     const indent = match[1].length;
     const rawValue = match[2].trim();
 
+    // GitHub also supports mapping syntax: runs-on: {group:, labels:} and
+    // multiline group/labels fields. Treat these as unreviewed because an
+    // arbitrary private runner group can queue forever or execute PR code on
+    // a different trust tier without a literal self-hosted label.
+    if (rawValue.startsWith('{')) {
+      findings.push(index + 1);
+      continue;
+    }
+    if (rawValue === '') {
+      let unreviewedMapping = false;
+      for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+        const nested = lines[cursor];
+        if (!nested.trim() || /^\s*#/.test(nested)) continue;
+        const nestedIndent = nested.match(/^\s*/)?.[0].length ?? 0;
+        if (nestedIndent <= indent) break;
+        if (/^\s+(?:group|labels):/.test(nested)) {
+          unreviewedMapping = true;
+          break;
+        }
+      }
+      if (unreviewedMapping) {
+        findings.push(index + 1);
+        continue;
+      }
+    }
+
     if (/\$\{\{/.test(rawValue)) {
       findings.push(index + 1);
       continue;
@@ -72,6 +98,11 @@ const selfTests = [
   ['runs-on: ${{ matrix.runner }}\n', true],
   ['runs-on: [self-hosted, ${{ inputs.runner_label }}]\n', true],
   ['runs-on:\n  - ${{ matrix.runner }}\n', true],
+  ['runs-on: {group: private, labels: self-hosted}\n', true],
+  ['runs-on: { group: qa-runners, labels: ubuntu-latest }\n', true],
+  ['runs-on:\n  group: private\n  labels: self-hosted\n', true],
+  ['runs-on:\n  group: qa-runners\n  labels: [self-hosted, zcloud, vps]\n', true],
+  ['runs-on:\n  labels: ${{ inputs.runner_label }}\n', true],
   ['runs-on: ubuntu-latest\n', false],
 ];
 

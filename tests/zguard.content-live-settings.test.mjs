@@ -17,12 +17,13 @@ export function parseStrictMode(args) {
 const strict = parseStrictMode(process.argv.slice(2));
 const failures = [];
 
-async function boot(packageName, initial) {
+async function boot(packageName, initial, options = {}) {
   const content = fs.readFileSync(path.join(root, packageName, 'content.js'), 'utf8');
   const stored = { enabled: initial.enabled, mode: initial.mode };
   const changeListeners = [];
   const nativeCalls = [];
   const telemetry = [];
+  const documentHandlers = new Map();
   const api = {
     runtime: { sendMessage(data) { telemetry.push(data); } },
     storage: {
@@ -30,6 +31,14 @@ async function boot(packageName, initial) {
       local: {
         get(defaults, callback) {
           const current = { ...defaults, ...stored };
+          if (options.hydrationRaceChange) {
+            // Snapshot is deliberately stale by the time async storage.get
+            // resolves. The subsequent change event must win that race.
+            return new Promise((resolve) => setTimeout(() => {
+              if (typeof callback === 'function') callback(current);
+              resolve(current);
+            }, 5));
+          }
           if (typeof callback === 'function') callback(current);
           return Promise.resolve(current);
         },
@@ -57,14 +66,18 @@ async function boot(packageName, initial) {
       }
     },
     document: {
-      addEventListener() {},
-      removeEventListener() {}
+      addEventListener(type, handler) { documentHandlers.set(type, handler); },
+      removeEventListener(type) { documentHandlers.delete(type); }
     }
   };
   context[packageName === 'firefox' ? 'browser' : 'chrome'] = api;
   vm.runInNewContext(content, context, {
     filename: packageName + '/content.js', timeout: 1000
   });
+  if (options.hydrationRaceChange) {
+    await api.storage.local.set(options.hydrationRaceChange);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   await Promise.resolve();
   await Promise.resolve();
 
@@ -76,24 +89,77 @@ async function boot(packageName, initial) {
       await Promise.resolve();
     },
     listenerCount() { return changeListeners.length; },
+    click(href, type = 'click') {
+      const node = { closest: () => ({ href, target: '_blank' }) };
+      const actions = [];
+      const event = {
+        type, target: node, composedPath: () => [node],
+        ctrlKey: false, metaKey: false, button: type === 'auxclick' ? 1 : 0,
+        preventDefault() { actions.push('preventDefault'); },
+        stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
+      };
+      documentHandlers.get(type)?.(event);
+      return actions;
+    },
+    submit(url) {
+      const actions = [];
+      documentHandlers.get('submit')?.({
+        target: { tagName: 'FORM', action: url, target: '_blank' },
+        submitter: null,
+        preventDefault() { actions.push('preventDefault'); },
+        stopImmediatePropagation() { actions.push('stopImmediatePropagation'); }
+      });
+      return actions;
+    },
+    notify(changes, area) {
+      for (const listener of changeListeners) listener(changes, area);
+    },
     telemetry,
     nativeCalls
   };
 }
 
 for (const pkg of packages) {
+  const raced = await boot(pkg, { enabled: true, mode: 'balanced' }, {
+    hydrationRaceChange: { enabled: false, mode: 'strict' }
+  });
+  if (raced.open('https://ads.al5sm.com/blocked') === null) {
+    failures.push(pkg + ': stale storage hydration overwrote disabled state');
+  }
+  await raced.change({ enabled: true });
+  if (raced.open('https://example.org/external') !== null) {
+    failures.push(pkg + ': stale storage hydration overwrote strict mode');
+  }
   const active = await boot(pkg, { enabled: true, mode: 'balanced' });
   assert.notEqual(active.open('https://example.org/watch'), null,
     pkg + ': initial balanced mode should allow ordinary external navigation');
   assert.equal(active.open('https://ads.al5sm.com/popup'), null,
     pkg + ': initial balanced mode should reject known hostile hosts');
+  assert.equal(active.listenerCount(), 1,
+    pkg + ': attach one settings subscription before hydration');
   await active.change({ mode: 'strict' });
   if (active.open('https://example.org/watch') !== null) {
     failures.push(pkg + ': balanced to strict failed without reload');
   }
+  if (!active.click('https://example.org/watch').includes('preventDefault') ||
+      !active.click('https://example.org/watch', 'auxclick').includes('preventDefault') ||
+      !active.submit('https://example.org/watch').includes('preventDefault')) {
+    failures.push(pkg + ': strict live setting did not update link, middle-click and form');
+  }
+  // Untrusted/invalid storage-change payloads must not disable protection.
+  active.notify({ enabled: { newValue: 'false' }, mode: { newValue: 'disabled' } }, 'local');
+  active.notify({ enabled: { newValue: false }, mode: { newValue: 'balanced' } }, 'sync');
+  if (active.open('https://example.org/watch') !== null) {
+    failures.push(pkg + ': invalid or non-local changes modified live protection');
+  }
   await active.change({ enabled: false });
   if (active.open('https://ads.al5sm.com/popup') === null) {
     failures.push(pkg + ': enabled to disabled failed without reload');
+  }
+  if (active.click('https://ads.al5sm.com/popup').length ||
+      active.click('https://ads.al5sm.com/popup', 'auxclick').length ||
+      active.submit('https://ads.al5sm.com/popup').length) {
+    failures.push(pkg + ': disabled live setting left event interceptors active');
   }
 
   const initiallyDisabled = await boot(pkg, { enabled: false, mode: 'balanced' });
@@ -102,6 +168,12 @@ for (const pkg of packages) {
   await initiallyDisabled.change({ enabled: true });
   if (initiallyDisabled.open('https://ads.al5sm.com/popup') !== null) {
     failures.push(pkg + ': disabled to enabled failed without reload');
+  }
+  if (!initiallyDisabled.submit('https://ads.al5sm.com/popup').length) {
+    failures.push(pkg + ': enabling in an already-open tab failed to arm form interception');
+  }
+  if (initiallyDisabled.listenerCount() !== 1) {
+    failures.push(pkg + ': initial disabled state must still subscribe exactly once');
   }
 
   const initiallyStrict = await boot(pkg, { enabled: true, mode: 'strict' });

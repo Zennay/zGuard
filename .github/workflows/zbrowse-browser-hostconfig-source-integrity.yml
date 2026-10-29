@@ -1,0 +1,43 @@
+name: zBrowse browser session HostConfig source boundary
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zbrowse-browser-hostconfig-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-containment-source:
+    name: Browser session HostConfig source integrity
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, portfolio-pool, vps]
+    timeout-minutes: 5
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact proposed source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prove checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prevent browser container HostConfig regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tests/zbrowse.browser-hostconfig-source-integrity.test.mjs
+          node tests/zbrowse.browser-hostconfig-source-integrity.test.mjs
+          test -z "$(git status --porcelain)"
