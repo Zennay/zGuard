@@ -26,12 +26,12 @@ assert.equal(host.Privileged, false, 'gateway must not run privileged');
 assert.notEqual(host.NetworkMode, 'host', 'gateway must not use host networking');
 
 const droppedCaps = new Set(host.CapDrop || []);
-assert.ok(droppedCaps.has('ALL'), 'effective gateway container must drop all Linux capabilities');
+assert.ok(droppedCaps.has('ALL') || ['CHOWN','DAC_OVERRIDE','FOWNER','FSETID','KILL','NET_BIND_SERVICE','SETFCAP','SETGID','SETPCAP','SETUID','SYS_CHROOT'].every(cap => droppedCaps.has(cap)), 'effective gateway container must drop all Linux capabilities');
 assert.equal((host.CapAdd || []).length, 0, 'gateway must not add Linux capabilities');
 
 const securityOptions = host.SecurityOpt || [];
 assert.ok(
-  securityOptions.some((value) => value === 'no-new-privileges:true'),
+  securityOptions.some((value) => value === 'no-new-privileges:true' || value === 'no-new-privileges'),
   'effective gateway container must enable no-new-privileges'
 );
 
@@ -238,6 +238,9 @@ assert.ok(
   processUids.every((uid) => uid !== '0'),
   'PID 1 must remain non-root across all kernel UID slots'
 );
+const boundingCaps = processStatus.match(/^CapBnd:\s+([0-9a-f]+)$/mi)?.[1];
+assert.ok(boundingCaps, 'PID 1 must expose capability bounding set');
+assert.equal(BigInt('0x' + boundingCaps), 0n, 'PID 1 must have zero bounding capabilities');
 const effectiveCaps = processStatus.match(/^CapEff:\s+([0-9a-f]+)$/mi)?.[1];
 assert.ok(effectiveCaps, 'PID 1 status must expose effective capabilities');
 assert.equal(

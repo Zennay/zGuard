@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const packageJsonUrl = new URL('../zbrowse/gateway/package.json', import.meta.url);
 const packageLockUrl = new URL('../zbrowse/gateway/package-lock.json', import.meta.url);
@@ -90,7 +91,7 @@ assert.ok(
   'policy self-test must reject start-entrypoint drift'
 );
 
-assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'package policy validation must use a portable hosted runner');
+assertVpsOwnerGuardedJob(workflow, 'package policy validation');
 assert.match(
   workflow,
   /permissions:\s*\n\s+contents:\s*read/,

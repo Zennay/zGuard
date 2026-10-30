@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertVpsOwnerGuardedJob } from "../tools/workflow-runner-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tracked = execFileSync("git", ["ls-files", "-z"], {
@@ -120,7 +121,7 @@ const workflow = fs.readFileSync(path.join(root,
   ".github/workflows/repository-css-network-boundary.yml"), "utf8");
 for (const token of [
   "pull_request:", "push:", "workflow_dispatch:",
-  "runs-on: ubuntu-latest", "timeout-minutes: 5", "contents: read",
+  "timeout-minutes: 5", "contents: read",
   "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
   "persist-credentials: false", "git rev-parse HEAD",
   "repository:", "ref:", "EXPECTED_SHA:",
@@ -128,5 +129,6 @@ for (const token of [
 ]) {
   assert.ok(workflow.includes(token), "CSS CI workflow missing " + token);
 }
+assertVpsOwnerGuardedJob(workflow, "CSS CI workflow");
 assert.doesNotMatch(workflow, /^\s+paths:\s*$/m, "CSS QA cannot skip path changes");
 console.log("CSS network side-effect boundary passed for " + cssFiles.length + " tracked CSS files");

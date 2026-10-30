@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -11,6 +12,7 @@ const workflow = fs.readFileSync(
   path.join(root, '.github/workflows/gateway-containment-validation.yml'),
   'utf8'
 );
+const ciRootless = fs.readFileSync(path.join(root, 'zbrowse/scripts/ci-rootless-gateway.sh'), 'utf8');
 
 const gatewayMatch = compose.match(/services:\n  gateway:\n([\s\S]*?)\nnetworks:/);
 assert.ok(gatewayMatch, 'docker-compose.yml must define the gateway service');
@@ -48,7 +50,7 @@ assert.match(readme, /read-only rootfilesystem/, 'README must document the read-
 assert.match(readme, /no-new-privileges/, 'README must document privilege-escalation hardening');
 assert.match(readme, /Docker-healthcheck controleert de bestaande `\/api\/health`-route/, 'README must document the application healthcheck');
 assert.match(readme, /docker compose ps gateway/, 'README must document how to inspect gateway health');
-assert.match(readme, /portable hosted runner/, 'README must describe the executable gateway CI gate');
+assert.match(readme, /VPS-runner/, 'README must describe the executable gateway CI gate');
 assert.match(
   readme,
   /effectieve draaiende container/,
@@ -60,7 +62,7 @@ assert.match(
   'README must document the live non-root Docker socket access proof'
 );
 
-assert.match(workflow, /runs-on:\s*ubuntu-latest/, 'containment validation must use a portable hosted runner');
+assertVpsOwnerGuardedJob(workflow, 'containment validation');
 assert.match(workflow, /timeout-minutes:\s*[1-9][0-9]*/, 'containment validation must have a bounded timeout');
 assert.match(workflow, /permissions:\s*\n\s+contents:\s*read/, 'workflow token must remain read-only');
 assert.match(
@@ -90,18 +92,23 @@ assert.match(
   'workflow must execute the gateway containment regression'
 );
 assert.match(workflow, /docker compose config >\/dev\/null/, 'workflow must validate Compose syntax');
-assert.match(
-  workflow,
-  /export DOCKER_GID="\$\(stat -c '%g' \/var\/run\/docker\.sock\)"/,
-  'workflow must derive the real Docker socket group before boot'
-);
-assert.match(workflow, /docker compose up -d --build gateway/, 'workflow must boot the hardened gateway');
-assert.match(workflow, /\.State\.Health\.Status/, 'workflow must wait for Docker health state');
-assert.match(
-  workflow,
-  /node \.\.\/tests\/zbrowse\.gateway-runtime\.test\.mjs zbrowse-gateway/,
-  'workflow must assert the effective running gateway container'
-);
+assert.match(workflow, /bash zbrowse\/scripts\/ci-rootless-gateway\.sh/, 'workflow must run rootless containment');
+assert.match(workflow, /- "zbrowse\/scripts\/ci-rootless-gateway\.sh"/, 'CI must trigger on rootless script changes');
+for (const token of [
+  'test "$(id -u)" -ne 0',
+  'podman --root="$CI_TMP/store"',
+  'userns_mode: keep-id',
+  'chmod 0660 "$CI_TMP/podman.sock"',
+  'system reset --force',
+  "test \"$graph\" = \"$CI_TMP/store\"",
+  'docker compose -f docker-compose.yml -f "$CI_TMP/override.yml" up -d --no-build gateway',
+  'healthcheck run zbrowse-gateway',
+  "docker inspect --format '{{.State.Health.Status}}'",
+  'node ../tests/zbrowse.gateway-runtime.test.mjs zbrowse-gateway',
+]) {
+  assert.ok(ciRootless.includes(token), 'rootless containment must retain: ' + token);
+}
+assert.doesNotMatch(ciRootless, /sudo |\/var\/run\/docker\.sock:\/var\/run\/docker\.sock/, 'CI must not bind privileged Docker socket');
 assert.match(
   workflow,
   /- "tests\/zbrowse\.gateway-runtime\.test\.mjs"/,

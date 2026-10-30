@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const packageJson = JSON.parse(
   fs.readFileSync(new URL('../zbrowse/gateway/package.json', import.meta.url), 'utf8')
@@ -74,11 +75,7 @@ assert.throws(
   'compatibility self-test must require explicit review before changing engine-range grammar'
 );
 
-assert.match(
-  workflow,
-  /runs-on:\s*ubuntu-latest/,
-  'Node runtime compatibility validation must use a portable hosted runner'
-);
+assertVpsOwnerGuardedJob(workflow, 'Node runtime compatibility validation');
 assert.match(
   workflow,
   /permissions:\s*\n\s+contents:\s*read/,

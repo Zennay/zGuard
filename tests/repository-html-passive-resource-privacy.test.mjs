@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertVpsOwnerGuardedJob } from "../tools/workflow-runner-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tracked = execFileSync("git", ["ls-files", "-z"], {
@@ -112,7 +113,7 @@ for (const file of htmlFiles) {
 const workflow = fs.readFileSync(path.join(root,
   ".github/workflows/repository-html-passive-resource-privacy.yml"), "utf8");
 for (const expected of [
-  "pull_request:", "push:", "workflow_dispatch:", "runs-on: ubuntu-latest",
+  "pull_request:", "push:", "workflow_dispatch:",
   "timeout-minutes: 5", "contents: read",
   "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
   "persist-credentials: false", "git rev-parse HEAD", "EXPECTED_SHA:",
@@ -120,5 +121,6 @@ for (const expected of [
 ]) {
   assert.ok(workflow.includes(expected), "HTML passive resource CI missing " + expected);
 }
+assertVpsOwnerGuardedJob(workflow, "HTML passive resource CI");
 assert.doesNotMatch(workflow, /^\s+paths:\s*$/m, "Always-on HTML privacy CI must not have path filters");
 console.log("HTML passive resource privacy passed for " + htmlFiles.length + " tracked documents");

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertVpsOwnerGuardedJob } from '../tools/workflow-runner-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tracked = execFileSync('git', ['ls-files', '-z'], {
@@ -153,11 +154,7 @@ const workflow = fs.readFileSync(
   path.join(root, '.github/workflows/repository-css-custom-property-integrity.yml'),
   'utf8'
 );
-assert.match(
-  workflow,
-  /runs-on:\s*ubuntu-latest/,
-  'CSS custom-property validation must use a portable hosted runner'
-);
+assertVpsOwnerGuardedJob(workflow, 'CSS custom-property validation');
 assert.match(
   workflow,
   /permissions:\s*\n\s+contents:\s*read/,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OWNER_PR_GUARD, VPS_RUNS_ON } from '../tools/workflow-runner-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, '.github', 'required-checks.json');
@@ -53,7 +54,12 @@ function verifyRequiredJob(entry, source) {
   const matched = blocks.filter(block =>
     block.split('\n').some(line => line.trim() === 'name: ' + entry.check));
   assert.equal(matched.length, 1, entry.check + ': named required job must exist exactly once');
-  const job = matched[0];
+  const guard = '    ' + OWNER_PR_GUARD + '\n';
+  assert.equal(matched[0].split(guard).length, 2,
+    entry.check + ': required job must keep exactly one owner pull-request guard');
+  // The owner guard only keeps fork pull requests off the VPS runner; any
+  // other job-level condition could still silently skip the required check.
+  const job = matched[0].replace(guard, '');
   assert.doesNotMatch(job, /^    (?:if|needs|continue-on-error):/m,
     entry.check + ': required job may not be conditional');
   assert.doesNotMatch(job, /^\s+continue-on-error:\s*(?:true|\$\{\{)/m,
@@ -62,8 +68,8 @@ function verifyRequiredJob(entry, source) {
     entry.check + ': required check steps must not silently skip their test commands');
   assert.doesNotMatch(job, /^\s{8}continue-on-error:/m,
     entry.check + ': required steps must not tolerate test failures');
-  assert.match(job, /^    runs-on:\s*ubuntu-(?:latest|24\.04)\s*$/m,
-    entry.check + ': required job must run on hosted Ubuntu');
+  assert.ok(job.includes('    ' + VPS_RUNS_ON + '\n'),
+    entry.check + ': required job must run on the VPS-only runner pool');
   assert.match(job, /^        uses: actions\/checkout@[a-f0-9]{40}\b/m,
     entry.check + ': checkout action must use an immutable SHA');
   assert.match(job, /^          persist-credentials: false\s*$/m,
@@ -134,7 +140,9 @@ function mutation(label, modified) {
     undefined, label + ': an unsafe required check must fail closed');
 }
 mutation('conditional job', original.replace(
-  '    runs-on: ubuntu-latest', '    if: false\n    runs-on: ubuntu-latest'));
+  '    ' + OWNER_PR_GUARD, '    if: false'));
+mutation('extra job condition', original.replace(
+  '    ' + VPS_RUNS_ON, '    needs: setup\n    ' + VPS_RUNS_ON));
 mutation('swallowed errors', original.replace(
   '    timeout-minutes: 5',
   '    timeout-minutes: 5\n    continue-on-error: true'));
