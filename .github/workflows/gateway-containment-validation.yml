@@ -7,6 +7,7 @@ on:
       - "zbrowse/gateway/**"
       - "zbrowse/README.md"
       - "zbrowse/scripts/validate.sh"
+      - "zbrowse/scripts/ci-rootless-gateway.sh"
       - "tests/zbrowse.gateway-containment.test.mjs"
       - "tests/zbrowse.gateway-runtime.test.mjs"
       - "tests/zbrowse.validation-entrypoint.test.mjs"
@@ -19,6 +20,7 @@ on:
       - "zbrowse/gateway/**"
       - "zbrowse/README.md"
       - "zbrowse/scripts/validate.sh"
+      - "zbrowse/scripts/ci-rootless-gateway.sh"
       - "tests/zbrowse.gateway-containment.test.mjs"
       - "tests/zbrowse.gateway-runtime.test.mjs"
       - "tests/zbrowse.validation-entrypoint.test.mjs"
@@ -62,28 +64,4 @@ jobs:
 
       - name: Boot, health-check and inspect gateway
         shell: bash
-        run: |
-          set -euo pipefail
-          cd zbrowse
-          trap 'docker compose down --remove-orphans >/dev/null 2>&1 || true' EXIT
-          export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-          docker compose up -d --build gateway
-          healthy=false
-          for attempt in {1..30}; do
-            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' zbrowse-gateway)"
-            if [[ "$status" == "healthy" ]]; then
-              healthy=true
-              break
-            fi
-            if [[ "$status" == "unhealthy" ]]; then
-              docker compose logs gateway
-              exit 1
-            fi
-            sleep 1
-          done
-          if [[ "$healthy" != "true" ]]; then
-            docker compose logs gateway
-            echo "Gateway did not become healthy within 30 seconds." >&2
-            exit 1
-          fi
-          node ../tests/zbrowse.gateway-runtime.test.mjs zbrowse-gateway
+        run: bash zbrowse/scripts/ci-rootless-gateway.sh
