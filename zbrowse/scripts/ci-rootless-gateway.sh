@@ -2,7 +2,7 @@
 # CI-only real gateway containment, scoped to an unprivileged, isolated OCI store.
 set -euo pipefail
 test "$(id -u)" -ne 0
-for tool in docker podman catatonit pasta python3 node; do
+for tool in docker podman catatonit slirp4netns python3 node; do
   command -v "$tool" >/dev/null
 done
 test -n "$RUNNER_TEMP"
@@ -59,6 +59,8 @@ content = (
     "services:\n  gateway:\n"
     "    image: " + os.environ["IMAGE"] + "\n"
     "    userns_mode: keep-id\n"
+    "    network_mode: slirp4netns\n"
+    "    networks: !reset []\n"
     "    volumes:\n      - " + str(d / "podman.sock") + ":/var/run/docker.sock\n"
     "    healthcheck:\n      test: [CMD-SHELL, " + json.dumps(health_command) + "]\n"
 )
@@ -75,7 +77,7 @@ done
 test -S "$CI_TMP/podman.sock"
 chmod 0660 "$CI_TMP/podman.sock"
 test "$(stat -c '%a' "$CI_TMP/podman.sock")" = 660
-docker compose -f docker-compose.yml -f "$CI_TMP/override.yml" config >/dev/null
+docker compose -f docker-compose.yml -f "$CI_TMP/override.yml" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]["gateway"]; assert s["network_mode"] == "slirp4netns" and "networks" not in s; assert s["read_only"] and "ALL" in s["cap_drop"]; assert all(p.get("host_ip") == "127.0.0.1" for p in s["ports"])'
 docker compose -f docker-compose.yml -f "$CI_TMP/override.yml" up -d --no-build gateway
 healthy=false
 for attempt in $(seq 1 30); do
