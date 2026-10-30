@@ -11,8 +11,19 @@ VPS_OWNER_PR_GUARD = "((github.event_name != 'pull_request' && " \
   "(github.event.pull_request.head.repo.full_name == github.repository && " \
   "github.actor == 'Zennay'))".freeze
 
-def pull_request_trigger?(source)
-  source.match?(/^  (?:pull_request|pull_request_target):\s*(?:#.*)?$/)
+def pull_request_trigger?(parsed)
+  # YAML 1.1/Psych may parse `on` as boolean true. Inspect the parsed
+  # Action events, not indentation or spelling: sequence and flow styles
+  # must not bypass the owner-guarded persistent-runner admission check.
+  return false unless parsed.is_a?(Hash)
+  events = parsed.key?("on") ? parsed["on"] : parsed[true]
+  protected_events = ["pull_request", "pull_request_target"]
+  case events
+  when Hash then events.keys.any? { |event| protected_events.include?(event) }
+  when Array then events.any? { |event| protected_events.include?(event) }
+  when String then protected_events.include?(events)
+  else false
+  end
 end
 
 def admitted_vps_pr_job?(job)
@@ -22,7 +33,7 @@ def admitted_vps_pr_job?(job)
 end
 
 def pr_runner_boundary_findings(source, parsed, relative)
-  return [] unless pull_request_trigger?(source)
+  return [] unless pull_request_trigger?(parsed)
   return ["#{relative}: PR workflow must declare jobs"] unless parsed.is_a?(Hash) && parsed["jobs"].is_a?(Hash)
 
   parsed["jobs"].filter_map do |job_name, job|
@@ -69,6 +80,24 @@ end
   ).empty?
 end
 
+# GitHub Actions accepts scalar, flow-map and flow-sequence event spellings.
+# A source-text indentation matcher misses them; require the same VPS+owner
+# boundary for every native Actions trigger representation.
+[
+  "on: [pull_request]",
+  "on: pull_request",
+  "on: {pull_request: {}}",
+  "on: [push, pull_request_target]",
+  "on: {push: {}, pull_request_target: {}}"
+].each do |event_definition|
+  source = "#{event_definition}\njobs:\n  test:\n    runs-on: ubuntu-latest\n    if: #{VPS_OWNER_PR_GUARD}\n"
+  parsed = YAML.safe_load(source)
+  raise "PR trigger variant not recognized: #{event_definition}" unless pull_request_trigger?(parsed)
+  raise "PR trigger variant bypass: #{event_definition}" if pr_runner_boundary_findings(
+    source, parsed, "fixture.yml"
+  ).empty?
+end
+
 # Even a pull_request_target workflow cannot execute on a persistent VPS
 # without the identical exact guard. Manual-only workflows are not PR exposure.
 target_source = safe_source.sub("pull_request:", "pull_request_target:")
@@ -93,8 +122,8 @@ pull_request_workflows = 0
 workflows.each do |workflow|
   relative = workflow.relative_path_from(root).to_s
   source = File.read(workflow, encoding: "UTF-8")
-  pull_request_workflows += 1 if pull_request_trigger?(source)
   parsed = YAML.safe_load(source, permitted_classes: [], permitted_symbols: [], aliases: true)
+  pull_request_workflows += 1 if pull_request_trigger?(parsed)
   findings.concat(pr_runner_boundary_findings(source, parsed, relative))
 end
 
